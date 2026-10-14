@@ -1,0 +1,32 @@
+[build-system]
+requires = ["flit_core >=3.2,<4"]
+build-backend = "flit_core.buildapi"
+
+[project]
+name = "mibici"
+version = "0.0.1"
+description = "Dise\u00f1ar, como equipo, una propuesta de soluci\u00f3n de Machine Learning para un conjunto de preguntas sobre el sistema de bicicleta p\u00fablica MiBici, que combine modelos de regresi\u00f3n, clasificaci\u00f3n y clustering."
+authors = [
+  { name = "Equipo 29" },
+]
+
+readme = "README.md"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    
+]
+requires-python = "~=3.14.0"
+
+
+[tool.ruff]
+line-length = 99
+src = ["mibici"]
+include = ["pyproject.toml", "mibici/**/*.py"]
+
+[tool.ruff.lint]
+extend-select = ["I"]  # Add import sorting
+
+[tool.ruff.lint.isort]
+known-first-party = ["mibici"]
+force-sort-within-sections = true
+
