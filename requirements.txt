@@ -1,15 +1,19 @@
 ipython
 jupyterlab
-loguru
+loguru  # logging used by mibici.dataset
 matplotlib
 notebook
 numpy
-pandas
+pandas  # DataFrames used to load each monthly CSV
 pip
 pytest
 python-dotenv
-ruff
+ruff  # linting and formatting
 scikit-learn
 tqdm
-typer
+typer  # command-line interface used by mibici.dataset
+seaborn==0.13.2
+mlflow==3.16.1
+mlflow-skinny==3.16.1
+mlflow-tracing==3.16.1
 -e .

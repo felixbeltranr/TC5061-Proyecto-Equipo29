@@ -6,6 +6,41 @@
 
 Diseñar, como equipo, una propuesta de solución de Machine Learning para un conjunto de preguntas sobre el sistema de bicicleta pública MiBici, que combine modelos de regresión, clasificación y clustering.
 
+## Descarga de datos abiertos
+
+Para descargar los CSV mensuales publicados en [Datos abiertos MiBici](https://mibici.net/es/datos-abiertos/) y cargar cada archivo como un DataFrame independiente:
+
+```python
+from mibici.dataset import (
+    download_and_load_datasets,
+    download_and_load_latest_nomenclature,
+    merge_dataset_nomenclature,
+)
+
+datasets = download_and_load_datasets()
+enero_2024 = datasets["datos_abiertos_2024_01"]
+nomenclature = download_and_load_latest_nomenclature()
+all_trips = merge_dataset_nomenclature(datasets, nomenclature)
+
+# Opcional: reemplaza el rango configurado para esta llamada
+datasets = download_and_load_datasets(
+    start_year=2023,
+    start_month=12,
+    end_year=2024,
+    end_month=1,
+)
+```
+
+El rango inclusivo predeterminado se define en `mibici/config.py` mediante `DATA_START_YEAR`, `DATA_START_MONTH`, `DATA_END_YEAR` y `DATA_END_MONTH`. Actualmente cubre enero-diciembre de 2024. Los archivos originales se guardan en `data/raw/`. `datasets` es un diccionario cuyas claves son los nombres de archivo sin `.csv` y cuyos valores son los DataFrames mensuales. `nomenclature` contiene el DataFrame separado de la nomenclatura más reciente publicada; su CSV se guarda también en `data/raw/` con su nombre original. La función busca el año y mes más recientes enlazados en la página, independientemente del rango de viajes configurado. `merge_dataset_nomenclature` concatena los DataFrames mensuales y devuelve un único DataFrame con las columnas de nombre, latitud, longitud y capacidad para origen y destino; conserva también `Origen_Id` y `Destino_Id`. También se puede ejecutar `python -m mibici.dataset` para descargar el rango configurado, la nomenclatura más reciente, combinarlos y registrar sus dimensiones.
+
+Para reemplazar el rango desde la línea de comandos, especifica los cuatro valores:
+
+```powershell
+python -m mibici.dataset --start-year 2024 --start-month 12 --end-year 2025 --end-month 1
+```
+
+El rango incluye los meses inicial y final. Si omites las opciones, se usa el rango de `mibici/config.py`. Debes proporcionar los cuatro valores juntos; los meses deben estar entre 1 y 12 y el inicio no puede ser posterior al final.
+
 ## Project Organization
 
 ```
@@ -58,4 +93,3 @@ Diseñar, como equipo, una propuesta de solución de Machine Learning para un co
 ```
 
 --------
-

@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -10,16 +11,34 @@ load_dotenv()
 PROJ_ROOT = Path(__file__).resolve().parents[1]
 logger.info(f"PROJ_ROOT path is: {PROJ_ROOT}")
 
-DATA_DIR = PROJ_ROOT / "data"
-RAW_DATA_DIR = DATA_DIR / "raw"
-INTERIM_DATA_DIR = DATA_DIR / "interim"
-PROCESSED_DATA_DIR = DATA_DIR / "processed"
-EXTERNAL_DATA_DIR = DATA_DIR / "external"
+@dataclass(frozen=True)
+class ProjectConfig:
+    data_dir: Path = PROJ_ROOT / "data"
+    raw_data_dir: Path = PROJ_ROOT / "data" / "raw"
+    interim_data_dir: Path = PROJ_ROOT / "data" / "interim"
+    processed_data_dir: Path = PROJ_ROOT / "data" / "processed"
+    external_data_dir: Path = PROJ_ROOT / "data" / "external"
+    output_filename: str = "combined_dataset.csv"
 
-MODELS_DIR = PROJ_ROOT / "models"
+    models_dir: Path = PROJ_ROOT / "models"
 
-REPORTS_DIR = PROJ_ROOT / "reports"
-FIGURES_DIR = REPORTS_DIR / "figures"
+    reports_dir: Path = PROJ_ROOT / "reports"
+
+    target_column: str = "ToDo"
+
+    # MiBici open-data download range (inclusive)
+    download_data_start_year: int = 2014
+    download_data_start_month: int = 1
+    download_data_end_year: int = 2026
+    download_data_end_month: int = 12
+
+    train_size: float = 0.70
+    validation_size: float = 0.15
+    test_size: float = 0.15
+
+    mlflow_tracking_uri: str = "http://127.0.0.1:5000"
+
+CONFIG = ProjectConfig()
 
 # If tqdm is installed, configure loguru with tqdm.write
 # https://github.com/Delgan/loguru/issues/135
