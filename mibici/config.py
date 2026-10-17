@@ -11,6 +11,7 @@ load_dotenv()
 PROJ_ROOT = Path(__file__).resolve().parents[1]
 logger.info(f"PROJ_ROOT path is: {PROJ_ROOT}")
 
+
 @dataclass(frozen=True)
 class ProjectConfig:
     data_dir: Path = PROJ_ROOT / "data"
@@ -18,7 +19,7 @@ class ProjectConfig:
     interim_data_dir: Path = PROJ_ROOT / "data" / "interim"
     processed_data_dir: Path = PROJ_ROOT / "data" / "processed"
     external_data_dir: Path = PROJ_ROOT / "data" / "external"
-    output_filename: str = "combined_dataset.csv"
+    output_filename: str = "combined_dataset.parquet"
 
     models_dir: Path = PROJ_ROOT / "models"
 
@@ -26,17 +27,18 @@ class ProjectConfig:
 
     target_column: str = "ToDo"
 
-    # MiBici open-data download range (inclusive)
-    download_data_start_year: int = 2014
+    # MiBici open-data download range (inclusive), the one agreed by the team
+    download_data_start_year: int = 2025
     download_data_start_month: int = 1
     download_data_end_year: int = 2026
-    download_data_end_month: int = 12
+    download_data_end_month: int = 9
 
     train_size: float = 0.70
     validation_size: float = 0.15
     test_size: float = 0.15
 
     mlflow_tracking_uri: str = "http://127.0.0.1:5000"
+
 
 CONFIG = ProjectConfig()
 

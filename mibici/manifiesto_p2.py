@@ -1,0 +1,33 @@
+"""Escribe el manifiesto (registros y sha256) de los archivos usados en P2.
+
+La version resultante se registra como data_version en los runs de MLflow.
+"""
+
+import json
+from pathlib import Path
+
+from loguru import logger
+import typer
+
+from mibici.config import CONFIG, PROJ_ROOT
+from mibici.features_p2 import manifiesto_datos
+
+app = typer.Typer()
+
+
+@app.command()
+def main(
+    salida: Path = PROJ_ROOT / "references" / "manifiesto_datos_p2.json",
+    carpeta: Path = CONFIG.raw_data_dir,
+) -> None:
+    """Calcula el manifiesto de los CSV mensuales y la nomenclatura en carpeta."""
+    archivos = sorted(carpeta.glob("datos_abiertos_*.csv")) + [
+        carpeta / "nomenclatura_2026_09.csv"
+    ]
+    manifiesto = manifiesto_datos(archivos)
+    salida.write_text(json.dumps(manifiesto, indent=2) + "\n")
+    logger.info("Manifiesto {} con version {}", salida, manifiesto["version"])
+
+
+if __name__ == "__main__":
+    app()

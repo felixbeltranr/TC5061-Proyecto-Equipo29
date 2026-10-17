@@ -1,17 +1,18 @@
-ipython
-jupyterlab
-loguru  # logging used by mibici.dataset
-matplotlib
-notebook
-numpy
-pandas  # DataFrames used to load each monthly CSV
+ipython==9.17.1
+jupyterlab==4.6.4
+loguru==0.7.3  # logging used by mibici.dataset
+matplotlib==3.11.2
+notebook==7.6.3
+numpy==2.5.4
+pandas==3.0.6  # DataFrames used to load each monthly CSV
+pyarrow==25.0.1  # Parquet engine for the combined dataset
 pip
-pytest
-python-dotenv
-ruff  # linting and formatting
-scikit-learn
-tqdm
-typer  # command-line interface used by mibici.dataset
+pytest==9.1.1
+python-dotenv==1.2.4
+ruff==0.17.1  # linting and formatting
+scikit-learn==1.9.1
+tqdm==4.70.1
+typer==0.27.3  # command-line interface used by mibici.dataset
 seaborn==0.13.2
 mlflow==3.16.1
 mlflow-skinny==3.16.1
