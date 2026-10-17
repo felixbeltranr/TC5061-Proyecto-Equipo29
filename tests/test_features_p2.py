@@ -68,3 +68,41 @@ def test_features_no_usan_la_hora_objetivo():
     b = construir_features(agregar_ocupacion(alterado, 0.5)).set_index("ts")
     ts_t = horas[t]
     pd.testing.assert_series_equal(a.loc[ts_t, cols], b.loc[ts_t, cols])
+
+
+def test_media_misma_hora_usa_cuatro_semanas():
+    import pandas as pd
+
+    from mibici.features_p2 import agregar_ocupacion, construir_features
+
+    # 36 dias de servicio por estacion; el neto de cada hora es distinto y conocido
+    horas = pd.date_range("2026-01-01 05:00", periods=24 * 36, freq="h")
+    piezas = []
+    for est, desfase in [(1, 0.0), (2, 10_000.0)]:
+        llegadas = np.arange(len(horas), dtype="float32") + desfase
+        piezas.append(
+            pd.DataFrame(
+                {
+                    "ts": horas,
+                    "estacion": est,
+                    "capacidad": np.float32(20),
+                    "salidas": np.float32(0),
+                    "llegadas": llegadas,
+                }
+            )
+        )
+    panel = pd.concat(piezas, ignore_index=True)
+    panel["neto"] = panel["llegadas"] - panel["salidas"]
+    panel["primer_dia"] = horas[0]
+    neto = panel.set_index(["estacion", "ts"])["neto"]
+
+    df = construir_features(agregar_ocupacion(panel, 0.5))
+    completas = df[df["ts_objetivo"] - pd.Timedelta(weeks=4) >= horas[0]]
+    assert len(completas) > 0
+    for est, ts_obj, valor, lag168 in completas[
+        ["estacion", "ts_objetivo", "neto_media168_misma_hora", "neto_lag168"]
+    ].itertuples(index=False):
+        # mismo instante del objetivo hace 1, 2, 3 y 4 semanas, dentro de la misma estacion
+        esperado = np.mean([neto[(est, ts_obj - pd.Timedelta(weeks=k))] for k in range(1, 5)])
+        assert valor == esperado
+        assert lag168 == neto[(est, ts_obj - pd.Timedelta(weeks=1))]
