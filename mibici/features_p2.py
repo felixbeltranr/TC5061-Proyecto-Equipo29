@@ -176,7 +176,23 @@ def agregar_ocupacion(panel: pd.DataFrame, nivel_inicial: float) -> pd.DataFrame
 
 
 def construir_features(panel: pd.DataFrame) -> pd.DataFrame:
-    """Features con informacion hasta el cierre de la hora t; objetivo = clase al cierre de t+1."""
+    """Features con informacion hasta el cierre de la hora t; objetivo = clase al cierre de t+1.
+
+    Variables y por que sirven para anticipar el riesgo:
+    - hora, dia_semana, fin_semana: del instante objetivo (conocido de antemano); capturan
+      los picos de entrada y salida laborales.
+    - capacidad: con pocos anclajes la estacion pasa mas rapido a vacia o llena.
+    - ocupacion_actual: ocupacion estimada al cierre de t entre capacidad; punto de partida
+      del estado en t+1.
+    - neto_lag1, salidas_lag1, llegadas_lag1: movimiento de la ultima hora (tendencia).
+    - neto_lag24, neto_lag168: flujo neto en el mismo instante del objetivo hace un dia y
+      una semana (shift de 23 y 167 filas desde t).
+    - neto_media3, neto_media24: medias moviles hasta t, suavizan el ruido horario.
+    - neto_media168_misma_hora: media del flujo en ese mismo instante en las 4 semanas previas.
+    - ocupacion_lag24, ocupacion_lag168: estado estimado en ese instante hace un dia y una semana.
+    - baseline_semana: clase en ese instante una semana antes (solo para el baseline).
+    Las estadisticas por estacion se agregan aparte con stats_estacion (solo train).
+    """
     df = panel.sort_values(["estacion", "ts"]).reset_index(drop=True)
     g = df.groupby("estacion", sort=False)
     df["objetivo"] = g["clase_actual"].shift(-1)
