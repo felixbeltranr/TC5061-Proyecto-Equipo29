@@ -14,13 +14,13 @@ Para descargar los CSV mensuales publicados en [Datos abiertos MiBici](https://m
 from mibici.dataset import (
     download_and_load_datasets,
     download_and_load_latest_nomenclature,
-    merge_dataset_nomenclature,
+    merge_dataset_define_nomenclature,
 )
 
 datasets = download_and_load_datasets()
-enero_2024 = datasets["datos_abiertos_2024_01"]
+enero_2025 = datasets["datos_abiertos_2025_01"]
 nomenclature = download_and_load_latest_nomenclature()
-all_trips = merge_dataset_nomenclature(datasets, nomenclature)
+all_trips = merge_dataset_define_nomenclature(datasets, nomenclature)
 
 # Opcional: reemplaza el rango configurado para esta llamada
 datasets = download_and_load_datasets(
@@ -31,7 +31,7 @@ datasets = download_and_load_datasets(
 )
 ```
 
-El rango inclusivo predeterminado se define en `mibici/config.py` mediante `DATA_START_YEAR`, `DATA_START_MONTH`, `DATA_END_YEAR` y `DATA_END_MONTH`. Actualmente cubre enero-diciembre de 2024. Los archivos originales se guardan en `data/raw/`. `datasets` es un diccionario cuyas claves son los nombres de archivo sin `.csv` y cuyos valores son los DataFrames mensuales. `nomenclature` contiene el DataFrame separado de la nomenclatura más reciente publicada; su CSV se guarda también en `data/raw/` con su nombre original. La función busca el año y mes más recientes enlazados en la página, independientemente del rango de viajes configurado. `merge_dataset_nomenclature` concatena los DataFrames mensuales y devuelve un único DataFrame con las columnas de nombre, latitud, longitud y capacidad para origen y destino; conserva también `Origen_Id` y `Destino_Id`. También se puede ejecutar `python -m mibici.dataset` para descargar el rango configurado, la nomenclatura más reciente, combinarlos y registrar sus dimensiones.
+El rango inclusivo predeterminado se define en `CONFIG` dentro de `mibici/config.py` mediante `download_data_start_year`, `download_data_start_month`, `download_data_end_year` y `download_data_end_month`. Actualmente cubre de enero de 2025 a septiembre de 2026, el rango acordado por el equipo. Los archivos originales se guardan en `data/raw/`. `datasets` es un diccionario cuyas claves son los nombres de archivo sin `.csv` y cuyos valores son los DataFrames mensuales. `nomenclature` contiene el DataFrame separado de la nomenclatura más reciente publicada; su CSV se guarda también en `data/raw/` con su nombre original. La función busca el año y mes más recientes enlazados en la página, independientemente del rango de viajes configurado. Al cargar cada CSV se normalizan los nombres de columnas (espacios, comillas y acentos) para que coincidan entre meses. `merge_dataset_define_nomenclature` concatena los DataFrames mensuales, convierte `Inicio_del_viaje` y `Fin_del_viaje` a fechas y devuelve un único DataFrame con las columnas de nombre, latitud, longitud y capacidad para origen y destino; conserva también `Origen_Id` y `Destino_Id`. También se puede ejecutar `python -m mibici.dataset` para descargar el rango configurado, la nomenclatura más reciente, combinarlos, registrar sus dimensiones y guardar el resultado en `data/processed/combined_dataset.parquet` (la carpeta se crea si no existe).
 
 Para reemplazar el rango desde la línea de comandos, especifica los cuatro valores:
 
