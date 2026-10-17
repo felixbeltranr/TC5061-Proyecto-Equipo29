@@ -37,3 +37,34 @@ def test_acumulado_respeta_capacidad():
     occ = acumular_ocupacion(neto, np.array([10]), 0.5)
     assert occ.tolist() == [[10, 10, 0, 3]]
     assert (occ <= 10).all() and (occ >= 0).all()
+
+
+def test_features_no_usan_la_hora_objetivo():
+    import pandas as pd
+
+    from mibici.features_p2 import FEATURES, agregar_ocupacion, construir_features
+
+    horas = pd.date_range("2026-01-01 05:00", periods=24 * 10, freq="h")
+    rng = np.random.default_rng(0)
+    base = pd.DataFrame(
+        {
+            "ts": horas,
+            "estacion": 1,
+            "capacidad": np.float32(20),
+            "salidas": rng.integers(0, 4, len(horas)).astype("float32"),
+            "llegadas": rng.integers(0, 4, len(horas)).astype("float32"),
+        }
+    )
+    base["neto"] = base["llegadas"] - base["salidas"]
+    base["primer_dia"] = horas[0]
+    t = 24 * 9 + 10
+    alterado = base.copy()
+    # cambiar solo lo que pasa en t+1 y despues
+    alterado.loc[t + 1 :, "llegadas"] += 15
+    alterado["neto"] = alterado["llegadas"] - alterado["salidas"]
+
+    cols = [c for c in FEATURES if not c.startswith("est_")]
+    a = construir_features(agregar_ocupacion(base, 0.5)).set_index("ts")
+    b = construir_features(agregar_ocupacion(alterado, 0.5)).set_index("ts")
+    ts_t = horas[t]
+    pd.testing.assert_series_equal(a.loc[ts_t, cols], b.loc[ts_t, cols])
