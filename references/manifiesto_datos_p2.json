@@ -1,0 +1,116 @@
+{
+  "version": "66dd3d190bba",
+  "sha256_global": "66dd3d190bba3ad722d79b73a70698741b6b831462e84c8331d1e6bb98133782",
+  "archivos": [
+    {
+      "archivo": "datos_abiertos_2025_01.csv",
+      "sha256": "90ee75701a69374926af0400d204f3280baed0e3c1a1f97d9e6c0b283757125a",
+      "registros": 380184
+    },
+    {
+      "archivo": "datos_abiertos_2025_02.csv",
+      "sha256": "f52f13f59eb2f1517e05c72f0a3d3d70c5b0fa6b86626c7325e8ca3b15ff74f8",
+      "registros": 372529
+    },
+    {
+      "archivo": "datos_abiertos_2025_03.csv",
+      "sha256": "e5aa1b5d197f294022d3f0ff1b55bf553fcbdb697b50d43deaddf8dca36fed64",
+      "registros": 405110
+    },
+    {
+      "archivo": "datos_abiertos_2025_04.csv",
+      "sha256": "630e637d6611aadc67aad321edcd541361220473bddf8e34ecba46c0e29d7341",
+      "registros": 366193
+    },
+    {
+      "archivo": "datos_abiertos_2025_05.csv",
+      "sha256": "e0a744412a1e840c1d24c24269565a123b35739c0bac494b9c0f53ba0a2c43c2",
+      "registros": 395891
+    },
+    {
+      "archivo": "datos_abiertos_2025_06.csv",
+      "sha256": "063e3523db00c90899f08fb134c4c382667eb0e4d8b6358890d426409c6f4c9e",
+      "registros": 356611
+    },
+    {
+      "archivo": "datos_abiertos_2025_07.csv",
+      "sha256": "a71a9e2a629ff91b021f57e302958e64fa545678d6373aaf0fed62dfc7bebd29",
+      "registros": 368186
+    },
+    {
+      "archivo": "datos_abiertos_2025_08.csv",
+      "sha256": "382e62f3eb878e13faf4c93d031c8efcf765c392b3402d27b264613f9ff4a56d",
+      "registros": 374727
+    },
+    {
+      "archivo": "datos_abiertos_2025_09.csv",
+      "sha256": "218bed1587a70ec5fc5e8589a04783532301f19c55acd3633fa219c96860e720",
+      "registros": 376789
+    },
+    {
+      "archivo": "datos_abiertos_2025_10.csv",
+      "sha256": "505d9b8b59f65fa223f7889189b74b9fe167c9dda11c7e7053536a360c611370",
+      "registros": 420064
+    },
+    {
+      "archivo": "datos_abiertos_2025_11.csv",
+      "sha256": "f5c4f1b0c0842339dfdfaac756607314bdf5b64d17cde58d754f5a5a2e1a5fbe",
+      "registros": 380328
+    },
+    {
+      "archivo": "datos_abiertos_2025_12.csv",
+      "sha256": "b9fbb7386666ac3d452e3d3ef40ab443c39eef349cd9c97207230371e1d2d001",
+      "registros": 335420
+    },
+    {
+      "archivo": "datos_abiertos_2026_01.csv",
+      "sha256": "c40d7a43eb1c0b1523d6267bcdfac1daad04179ef1f0a7cf93f09b2df82285c2",
+      "registros": 357180
+    },
+    {
+      "archivo": "datos_abiertos_2026_02.csv",
+      "sha256": "2d78fa9686477bdedbf333423e6aadc63b265aaef038eb0b09701746a155ae1f",
+      "registros": 333756
+    },
+    {
+      "archivo": "datos_abiertos_2026_03.csv",
+      "sha256": "97c273aa7465c99d509dfc58436122a979ad51af00bd527cef6144210375d16e",
+      "registros": 376243
+    },
+    {
+      "archivo": "datos_abiertos_2026_04.csv",
+      "sha256": "9165342d0169f2c0ba4fb2c944003147c8a95d77f9058361b451cadf141b2483",
+      "registros": 351851
+    },
+    {
+      "archivo": "datos_abiertos_2026_05.csv",
+      "sha256": "d0ac16ae3a75b8ac40565176e2e607c99c756a385860caa7e2ffb351082c9d45",
+      "registros": 315895
+    },
+    {
+      "archivo": "datos_abiertos_2026_06.csv",
+      "sha256": "a4d195786a3599b155829288a0432cd9e76c6780dc693c0e9579d11e11c49a27",
+      "registros": 355303
+    },
+    {
+      "archivo": "datos_abiertos_2026_07.csv",
+      "sha256": "3f9db9fed985977b175001a984302eae7c61326a75ed93afae9c8fc17bbdb922",
+      "registros": 388257
+    },
+    {
+      "archivo": "datos_abiertos_2026_08.csv",
+      "sha256": "e34f39b9ad204ae0b66f3538894a5f86ed03f46d98701169d3e4d95952d5f671",
+      "registros": 393524
+    },
+    {
+      "archivo": "datos_abiertos_2026_09.csv",
+      "sha256": "00b5cf64cc31a502d01044d905f6e033f9bc1db962e771119742fd25c6cb58b3",
+      "registros": 490056
+    },
+    {
+      "archivo": "nomenclatura_2026_09.csv",
+      "sha256": "206e45fe633922b634d858142fa21e6fd9f4c421b6435c02980ef290cc2df90d",
+      "registros": 484
+    }
+  ]
+}
