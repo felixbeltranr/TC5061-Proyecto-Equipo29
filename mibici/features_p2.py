@@ -208,7 +208,8 @@ def construir_features(panel: pd.DataFrame) -> pd.DataFrame:
     - neto_lag24, neto_lag168: flujo neto en el mismo instante del objetivo hace un dia y
       una semana (shift de 23 y 167 filas desde t).
     - neto_media3, neto_media24: medias moviles hasta t, suavizan el ruido horario.
-    - neto_media168_misma_hora: media del flujo en ese mismo instante en las 4 semanas previas.
+    - neto_media168_misma_hora: media del flujo neto en el mismo instante del objetivo hace
+      1, 2, 3 y 4 semanas (shift de 167, 335, 503 y 671 filas desde t).
     - ocupacion_lag24, ocupacion_lag168: estado estimado en ese instante hace un dia y una semana.
     - baseline_semana: clase en ese instante una semana antes (solo para el baseline).
     Las estadisticas por estacion se agregan aparte con stats_estacion (solo train).
@@ -229,7 +230,8 @@ def construir_features(panel: pd.DataFrame) -> pd.DataFrame:
     df["llegadas_lag1"] = df["llegadas"]
     df["neto_media3"] = g["neto"].transform(lambda s: s.rolling(3, min_periods=1).mean())
     df["neto_media24"] = g["neto"].transform(lambda s: s.rolling(24, min_periods=1).mean())
-    sem = [g["neto"].shift(24 * k - 1) for k in range(1, 5)]
+    # mismo instante del objetivo hace k semanas (k = 1..4); k = 1 coincide con neto_lag168
+    sem = [g["neto"].shift(168 * k - 1) for k in range(1, 5)]
     df["neto_media168_misma_hora"] = pd.concat(sem, axis=1).mean(axis=1)
     razon = df["ocupacion"] / df["capacidad"]
     df["ocupacion_lag24"] = razon.groupby(df["estacion"]).shift(23)
