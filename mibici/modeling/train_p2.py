@@ -29,8 +29,8 @@ from sklearn.metrics import (
     precision_recall_fscore_support,
 )
 
-from mibici.config import CONFIG, PROJ_ROOT
 from mibici import features_p2 as fp
+from mibici.config import CONFIG, PROJ_ROOT
 
 EXPERIMENTO = "mibici-equipo29"
 RIESGO = ["sin_bicicletas", "sin_anclajes"]
@@ -52,7 +52,7 @@ def git_commit() -> tuple[str, bool]:
         sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=PROJ_ROOT, text=True).strip()
         sucio = bool(subprocess.check_output(["git", "status", "--porcelain", "--untracked-files=no"], cwd=PROJ_ROOT, text=True).strip())
         return sha, sucio
-    except Exception:
+    except (subprocess.CalledProcessError, FileNotFoundError):
         return "desconocido", True
 
 
@@ -135,7 +135,7 @@ def correr_nivel(nivel, panel, args, manifiesto, resumen, params_hgb, rejilla, t
     train = fp.unir_stats(partes["train"], por_est, por_hora)
     test = fp.unir_stats(partes["test"], por_est, por_hora)
     nuevas = test["primer_dia"] >= pd.Timestamp(CORTES["test_inicio"])
-    sufijo = f"ini{int(round(nivel * 100))}"
+    sufijo = f"ini{round(nivel * 100)}"
     figs = Path(args.figuras)
     figs.mkdir(parents=True, exist_ok=True)
     n_nuevas = int(test.loc[nuevas, "estacion"].nunique())

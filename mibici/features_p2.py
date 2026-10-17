@@ -113,9 +113,9 @@ def construir_panel(
     Excluye estaciones sin capacidad y las que no aparecen en la nomenclatura.
     Cada estacion entra al panel desde el primer dia en que registra viajes.
     """
-    resumen: dict = {"viajes_totales": int(len(viajes))}
+    resumen: dict = {"viajes_totales": len(viajes)}
     viajes = viajes.dropna(subset=["Inicio_del_viaje", "Fin_del_viaje", "Origen_Id", "Destino_Id"])
-    resumen["viajes_sin_fecha_o_estacion"] = resumen["viajes_totales"] - int(len(viajes))
+    resumen["viajes_sin_fecha_o_estacion"] = resumen["viajes_totales"] - len(viajes)
 
     salidas = (
         viajes.assign(estacion=viajes["Origen_Id"].astype(int), ts=viajes["Inicio_del_viaje"].dt.floor("h"))
@@ -157,7 +157,7 @@ def construir_panel(
     panel["neto"] = panel["llegadas"] - panel["salidas"]
     panel["primer_dia"] = panel.groupby("estacion")["ts"].transform("min")
     resumen["estaciones_modeladas"] = int(panel["estacion"].nunique())
-    resumen["filas_panel"] = int(len(panel))
+    resumen["filas_panel"] = len(panel)
     return panel, resumen
 
 
