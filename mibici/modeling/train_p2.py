@@ -129,7 +129,7 @@ def registrar(nombre, tags, params, mets, artefactos):
             mlflow.log_artifact(str(a))
 
 
-def correr_nivel(nivel, panel, args, manifiesto, resumen, params_hgb, rejilla, tags_base):
+def correr_nivel(nivel, panel, args, manifiesto, resumen, params_hgb, rejilla, tags_base, sin_pesos=False):
     partes = preparar(nivel, panel)
     por_est, por_hora = fp.stats_estacion(partes["train"])
     train = fp.unir_stats(partes["train"], por_est, por_hora)
@@ -170,7 +170,7 @@ def correr_nivel(nivel, panel, args, manifiesto, resumen, params_hgb, rejilla, t
     m |= metricas(test.loc[nuevas, "objetivo"], pred[nuevas.to_numpy()], None, fp.CLASES, "test_nuevas")
     registrar(f"p2_baseline_mayoritaria_{sufijo}", tags_base | {"modelo": "baseline_mayoritaria"},
               params_comunes | {"modelo": "clase_mayoritaria", "clase": mayoritaria}, m | dist_m, [])
-    salida["baseline_mayoritaria"] = m
+    salida["baseline_mayoritaria"] = m | dist_m
 
     # baseline 2: misma clase a la misma hora la semana previa
     pred = test["baseline_semana"].fillna(mayoritaria).to_numpy()
@@ -179,7 +179,16 @@ def correr_nivel(nivel, panel, args, manifiesto, resumen, params_hgb, rejilla, t
     fig = figura_confusion(test["objetivo"], pred, f"Baseline semana previa (inicio {sufijo})", figs / f"p2_cm_baseline_semana_{sufijo}.png")
     registrar(f"p2_baseline_semana_previa_{sufijo}", tags_base | {"modelo": "baseline_semana_previa"},
               params_comunes | {"modelo": "clase_misma_hora_semana_previa"}, m | dist_m, [fig])
-    salida["baseline_semana_previa"] = m
+    salida["baseline_semana_previa"] = m | dist_m
+
+    # baseline 3: persistencia, la clase estimada de la hora actual se repite en t+1
+    pred = test["clase_actual"].to_numpy()
+    m = metricas(test["objetivo"], pred, None, fp.CLASES, "test")
+    m |= metricas(test.loc[nuevas, "objetivo"], pred[nuevas.to_numpy()], None, fp.CLASES, "test_nuevas")
+    fig = figura_confusion(test["objetivo"], pred, f"Baseline persistencia (inicio {sufijo})", figs / f"p2_cm_baseline_persistencia_{sufijo}.png")
+    registrar(f"p2_baseline_persistencia_{sufijo}", tags_base | {"modelo": "baseline_persistencia"},
+              params_comunes | {"modelo": "clase_actual_se_repite"}, m | dist_m, [fig])
+    salida["baseline_persistencia"] = m | dist_m
 
     # candidato: HistGradientBoosting con pesos balanceados
     modelo = ajustar(train, params_hgb, args.semilla)
@@ -218,7 +227,22 @@ def correr_nivel(nivel, panel, args, manifiesto, resumen, params_hgb, rejilla, t
               params_comunes | {"modelo": "HistGradientBoostingClassifier", "class_weight": "balanced",
                                 "features": ",".join(fp.FEATURES)} | params_hgb,
               m | dist_m, artefactos + [Path(args.manifiesto), Path(args.panel).with_suffix(".json")])
-    salida["hgb"] = m
+    salida["hgb"] = m | dist_m
+
+    if sin_pesos:
+        # misma configuracion sin pesos de clase, para ver el efecto del balanceo
+        modelo = HistGradientBoostingClassifier(random_state=args.semilla, early_stopping=False, **params_hgb)
+        modelo.fit(train[fp.FEATURES], train["objetivo"])
+        clases = list(modelo.classes_)
+        proba = modelo.predict_proba(test[fp.FEATURES])
+        pred = np.array(clases, dtype=object)[proba.argmax(1)]
+        m = metricas(test["objetivo"], pred, proba, clases, "test")
+        m |= metricas(test.loc[nuevas, "objetivo"], pred[nuevas.to_numpy()], proba[nuevas.to_numpy()], clases, "test_nuevas")
+        fig = figura_confusion(test["objetivo"], pred, f"HGB sin pesos (inicio {sufijo})", figs / f"p2_cm_hgb_sin_pesos_{sufijo}.png")
+        registrar(f"p2_hgb_sin_pesos_{sufijo}", tags_base | {"modelo": "hist_gradient_boosting_sin_pesos"},
+                  params_comunes | {"modelo": "HistGradientBoostingClassifier", "class_weight": "ninguno"} | params_hgb,
+                  m | dist_m, [fig])
+        salida["hgb_sin_pesos"] = m | dist_m
     return salida
 
 
@@ -258,7 +282,7 @@ def main(argv=None):
     todo = {}
     for i, nivel in enumerate(args.niveles):
         todo[str(nivel)] = correr_nivel(nivel, panel, args, manifiesto, resumen, params_hgb,
-                                        rejilla if i == 0 else [], tags_base)
+                                        rejilla if i == 0 else [], tags_base, sin_pesos=i == 0)
     ruta = Path(args.figuras) / "p2_resultados.json"
     ruta.write_text(json.dumps({"params_hgb": params_hgb, "rejilla": rejilla, "resultados": todo}, indent=2))
     logger.info("Resultados en {}", ruta)
