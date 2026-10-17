@@ -331,7 +331,7 @@ def main(
 
     # data/ no se versiona, en un clon limpio la carpeta no existe
     output_processed_dir.mkdir(parents=True, exist_ok=True)
-    combined_dataset.to_csv(output_processed_dir / CONFIG.output_filename, index=False)
+    combined_dataset.to_parquet(output_processed_dir / CONFIG.output_filename, index=False)
     logger.info(
         "Saved combined dataset to {}",
         output_processed_dir / CONFIG.output_filename,

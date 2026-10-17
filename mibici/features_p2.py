@@ -3,7 +3,7 @@
 Los datos abiertos no traen inventario por estacion, asi que aproximamos la
 ocupacion con el flujo neto (llegadas menos salidas) acumulado por dia de
 servicio desde un nivel inicial supuesto, recortado a [0, capacidad].
-Se construye sobre combined_dataset.csv generado por mibici.dataset.
+Se construye sobre combined_dataset.parquet generado por mibici.dataset.
 """
 
 from __future__ import annotations
@@ -94,7 +94,11 @@ def acumular_ocupacion(
 def cargar_viajes(ruta: Path) -> pd.DataFrame:
     """Lee del dataset combinado solo fechas y estaciones; no carga datos de usuario."""
     columnas = ["Inicio_del_viaje", "Fin_del_viaje", "Origen_Id", "Destino_Id"]
-    viajes = pd.read_csv(ruta, usecols=columnas)
+    # Parquet es la salida de mibici.dataset; el CSV queda por si alguien trae uno anterior
+    if ruta.suffix == ".parquet":
+        viajes = pd.read_parquet(ruta, columns=columnas)
+    else:
+        viajes = pd.read_csv(ruta, usecols=columnas)
     viajes["Inicio_del_viaje"] = pd.to_datetime(viajes["Inicio_del_viaje"], errors="coerce")
     viajes["Fin_del_viaje"] = pd.to_datetime(viajes["Fin_del_viaje"], errors="coerce")
     return viajes

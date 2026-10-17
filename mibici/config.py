@@ -19,7 +19,7 @@ class ProjectConfig:
     interim_data_dir: Path = PROJ_ROOT / "data" / "interim"
     processed_data_dir: Path = PROJ_ROOT / "data" / "processed"
     external_data_dir: Path = PROJ_ROOT / "data" / "external"
-    output_filename: str = "combined_dataset.csv"
+    output_filename: str = "combined_dataset.parquet"
 
     models_dir: Path = PROJ_ROOT / "models"
 

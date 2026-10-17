@@ -5,6 +5,7 @@ matplotlib
 notebook
 numpy
 pandas  # DataFrames used to load each monthly CSV
+pyarrow  # Parquet engine for the combined dataset
 pip
 pytest
 python-dotenv
