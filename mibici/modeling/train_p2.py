@@ -49,15 +49,25 @@ REJILLA = [
 
 def git_commit() -> tuple[str, bool]:
     try:
-        sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=PROJ_ROOT, text=True).strip()
-        sucio = bool(subprocess.check_output(["git", "status", "--porcelain", "--untracked-files=no"], cwd=PROJ_ROOT, text=True).strip())
+        sha = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=PROJ_ROOT, text=True
+        ).strip()
+        sucio = bool(
+            subprocess.check_output(
+                ["git", "status", "--porcelain", "--untracked-files=no"], cwd=PROJ_ROOT, text=True
+            ).strip()
+        )
         return sha, sucio
-    except (subprocess.CalledProcessError, FileNotFoundError):
+    except subprocess.CalledProcessError, FileNotFoundError:
         return "desconocido", True
 
 
 def metricas(y_true, y_pred, proba: np.ndarray | None, clases: list[str], prefijo: str) -> dict:
-    m = {f"{prefijo}_macro_f1": f1_score(y_true, y_pred, labels=fp.CLASES, average="macro", zero_division=0)}
+    m = {
+        f"{prefijo}_macro_f1": f1_score(
+            y_true, y_pred, labels=fp.CLASES, average="macro", zero_division=0
+        )
+    }
     p, r, f, _ = precision_recall_fscore_support(y_true, y_pred, labels=fp.CLASES, zero_division=0)
     for i, c in enumerate(fp.CLASES):
         m[f"{prefijo}_precision_{c}"] = p[i]
@@ -67,14 +77,18 @@ def metricas(y_true, y_pred, proba: np.ndarray | None, clases: list[str], prefij
         for c in RIESGO:
             y_bin = (np.asarray(y_true) == c).astype(int)
             if y_bin.sum():
-                m[f"{prefijo}_pr_auc_{c}"] = average_precision_score(y_bin, proba[:, clases.index(c)])
+                m[f"{prefijo}_pr_auc_{c}"] = average_precision_score(
+                    y_bin, proba[:, clases.index(c)]
+                )
     return {k: float(v) for k, v in m.items()}
 
 
 def figura_confusion(y_true, y_pred, titulo: str, ruta: Path) -> Path:
     cm = confusion_matrix(y_true, y_pred, labels=fp.CLASES)
     fig, ax = plt.subplots(figsize=(6, 5))
-    ConfusionMatrixDisplay(cm, display_labels=fp.CLASES).plot(ax=ax, values_format="d", colorbar=False)
+    ConfusionMatrixDisplay(cm, display_labels=fp.CLASES).plot(
+        ax=ax, values_format="d", colorbar=False
+    )
     ax.set_title(titulo)
     fig.tight_layout()
     fig.savefig(ruta, dpi=120)
@@ -129,7 +143,9 @@ def registrar(nombre, tags, params, mets, artefactos):
             mlflow.log_artifact(str(a))
 
 
-def correr_nivel(nivel, panel, args, manifiesto, resumen, params_hgb, rejilla, tags_base, sin_pesos=False):
+def correr_nivel(
+    nivel, panel, args, manifiesto, resumen, params_hgb, rejilla, tags_base, sin_pesos=False
+):
     partes = preparar(nivel, panel)
     por_est, por_hora = fp.stats_estacion(partes["train"])
     train = fp.unir_stats(partes["train"], por_est, por_hora)
@@ -167,27 +183,58 @@ def correr_nivel(nivel, panel, args, manifiesto, resumen, params_hgb, rejilla, t
     mayoritaria = train["objetivo"].mode()[0]
     pred = np.full(len(test), mayoritaria, dtype=object)
     m = metricas(test["objetivo"], pred, None, fp.CLASES, "test")
-    m |= metricas(test.loc[nuevas, "objetivo"], pred[nuevas.to_numpy()], None, fp.CLASES, "test_nuevas")
-    registrar(f"p2_baseline_mayoritaria_{sufijo}", tags_base | {"modelo": "baseline_mayoritaria"},
-              params_comunes | {"modelo": "clase_mayoritaria", "clase": mayoritaria}, m | dist_m, [])
+    m |= metricas(
+        test.loc[nuevas, "objetivo"], pred[nuevas.to_numpy()], None, fp.CLASES, "test_nuevas"
+    )
+    registrar(
+        f"p2_baseline_mayoritaria_{sufijo}",
+        tags_base | {"modelo": "baseline_mayoritaria"},
+        params_comunes | {"modelo": "clase_mayoritaria", "clase": mayoritaria},
+        m | dist_m,
+        [],
+    )
     salida["baseline_mayoritaria"] = m | dist_m
 
     # baseline 2: misma clase a la misma hora la semana previa
     pred = test["baseline_semana"].fillna(mayoritaria).to_numpy()
     m = metricas(test["objetivo"], pred, None, fp.CLASES, "test")
-    m |= metricas(test.loc[nuevas, "objetivo"], pred[nuevas.to_numpy()], None, fp.CLASES, "test_nuevas")
-    fig = figura_confusion(test["objetivo"], pred, f"Baseline semana previa (inicio {sufijo})", figs / f"p2_cm_baseline_semana_{sufijo}.png")
-    registrar(f"p2_baseline_semana_previa_{sufijo}", tags_base | {"modelo": "baseline_semana_previa"},
-              params_comunes | {"modelo": "clase_misma_hora_semana_previa"}, m | dist_m, [fig])
+    m |= metricas(
+        test.loc[nuevas, "objetivo"], pred[nuevas.to_numpy()], None, fp.CLASES, "test_nuevas"
+    )
+    fig = figura_confusion(
+        test["objetivo"],
+        pred,
+        f"Baseline semana previa (inicio {sufijo})",
+        figs / f"p2_cm_baseline_semana_{sufijo}.png",
+    )
+    registrar(
+        f"p2_baseline_semana_previa_{sufijo}",
+        tags_base | {"modelo": "baseline_semana_previa"},
+        params_comunes | {"modelo": "clase_misma_hora_semana_previa"},
+        m | dist_m,
+        [fig],
+    )
     salida["baseline_semana_previa"] = m | dist_m
 
     # baseline 3: persistencia, la clase estimada de la hora actual se repite en t+1
     pred = test["clase_actual"].to_numpy()
     m = metricas(test["objetivo"], pred, None, fp.CLASES, "test")
-    m |= metricas(test.loc[nuevas, "objetivo"], pred[nuevas.to_numpy()], None, fp.CLASES, "test_nuevas")
-    fig = figura_confusion(test["objetivo"], pred, f"Baseline persistencia (inicio {sufijo})", figs / f"p2_cm_baseline_persistencia_{sufijo}.png")
-    registrar(f"p2_baseline_persistencia_{sufijo}", tags_base | {"modelo": "baseline_persistencia"},
-              params_comunes | {"modelo": "clase_actual_se_repite"}, m | dist_m, [fig])
+    m |= metricas(
+        test.loc[nuevas, "objetivo"], pred[nuevas.to_numpy()], None, fp.CLASES, "test_nuevas"
+    )
+    fig = figura_confusion(
+        test["objetivo"],
+        pred,
+        f"Baseline persistencia (inicio {sufijo})",
+        figs / f"p2_cm_baseline_persistencia_{sufijo}.png",
+    )
+    registrar(
+        f"p2_baseline_persistencia_{sufijo}",
+        tags_base | {"modelo": "baseline_persistencia"},
+        params_comunes | {"modelo": "clase_actual_se_repite"},
+        m | dist_m,
+        [fig],
+    )
     salida["baseline_persistencia"] = m | dist_m
 
     # candidato: HistGradientBoosting con pesos balanceados
@@ -196,22 +243,49 @@ def correr_nivel(nivel, panel, args, manifiesto, resumen, params_hgb, rejilla, t
     proba = modelo.predict_proba(test[fp.FEATURES])
     pred = np.array(clases, dtype=object)[proba.argmax(1)]
     m = metricas(test["objetivo"], pred, proba, clases, "test")
-    m |= metricas(test.loc[nuevas, "objetivo"], pred[nuevas.to_numpy()], proba[nuevas.to_numpy()], clases, "test_nuevas")
+    m |= metricas(
+        test.loc[nuevas, "objetivo"],
+        pred[nuevas.to_numpy()],
+        proba[nuevas.to_numpy()],
+        clases,
+        "test_nuevas",
+    )
     if rejilla:
         m["val_macro_f1"] = max(r["val_macro_f1"] for r in rejilla)
     artefactos = [
-        figura_confusion(test["objetivo"], pred, f"HGB test (inicio {sufijo})", figs / f"p2_cm_hgb_{sufijo}.png"),
-        figura_confusion(test.loc[nuevas, "objetivo"], pred[nuevas.to_numpy()], f"HGB estaciones nuevas (inicio {sufijo})", figs / f"p2_cm_hgb_nuevas_{sufijo}.png"),
+        figura_confusion(
+            test["objetivo"], pred, f"HGB test (inicio {sufijo})", figs / f"p2_cm_hgb_{sufijo}.png"
+        ),
+        figura_confusion(
+            test.loc[nuevas, "objetivo"],
+            pred[nuevas.to_numpy()],
+            f"HGB estaciones nuevas (inicio {sufijo})",
+            figs / f"p2_cm_hgb_nuevas_{sufijo}.png",
+        ),
     ]
     muestra = test.sample(min(150_000, len(test)), random_state=args.semilla)
-    imp = permutation_importance(modelo, muestra[fp.FEATURES], muestra["objetivo"], scoring="f1_macro",
-                                 n_repeats=3, random_state=args.semilla, n_jobs=1)
-    imp_df = pd.DataFrame({"feature": fp.FEATURES, "importancia_media": imp.importances_mean,
-                           "importancia_std": imp.importances_std}).sort_values("importancia_media", ascending=False)
+    imp = permutation_importance(
+        modelo,
+        muestra[fp.FEATURES],
+        muestra["objetivo"],
+        scoring="f1_macro",
+        n_repeats=3,
+        random_state=args.semilla,
+        n_jobs=1,
+    )
+    imp_df = pd.DataFrame(
+        {
+            "feature": fp.FEATURES,
+            "importancia_media": imp.importances_mean,
+            "importancia_std": imp.importances_std,
+        }
+    ).sort_values("importancia_media", ascending=False)
     ruta_imp = figs / f"p2_importancia_permutacion_{sufijo}.csv"
     imp_df.to_csv(ruta_imp, index=False)
     fig, ax = plt.subplots(figsize=(7, 6))
-    imp_df.iloc[::-1].plot.barh(x="feature", y="importancia_media", xerr="importancia_std", ax=ax, legend=False)
+    imp_df.iloc[::-1].plot.barh(
+        x="feature", y="importancia_media", xerr="importancia_std", ax=ax, legend=False
+    )
     ax.set_xlabel("Caida en macro F1 (test, muestra)")
     ax.set_title(f"Importancia por permutacion (inicio {sufijo})")
     fig.tight_layout()
@@ -223,25 +297,53 @@ def correr_nivel(nivel, panel, args, manifiesto, resumen, params_hgb, rejilla, t
         ruta_rej = figs / "p2_rejilla_validacion.json"
         ruta_rej.write_text(json.dumps(rejilla, indent=2))
         artefactos.append(ruta_rej)
-    registrar(f"p2_hgb_balanceado_{sufijo}", tags_base | {"modelo": "hist_gradient_boosting"},
-              params_comunes | {"modelo": "HistGradientBoostingClassifier", "class_weight": "balanced",
-                                "features": ",".join(fp.FEATURES)} | params_hgb,
-              m | dist_m, artefactos + [Path(args.manifiesto), Path(args.panel).with_suffix(".json")])
+    registrar(
+        f"p2_hgb_balanceado_{sufijo}",
+        tags_base | {"modelo": "hist_gradient_boosting"},
+        params_comunes
+        | {
+            "modelo": "HistGradientBoostingClassifier",
+            "class_weight": "balanced",
+            "features": ",".join(fp.FEATURES),
+        }
+        | params_hgb,
+        m | dist_m,
+        artefactos + [Path(args.manifiesto), Path(args.panel).with_suffix(".json")],
+    )
     salida["hgb"] = m | dist_m
 
     if sin_pesos:
         # misma configuracion sin pesos de clase, para ver el efecto del balanceo
-        modelo = HistGradientBoostingClassifier(random_state=args.semilla, early_stopping=False, **params_hgb)
+        modelo = HistGradientBoostingClassifier(
+            random_state=args.semilla, early_stopping=False, **params_hgb
+        )
         modelo.fit(train[fp.FEATURES], train["objetivo"])
         clases = list(modelo.classes_)
         proba = modelo.predict_proba(test[fp.FEATURES])
         pred = np.array(clases, dtype=object)[proba.argmax(1)]
         m = metricas(test["objetivo"], pred, proba, clases, "test")
-        m |= metricas(test.loc[nuevas, "objetivo"], pred[nuevas.to_numpy()], proba[nuevas.to_numpy()], clases, "test_nuevas")
-        fig = figura_confusion(test["objetivo"], pred, f"HGB sin pesos (inicio {sufijo})", figs / f"p2_cm_hgb_sin_pesos_{sufijo}.png")
-        registrar(f"p2_hgb_sin_pesos_{sufijo}", tags_base | {"modelo": "hist_gradient_boosting_sin_pesos"},
-                  params_comunes | {"modelo": "HistGradientBoostingClassifier", "class_weight": "ninguno"} | params_hgb,
-                  m | dist_m, [fig])
+        m |= metricas(
+            test.loc[nuevas, "objetivo"],
+            pred[nuevas.to_numpy()],
+            proba[nuevas.to_numpy()],
+            clases,
+            "test_nuevas",
+        )
+        fig = figura_confusion(
+            test["objetivo"],
+            pred,
+            f"HGB sin pesos (inicio {sufijo})",
+            figs / f"p2_cm_hgb_sin_pesos_{sufijo}.png",
+        )
+        registrar(
+            f"p2_hgb_sin_pesos_{sufijo}",
+            tags_base | {"modelo": "hist_gradient_boosting_sin_pesos"},
+            params_comunes
+            | {"modelo": "HistGradientBoostingClassifier", "class_weight": "ninguno"}
+            | params_hgb,
+            m | dist_m,
+            [fig],
+        )
         salida["hgb_sin_pesos"] = m | dist_m
     return salida
 
@@ -249,18 +351,29 @@ def correr_nivel(nivel, panel, args, manifiesto, resumen, params_hgb, rejilla, t
 def main(argv=None):
     ap = argparse.ArgumentParser(description="Experimento base P2 en MLflow")
     ap.add_argument("--panel", default=str(CONFIG.interim_data_dir / "p2_panel_horario.parquet"))
-    ap.add_argument("--niveles", type=float, nargs="+", default=[0.5],
-                    help="niveles iniciales de ocupacion; el primero se usa para afinar")
+    ap.add_argument(
+        "--niveles",
+        type=float,
+        nargs="+",
+        default=[0.5],
+        help="niveles iniciales de ocupacion; el primero se usa para afinar",
+    )
     ap.add_argument("--semilla", type=int, default=29)
     ap.add_argument("--tracking-uri", default=f"sqlite:///{PROJ_ROOT / 'mlflow.db'}")
     ap.add_argument("--figuras", default=str(CONFIG.reports_dir / "figures"))
-    ap.add_argument("--manifiesto", default=str(PROJ_ROOT / "references" / "manifiesto_datos_p2.json"))
-    ap.add_argument("--sin-afinar", action="store_true", help="usa la primera configuracion de la rejilla")
+    ap.add_argument(
+        "--manifiesto", default=str(PROJ_ROOT / "references" / "manifiesto_datos_p2.json")
+    )
+    ap.add_argument(
+        "--sin-afinar", action="store_true", help="usa la primera configuracion de la rejilla"
+    )
     args = ap.parse_args(argv)
 
     mlflow.set_tracking_uri(args.tracking_uri)
     if mlflow.get_experiment_by_name(EXPERIMENTO) is None:
-        mlflow.create_experiment(EXPERIMENTO, artifact_location=(PROJ_ROOT / "mlartifacts").as_uri())
+        mlflow.create_experiment(
+            EXPERIMENTO, artifact_location=(PROJ_ROOT / "mlartifacts").as_uri()
+        )
     mlflow.set_experiment(EXPERIMENTO)
 
     manifiesto = json.loads(Path(args.manifiesto).read_text())
@@ -268,9 +381,15 @@ def main(argv=None):
     panel = pd.read_parquet(args.panel)
     sha, sucio = git_commit()
     tags_base = {
-        "question": "P2", "team": "29", "author": "carlosgalvan", "data_range": "2025-01..2026-09",
-        "seed": str(args.semilla), "data_version": manifiesto["version"],
-        "mlflow.source.git.commit": sha, "git_commit": sha, "git_dirty": str(sucio),
+        "question": "P2",
+        "team": "29",
+        "author": "carlosgalvan",
+        "data_range": "2025-01..2026-09",
+        "seed": str(args.semilla),
+        "data_version": manifiesto["version"],
+        "mlflow.source.git.commit": sha,
+        "git_commit": sha,
+        "git_dirty": str(sucio),
     }
 
     if args.sin_afinar:
@@ -281,10 +400,21 @@ def main(argv=None):
 
     todo = {}
     for i, nivel in enumerate(args.niveles):
-        todo[str(nivel)] = correr_nivel(nivel, panel, args, manifiesto, resumen, params_hgb,
-                                        rejilla if i == 0 else [], tags_base, sin_pesos=i == 0)
+        todo[str(nivel)] = correr_nivel(
+            nivel,
+            panel,
+            args,
+            manifiesto,
+            resumen,
+            params_hgb,
+            rejilla if i == 0 else [],
+            tags_base,
+            sin_pesos=i == 0,
+        )
     ruta = Path(args.figuras) / "p2_resultados.json"
-    ruta.write_text(json.dumps({"params_hgb": params_hgb, "rejilla": rejilla, "resultados": todo}, indent=2))
+    ruta.write_text(
+        json.dumps({"params_hgb": params_hgb, "rejilla": rejilla, "resultados": todo}, indent=2)
+    )
     logger.info("Resultados en {}", ruta)
 
 

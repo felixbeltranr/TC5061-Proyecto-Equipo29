@@ -70,7 +70,9 @@ def etiquetar_ocupacion(
     return etiqueta
 
 
-def acumular_ocupacion(neto: np.ndarray, capacidad: np.ndarray, nivel_inicial: float) -> np.ndarray:
+def acumular_ocupacion(
+    neto: np.ndarray, capacidad: np.ndarray, nivel_inicial: float
+) -> np.ndarray:
     """Ocupacion al cierre de cada hora para una matriz (dias_estacion, 24) de flujo neto.
 
     Cada fila es un dia de servicio de una estacion. Se parte de nivel_inicial * capacidad
@@ -118,12 +120,20 @@ def construir_panel(
     resumen["viajes_sin_fecha_o_estacion"] = resumen["viajes_totales"] - len(viajes)
 
     salidas = (
-        viajes.assign(estacion=viajes["Origen_Id"].astype(int), ts=viajes["Inicio_del_viaje"].dt.floor("h"))
-        .groupby(["estacion", "ts"]).size().rename("salidas")
+        viajes.assign(
+            estacion=viajes["Origen_Id"].astype(int), ts=viajes["Inicio_del_viaje"].dt.floor("h")
+        )
+        .groupby(["estacion", "ts"])
+        .size()
+        .rename("salidas")
     )
     llegadas = (
-        viajes.assign(estacion=viajes["Destino_Id"].astype(int), ts=viajes["Fin_del_viaje"].dt.floor("h"))
-        .groupby(["estacion", "ts"]).size().rename("llegadas")
+        viajes.assign(
+            estacion=viajes["Destino_Id"].astype(int), ts=viajes["Fin_del_viaje"].dt.floor("h")
+        )
+        .groupby(["estacion", "ts"])
+        .size()
+        .rename("llegadas")
     )
     flujo = pd.concat([salidas, llegadas], axis=1).fillna(0).reset_index()
 
@@ -145,7 +155,11 @@ def construir_panel(
     for est_id, grupo in flujo.groupby("estacion"):
         inicio = (grupo["ts"].min() - pd.Timedelta(hours=HORA_INICIO_SERVICIO)).normalize()
         inicio += pd.Timedelta(hours=HORA_INICIO_SERVICIO)
-        horas = pd.date_range(inicio, fin_ts.normalize() + pd.Timedelta(hours=24 + HORA_INICIO_SERVICIO - 1), freq="h")
+        horas = pd.date_range(
+            inicio,
+            fin_ts.normalize() + pd.Timedelta(hours=24 + HORA_INICIO_SERVICIO - 1),
+            freq="h",
+        )
         g = grupo.set_index("ts")[["salidas", "llegadas"]].reindex(horas, fill_value=0)
         g.index.name = "ts"
         g["estacion"] = est_id
@@ -222,7 +236,9 @@ def construir_features(panel: pd.DataFrame) -> pd.DataFrame:
 
 def stats_estacion(train: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Tasas por estacion calculadas solo con el periodo de entrenamiento."""
-    tasas = train.groupby("estacion")["objetivo"].value_counts(normalize=True).unstack(fill_value=0)
+    tasas = (
+        train.groupby("estacion")["objetivo"].value_counts(normalize=True).unstack(fill_value=0)
+    )
     tasas = tasas.reindex(columns=CLASES, fill_value=0)
     por_est = pd.DataFrame(
         {
@@ -231,13 +247,22 @@ def stats_estacion(train: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
         }
     )
     por_hora = (
-        train.groupby(["estacion", "hora"])["neto_lag1"].mean().rename("est_neto_medio_hora").reset_index()
+        train.groupby(["estacion", "hora"])["neto_lag1"]
+        .mean()
+        .rename("est_neto_medio_hora")
+        .reset_index()
     )
     return por_est.reset_index(), por_hora
 
 
 def unir_stats(df: pd.DataFrame, por_est: pd.DataFrame, por_hora: pd.DataFrame) -> pd.DataFrame:
-    df = df.drop(columns=[c for c in ["est_tasa_sin_bicis", "est_tasa_sin_anclajes", "est_neto_medio_hora"] if c in df])
+    df = df.drop(
+        columns=[
+            c
+            for c in ["est_tasa_sin_bicis", "est_tasa_sin_anclajes", "est_neto_medio_hora"]
+            if c in df
+        ]
+    )
     df = df.merge(por_est, on="estacion", how="left")
     return df.merge(por_hora, on=["estacion", "hora"], how="left")
 
@@ -253,7 +278,9 @@ def manifiesto_datos(archivos: list[Path], contar_filas: bool = True) -> dict:
                 h.update(bloque)
                 if contar_filas:
                     filas += bloque.count(b"\n")
-        entradas.append({"archivo": ruta.name, "sha256": h.hexdigest(), "registros": max(filas - 1, 0)})
+        entradas.append(
+            {"archivo": ruta.name, "sha256": h.hexdigest(), "registros": max(filas - 1, 0)}
+        )
     global_hash = hashlib.sha256(json.dumps(entradas, sort_keys=True).encode()).hexdigest()
     return {"version": global_hash[:12], "sha256_global": global_hash, "archivos": entradas}
 
