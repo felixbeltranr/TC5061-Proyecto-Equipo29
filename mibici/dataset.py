@@ -165,7 +165,9 @@ def _download_file(url: str, output_dir: Path) -> Path:
     return destination
 
 
-def download_datasets(dataset_urls: Iterable[str], output_dir: Path = CONFIG.raw_data_dir) -> list[Path]:
+def download_datasets(
+    dataset_urls: Iterable[str], output_dir: Path = CONFIG.raw_data_dir
+) -> list[Path]:
     """Download the given monthly CSV URLs and return their local paths."""
     paths = []
     for url in dataset_urls:

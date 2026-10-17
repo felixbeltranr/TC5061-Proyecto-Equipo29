@@ -11,6 +11,7 @@ load_dotenv()
 PROJ_ROOT = Path(__file__).resolve().parents[1]
 logger.info(f"PROJ_ROOT path is: {PROJ_ROOT}")
 
+
 @dataclass(frozen=True)
 class ProjectConfig:
     data_dir: Path = PROJ_ROOT / "data"
@@ -37,6 +38,7 @@ class ProjectConfig:
     test_size: float = 0.15
 
     mlflow_tracking_uri: str = "http://127.0.0.1:5000"
+
 
 CONFIG = ProjectConfig()
 
