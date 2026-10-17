@@ -27,11 +27,11 @@ class ProjectConfig:
 
     target_column: str = "ToDo"
 
-    # MiBici open-data download range (inclusive)
-    download_data_start_year: int = 2014
+    # MiBici open-data download range (inclusive), the one agreed by the team
+    download_data_start_year: int = 2025
     download_data_start_month: int = 1
     download_data_end_year: int = 2026
-    download_data_end_month: int = 12
+    download_data_end_month: int = 9
 
     train_size: float = 0.70
     validation_size: float = 0.15
