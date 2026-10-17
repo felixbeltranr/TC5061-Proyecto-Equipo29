@@ -92,6 +92,7 @@ def acumular_ocupacion(
 
 
 def cargar_viajes(ruta: Path) -> pd.DataFrame:
+    """Lee del dataset combinado solo fechas y estaciones; no carga datos de usuario."""
     columnas = ["Inicio_del_viaje", "Fin_del_viaje", "Origen_Id", "Destino_Id"]
     viajes = pd.read_csv(ruta, usecols=columnas)
     viajes["Inicio_del_viaje"] = pd.to_datetime(viajes["Inicio_del_viaje"], errors="coerce")
@@ -100,6 +101,7 @@ def cargar_viajes(ruta: Path) -> pd.DataFrame:
 
 
 def tabla_estaciones(nomenclatura: pd.DataFrame) -> pd.DataFrame:
+    """Id y capacidad de cada estacion a partir de la nomenclatura."""
     est = nomenclatura.loc[:, ["id", "dpcapacity"]].rename(
         columns={"id": "estacion", "dpcapacity": "capacidad"}
     )
@@ -256,6 +258,7 @@ def stats_estacion(train: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
 
 
 def unir_stats(df: pd.DataFrame, por_est: pd.DataFrame, por_hora: pd.DataFrame) -> pd.DataFrame:
+    """Agrega a df las estadisticas por estacion calculadas con stats_estacion."""
     df = df.drop(
         columns=[
             c
@@ -290,7 +293,7 @@ def main(
     entrada: Path = CONFIG.processed_data_dir / CONFIG.output_filename,
     nomenclatura: Path = CONFIG.raw_data_dir / "nomenclatura_2026_09.csv",
     salida: Path = CONFIG.interim_data_dir / "p2_panel_horario.parquet",
-):
+) -> None:
     """Genera el panel estacion-hora de flujos para P2."""
     viajes = cargar_viajes(entrada)
     panel, resumen = construir_panel(viajes, tabla_estaciones(pd.read_csv(nomenclatura)))

@@ -18,6 +18,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import mlflow
 import numpy as np
+from numpy.typing import ArrayLike
 import pandas as pd
 from sklearn.ensemble import HistGradientBoostingClassifier
 from sklearn.inspection import permutation_importance
@@ -48,6 +49,7 @@ REJILLA = [
 
 
 def git_commit() -> tuple[str, bool]:
+    """Commit actual y si hay cambios sin guardar, para etiquetar el run."""
     try:
         sha = subprocess.check_output(
             ["git", "rev-parse", "HEAD"], cwd=PROJ_ROOT, text=True
@@ -62,7 +64,17 @@ def git_commit() -> tuple[str, bool]:
         return "desconocido", True
 
 
-def metricas(y_true, y_pred, proba: np.ndarray | None, clases: list[str], prefijo: str) -> dict:
+def metricas(
+    y_true: ArrayLike,
+    y_pred: ArrayLike,
+    proba: np.ndarray | None,
+    clases: list[str],
+    prefijo: str,
+) -> dict[str, float]:
+    """Macro F1, precision, recall y F1 por clase; PR AUC de las clases de riesgo si hay probas.
+
+    El prefijo indica el conjunto (test, test_nuevas) para nombrar las metricas en MLflow.
+    """
     m = {
         f"{prefijo}_macro_f1": f1_score(
             y_true, y_pred, labels=fp.CLASES, average="macro", zero_division=0
@@ -83,7 +95,8 @@ def metricas(y_true, y_pred, proba: np.ndarray | None, clases: list[str], prefij
     return {k: float(v) for k, v in m.items()}
 
 
-def figura_confusion(y_true, y_pred, titulo: str, ruta: Path) -> Path:
+def figura_confusion(y_true: ArrayLike, y_pred: ArrayLike, titulo: str, ruta: Path) -> Path:
+    """Guarda la matriz de confusion en ruta y la regresa para registrarla como artefacto."""
     cm = confusion_matrix(y_true, y_pred, labels=fp.CLASES)
     fig, ax = plt.subplots(figsize=(6, 5))
     ConfusionMatrixDisplay(cm, display_labels=fp.CLASES).plot(
@@ -97,6 +110,7 @@ def figura_confusion(y_true, y_pred, titulo: str, ruta: Path) -> Path:
 
 
 def particionar(df: pd.DataFrame) -> dict[str, pd.DataFrame]:
+    """Cortes temporales por fecha objetivo: fit, val (ajuste), train completo y test."""
     t = df["ts_objetivo"]
     c = {k: pd.Timestamp(v) for k, v in CORTES.items()}
     return {
@@ -108,11 +122,13 @@ def particionar(df: pd.DataFrame) -> dict[str, pd.DataFrame]:
 
 
 def preparar(nivel: float, panel: pd.DataFrame) -> dict[str, pd.DataFrame]:
+    """Etiqueta el panel con el nivel inicial dado, arma features y particiona."""
     df = fp.construir_features(fp.agregar_ocupacion(panel, nivel))
     return particionar(df)
 
 
 def ajustar(train: pd.DataFrame, params: dict, semilla: int) -> HistGradientBoostingClassifier:
+    """Entrena HistGradientBoosting con pesos de clase balanceados."""
     modelo = HistGradientBoostingClassifier(
         class_weight="balanced", random_state=semilla, early_stopping=False, **params
     )
@@ -121,6 +137,7 @@ def ajustar(train: pd.DataFrame, params: dict, semilla: int) -> HistGradientBoos
 
 
 def afinar(partes: dict, semilla: int) -> tuple[dict, list[dict]]:
+    """Elige hiperparametros de REJILLA por macro F1 en validacion (2026-03 a 2026-04)."""
     por_est, por_hora = fp.stats_estacion(partes["fit"])
     fit = fp.unir_stats(partes["fit"], por_est, por_hora)
     val = fp.unir_stats(partes["val"], por_est, por_hora)
@@ -134,7 +151,10 @@ def afinar(partes: dict, semilla: int) -> tuple[dict, list[dict]]:
     return {k: v for k, v in mejor.items() if k != "val_macro_f1"}, resultados
 
 
-def registrar(nombre, tags, params, mets, artefactos):
+def registrar(
+    nombre: str, tags: dict, params: dict, mets: dict[str, float], artefactos: list[Path]
+) -> None:
+    """Crea un run en MLflow con nombre descriptivo, etiquetas, parametros, metricas y artefactos."""
     with mlflow.start_run(run_name=nombre):
         mlflow.set_tags(tags)
         mlflow.log_params(params)
@@ -144,8 +164,17 @@ def registrar(nombre, tags, params, mets, artefactos):
 
 
 def correr_nivel(
-    nivel, panel, args, manifiesto, resumen, params_hgb, rejilla, tags_base, sin_pesos=False
-):
+    nivel: float,
+    panel: pd.DataFrame,
+    args: argparse.Namespace,
+    manifiesto: dict,
+    resumen: dict,
+    params_hgb: dict,
+    rejilla: list[dict],
+    tags_base: dict,
+    sin_pesos: bool = False,
+) -> dict[str, dict[str, float]]:
+    """Corre baselines y HGB para un nivel inicial y registra cada modelo como run."""
     partes = preparar(nivel, panel)
     por_est, por_hora = fp.stats_estacion(partes["train"])
     train = fp.unir_stats(partes["train"], por_est, por_hora)
@@ -348,7 +377,8 @@ def correr_nivel(
     return salida
 
 
-def main(argv=None):
+def main(argv: list[str] | None = None) -> None:
+    """Punto de entrada: python -m mibici.modeling.train_p2 --niveles 0.5 0.3 0.7."""
     ap = argparse.ArgumentParser(description="Experimento base P2 en MLflow")
     ap.add_argument("--panel", default=str(CONFIG.interim_data_dir / "p2_panel_horario.parquet"))
     ap.add_argument(
