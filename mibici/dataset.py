@@ -6,6 +6,7 @@ from pathlib import Path
 import re
 import shutil
 import tempfile
+import unicodedata
 from urllib.parse import urljoin, urlsplit
 from urllib.request import Request, urlopen
 
@@ -20,6 +21,7 @@ DATASET_FILENAME_RE = re.compile(r"^datos_abiertos_(\d{4})_(\d{2})\.csv$", re.IG
 NOMENCLATURE_FILENAME_RE = re.compile(r"^nomenclatura_(\d{4})_(\d{2})\.csv$", re.IGNORECASE)
 DOWNLOAD_TIMEOUT_SECONDS = 60
 REQUEST_HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; MiBiciDataDownloader/0.1)"}
+TRIP_DATETIME_COLUMNS = ("Inicio_del_viaje", "Fin_del_viaje")
 
 app = typer.Typer()
 
@@ -165,7 +167,9 @@ def _download_file(url: str, output_dir: Path) -> Path:
     return destination
 
 
-def download_datasets(dataset_urls: Iterable[str], output_dir: Path = CONFIG.raw_data_dir) -> list[Path]:
+def download_datasets(
+    dataset_urls: Iterable[str], output_dir: Path = CONFIG.raw_data_dir
+) -> list[Path]:
     """Download the given monthly CSV URLs and return their local paths."""
     paths = []
     for url in dataset_urls:
@@ -174,11 +178,18 @@ def download_datasets(dataset_urls: Iterable[str], output_dir: Path = CONFIG.raw
     return paths
 
 
+def _normalize_column_name(name: str) -> str:
+    # Quita espacios y comillas sueltas y unifica acentos para que coincidan entre meses
+    name = unicodedata.normalize("NFC", str(name)).strip().strip('"')
+    return re.sub(r"\s+", "_", name)
+
+
 def _read_dataset(path: Path) -> pd.DataFrame:
     try:
-        return pd.read_csv(path, encoding="utf-8-sig")
+        dataframe = pd.read_csv(path, encoding="utf-8-sig")
     except UnicodeDecodeError:
-        return pd.read_csv(path, encoding="cp1252")
+        dataframe = pd.read_csv(path, encoding="cp1252")
+    return dataframe.rename(columns=_normalize_column_name)
 
 
 def download_and_load_latest_nomenclature(
@@ -229,7 +240,10 @@ def download_and_load_datasets(
 def merge_dataset_define_nomenclature(
     datasets: dict[str, pd.DataFrame], nomenclature: pd.DataFrame
 ) -> pd.DataFrame:
-    """Combine monthly trips and add station details for their origins and destinations."""
+    """Combine monthly trips and add station details for their origins and destinations.
+
+    Trip start and end columns are returned as datetimes.
+    """
     if not datasets:
         raise ValueError("At least one monthly dataset is required")
 
@@ -248,6 +262,9 @@ def merge_dataset_define_nomenclature(
             f"Nomenclature is missing required columns: {sorted(missing_station_columns)}"
         )
 
+    for column in TRIP_DATETIME_COLUMNS:
+        if column in trips.columns:
+            trips[column] = pd.to_datetime(trips[column], format="ISO8601", errors="coerce")
     trips["Origen_Id"] = pd.to_numeric(trips["Origen_Id"], errors="coerce").astype("Int64")
     trips["Destino_Id"] = pd.to_numeric(trips["Destino_Id"], errors="coerce").astype("Int64")
     stations = nomenclature.loc[:, ["id", "name", "latitude", "longitude", "dpcapacity"]].copy()
@@ -312,7 +329,9 @@ def main(
         len(combined_dataset.columns),
     )
 
-    combined_dataset.to_csv(output_processed_dir / CONFIG.output_filename, index=False)
+    # data/ no se versiona, en un clon limpio la carpeta no existe
+    output_processed_dir.mkdir(parents=True, exist_ok=True)
+    combined_dataset.to_parquet(output_processed_dir / CONFIG.output_filename, index=False)
     logger.info(
         "Saved combined dataset to {}",
         output_processed_dir / CONFIG.output_filename,
