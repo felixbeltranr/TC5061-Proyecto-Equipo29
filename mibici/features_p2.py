@@ -17,16 +17,11 @@ import numpy as np
 import pandas as pd
 import typer
 
-from mibici.config import CONFIG
+from mibici.config import CONFIG, CONFIG_P2
 
 app = typer.Typer()
 
 CLASES = ["segura", "sin_bicicletas", "sin_anclajes"]
-UMBRAL_BAJO = 0.10
-UMBRAL_ALTO = 0.90
-# el sistema opera aprox. de 5:00 a 24:00, el dia de servicio arranca a las 5
-HORA_INICIO_SERVICIO = 5
-HORAS_ETIQUETA = range(6, 24)
 
 FEATURES = [
     "hora",
@@ -53,8 +48,8 @@ FEATURES = [
 def etiquetar_ocupacion(
     ocupacion: np.ndarray | pd.Series,
     capacidad: np.ndarray | pd.Series,
-    umbral_bajo: float = UMBRAL_BAJO,
-    umbral_alto: float = UMBRAL_ALTO,
+    umbral_bajo: float = CONFIG_P2.umbral_bajo,
+    umbral_alto: float = CONFIG_P2.umbral_alto,
 ) -> np.ndarray:
     """Clase por fila: sin_bicicletas (< umbral_bajo), sin_anclajes (> umbral_alto) o segura."""
     ocupacion = np.asarray(ocupacion, dtype=float)
@@ -114,7 +109,7 @@ def tabla_estaciones(nomenclatura: pd.DataFrame) -> pd.DataFrame:
 
 
 def construir_panel(
-    viajes: pd.DataFrame, estaciones: pd.DataFrame, fin: str = "2026-09-30 23:00"
+    viajes: pd.DataFrame, estaciones: pd.DataFrame, fin: str = CONFIG_P2.panel_fin
 ) -> tuple[pd.DataFrame, dict]:
     """Panel estacion-hora con salidas, llegadas y flujo neto.
 
@@ -159,11 +154,13 @@ def construir_panel(
     fin_ts = pd.Timestamp(fin)
     piezas = []
     for est_id, grupo in flujo.groupby("estacion"):
-        inicio = (grupo["ts"].min() - pd.Timedelta(hours=HORA_INICIO_SERVICIO)).normalize()
-        inicio += pd.Timedelta(hours=HORA_INICIO_SERVICIO)
+        inicio = (
+            grupo["ts"].min() - pd.Timedelta(hours=CONFIG_P2.hora_inicio_servicio)
+        ).normalize()
+        inicio += pd.Timedelta(hours=CONFIG_P2.hora_inicio_servicio)
         horas = pd.date_range(
             inicio,
-            fin_ts.normalize() + pd.Timedelta(hours=24 + HORA_INICIO_SERVICIO - 1),
+            fin_ts.normalize() + pd.Timedelta(hours=24 + CONFIG_P2.hora_inicio_servicio - 1),
             freq="h",
         )
         g = grupo.set_index("ts")[["salidas", "llegadas"]].reindex(horas, fill_value=0)
@@ -238,7 +235,7 @@ def construir_features(panel: pd.DataFrame) -> pd.DataFrame:
     df["ocupacion_lag168"] = razon.groupby(df["estacion"]).shift(167)
     # baseline: clase del mismo instante una semana antes
     df["baseline_semana"] = g["clase_actual"].shift(167)
-    df = df[df["objetivo"].notna() & df["hora"].isin(list(HORAS_ETIQUETA))]
+    df = df[df["objetivo"].notna() & df["hora"].isin(list(CONFIG_P2.horas_etiqueta))]
     return df.reset_index(drop=True)
 
 
@@ -297,8 +294,8 @@ def manifiesto_datos(archivos: list[Path], contar_filas: bool = True) -> dict:
 @app.command()
 def main(
     entrada: Path = CONFIG.processed_data_dir / CONFIG.output_filename,
-    nomenclatura: Path = CONFIG.raw_data_dir / "nomenclatura_2026_09.csv",
-    salida: Path = CONFIG.interim_data_dir / "p2_panel_horario.parquet",
+    nomenclatura: Path = CONFIG_P2.nomenclatura_path,
+    salida: Path = CONFIG_P2.panel_path,
 ) -> None:
     """Genera el panel estacion-hora de flujos para P2."""
     viajes = cargar_viajes(entrada)

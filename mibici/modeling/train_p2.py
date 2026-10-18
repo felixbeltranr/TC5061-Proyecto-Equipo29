@@ -31,21 +31,28 @@ from sklearn.metrics import (
 )
 
 from mibici import features_p2 as fp
-from mibici.config import CONFIG, PROJ_ROOT
+from mibici.config import CONFIG, CONFIG_P2, PROJ_ROOT
 
-EXPERIMENTO = "mibici-equipo29"
 RIESGO = ["sin_bicicletas", "sin_anclajes"]
 CORTES = {
-    "train_inicio": "2025-01-01",
-    "val_inicio": "2026-03-01",
-    "test_inicio": "2026-05-01",
-    "test_fin": "2026-10-01",
+    "train_inicio": CONFIG_P2.fecha_inicio_entrenamiento,
+    "val_inicio": CONFIG_P2.fecha_inicio_validacion,
+    "test_inicio": CONFIG_P2.fecha_inicio_prueba,
+    "test_fin": CONFIG_P2.fecha_fin_prueba,
 }
-REJILLA = [
-    {"learning_rate": 0.1, "max_leaf_nodes": 31, "max_iter": 200, "l2_regularization": 0.0},
-    {"learning_rate": 0.1, "max_leaf_nodes": 63, "max_iter": 300, "l2_regularization": 1.0},
-    {"learning_rate": 0.05, "max_leaf_nodes": 63, "max_iter": 400, "l2_regularization": 1.0},
-]
+
+
+def rango_meses(inicio: str, fin_excluido: str) -> str:
+    """Rango AAAA-MM..AAAA-MM de un intervalo de fechas con fin excluido."""
+    ultimo = pd.Timestamp(fin_excluido) - pd.Timedelta(days=1)
+    return f"{pd.Timestamp(inicio):%Y-%m}..{ultimo:%Y-%m}"
+
+
+# rango descargado, el mismo de mibici.dataset
+RANGO_DATOS = (
+    f"{CONFIG.download_data_start_year}-{CONFIG.download_data_start_month:02d}.."
+    f"{CONFIG.download_data_end_year}-{CONFIG.download_data_end_month:02d}"
+)
 
 
 def git_commit() -> tuple[str, bool]:
@@ -137,12 +144,12 @@ def ajustar(train: pd.DataFrame, params: dict, semilla: int) -> HistGradientBoos
 
 
 def afinar(partes: dict, semilla: int) -> tuple[dict, list[dict]]:
-    """Elige hiperparametros de REJILLA por macro F1 en validacion (2026-03 a 2026-04)."""
+    """Elige hiperparametros de CONFIG_P2.rejilla por macro F1 en validacion."""
     por_est, por_hora = fp.stats_estacion(partes["fit"])
     fit = fp.unir_stats(partes["fit"], por_est, por_hora)
     val = fp.unir_stats(partes["val"], por_est, por_hora)
     resultados = []
-    for params in REJILLA:
+    for params in CONFIG_P2.rejilla:
         modelo = ajustar(fit, params, semilla)
         f1 = f1_score(val["objetivo"], modelo.predict(val[fp.FEATURES]), average="macro")
         resultados.append({**params, "val_macro_f1": float(f1)})
@@ -187,14 +194,14 @@ def correr_nivel(
 
     params_comunes = {
         "nivel_inicial": nivel,
-        "umbral_bajo": fp.UMBRAL_BAJO,
-        "umbral_alto": fp.UMBRAL_ALTO,
-        "horizonte_horas": 1,
-        "horas_objetivo": "6-23",
-        "hora_inicio_dia_servicio": fp.HORA_INICIO_SERVICIO,
-        "train_rango": "2025-01..2026-04",
-        "val_rango": "2026-03..2026-04",
-        "test_rango": "2026-05..2026-09",
+        "umbral_bajo": CONFIG_P2.umbral_bajo,
+        "umbral_alto": CONFIG_P2.umbral_alto,
+        "horizonte_horas": CONFIG_P2.horizonte_horas,
+        "horas_objetivo": f"{min(CONFIG_P2.horas_etiqueta)}-{max(CONFIG_P2.horas_etiqueta)}",
+        "hora_inicio_dia_servicio": CONFIG_P2.hora_inicio_servicio,
+        "train_rango": rango_meses(CORTES["train_inicio"], CORTES["test_inicio"]),
+        "val_rango": rango_meses(CORTES["val_inicio"], CORTES["test_inicio"]),
+        "test_rango": rango_meses(CORTES["test_inicio"], CORTES["test_fin"]),
         "semilla": args.semilla,
         "data_version": manifiesto["version"],
         "n_train": len(train),
@@ -292,13 +299,13 @@ def correr_nivel(
             figs / f"p2_cm_hgb_nuevas_{sufijo}.png",
         ),
     ]
-    muestra = test.sample(min(150_000, len(test)), random_state=args.semilla)
+    muestra = test.sample(min(CONFIG_P2.muestra_importancia, len(test)), random_state=args.semilla)
     imp = permutation_importance(
         modelo,
         muestra[fp.FEATURES],
         muestra["objetivo"],
         scoring="f1_macro",
-        n_repeats=3,
+        n_repeats=CONFIG_P2.repeticiones_importancia,
         random_state=args.semilla,
         n_jobs=1,
     )
@@ -380,41 +387,39 @@ def correr_nivel(
 def main(argv: list[str] | None = None) -> None:
     """Punto de entrada: python -m mibici.modeling.train_p2 --niveles 0.5 0.3 0.7."""
     ap = argparse.ArgumentParser(description="Experimento base P2 en MLflow")
-    ap.add_argument("--panel", default=str(CONFIG.interim_data_dir / "p2_panel_horario.parquet"))
+    ap.add_argument("--panel", default=str(CONFIG_P2.panel_path))
     ap.add_argument(
         "--niveles",
         type=float,
         nargs="+",
-        default=[0.5],
+        default=[CONFIG_P2.nivel_inicial],
         help="niveles iniciales de ocupacion; el primero se usa para afinar",
     )
-    ap.add_argument("--semilla", type=int, default=29)
-    ap.add_argument("--tracking-uri", default=f"sqlite:///{PROJ_ROOT / 'mlflow.db'}")
-    ap.add_argument("--figuras", default=str(CONFIG.reports_dir / "figures"))
-    ap.add_argument(
-        "--manifiesto", default=str(PROJ_ROOT / "references" / "manifiesto_datos_p2.json")
-    )
+    ap.add_argument("--semilla", type=int, default=CONFIG_P2.seed)
+    ap.add_argument("--tracking-uri", default=CONFIG_P2.tracking_uri)
+    ap.add_argument("--figuras", default=str(CONFIG_P2.figuras_dir))
+    ap.add_argument("--manifiesto", default=str(CONFIG_P2.manifiesto_path))
     ap.add_argument(
         "--sin-afinar", action="store_true", help="usa la primera configuracion de la rejilla"
     )
     args = ap.parse_args(argv)
 
     mlflow.set_tracking_uri(args.tracking_uri)
-    if mlflow.get_experiment_by_name(EXPERIMENTO) is None:
+    if mlflow.get_experiment_by_name(CONFIG_P2.experimento) is None:
         mlflow.create_experiment(
-            EXPERIMENTO, artifact_location=(PROJ_ROOT / "mlartifacts").as_uri()
+            CONFIG_P2.experimento, artifact_location=CONFIG_P2.artifact_location
         )
-    mlflow.set_experiment(EXPERIMENTO)
+    mlflow.set_experiment(CONFIG_P2.experimento)
 
     manifiesto = json.loads(Path(args.manifiesto).read_text())
     resumen = json.loads(Path(args.panel).with_suffix(".json").read_text())
     panel = pd.read_parquet(args.panel)
     sha, sucio = git_commit()
     tags_base = {
-        "question": "P2",
-        "team": "29",
-        "author": "carlosgalvan",
-        "data_range": "2025-01..2026-09",
+        "question": CONFIG_P2.question,
+        "team": CONFIG_P2.team,
+        "author": CONFIG_P2.author,
+        "data_range": RANGO_DATOS,
         "seed": str(args.semilla),
         "data_version": manifiesto["version"],
         "mlflow.source.git.commit": sha,
@@ -423,7 +428,7 @@ def main(argv: list[str] | None = None) -> None:
     }
 
     if args.sin_afinar:
-        params_hgb, rejilla = REJILLA[0], []
+        params_hgb, rejilla = CONFIG_P2.rejilla[0], []
     else:
         params_hgb, rejilla = afinar(preparar(args.niveles[0], panel), args.semilla)
     logger.info("Parametros elegidos: {}", params_hgb)
