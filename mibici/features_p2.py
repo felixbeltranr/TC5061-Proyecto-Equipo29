@@ -3,7 +3,7 @@
 Los datos abiertos no traen inventario por estacion, asi que aproximamos la
 ocupacion con el flujo neto (llegadas menos salidas) acumulado por dia de
 servicio desde un nivel inicial supuesto, recortado a [0, capacidad].
-Se construye sobre combined_dataset.parquet generado por mibici.dataset.
+Se construye sobre el dataset combinado de mibici.dataset, con la limpieza de P3.
 """
 
 from __future__ import annotations
@@ -18,6 +18,7 @@ import pandas as pd
 import typer
 
 from mibici.config import CONFIG, CONFIG_P2
+from mibici.features_p3 import leer_viajes, limpiar_viajes
 
 app = typer.Typer()
 
@@ -86,17 +87,14 @@ def acumular_ocupacion(
     return ocupacion
 
 
-def cargar_viajes(ruta: Path) -> pd.DataFrame:
-    """Lee del dataset combinado solo fechas y estaciones; no carga datos de usuario."""
-    columnas = ["Inicio_del_viaje", "Fin_del_viaje", "Origen_Id", "Destino_Id"]
-    # Parquet es la salida de mibici.dataset; el CSV queda por si alguien trae uno anterior
-    if ruta.suffix == ".parquet":
-        viajes = pd.read_parquet(ruta, columns=columnas)
-    else:
-        viajes = pd.read_csv(ruta, usecols=columnas)
-    viajes["Inicio_del_viaje"] = pd.to_datetime(viajes["Inicio_del_viaje"], errors="coerce")
-    viajes["Fin_del_viaje"] = pd.to_datetime(viajes["Fin_del_viaje"], errors="coerce")
-    return viajes
+def cargar_viajes(ruta: Path) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Lee y limpia los viajes con la misma regla que P3; regresa viajes validos y bitacora.
+
+    Se reutiliza features_p3.limpiar_viajes para que la limpieza viva en un solo lugar:
+    duplicados exactos, fechas o ids invalidos y duraciones negativas o de menos de 1 minuto.
+    No se leen datos de usuario.
+    """
+    return limpiar_viajes(leer_viajes(ruta))
 
 
 def tabla_estaciones(nomenclatura: pd.DataFrame) -> pd.DataFrame:
@@ -298,8 +296,10 @@ def main(
     salida: Path = CONFIG_P2.panel_path,
 ) -> None:
     """Genera el panel estacion-hora de flujos para P2."""
-    viajes = cargar_viajes(entrada)
+    viajes, bitacora = cargar_viajes(entrada)
     panel, resumen = construir_panel(viajes, tabla_estaciones(pd.read_csv(nomenclatura)))
+    limpieza = bitacora.drop(columns="mes").sum().astype(int).to_dict()
+    resumen = {f"limpieza_{k}": v for k, v in limpieza.items()} | resumen
     salida.parent.mkdir(parents=True, exist_ok=True)
     panel.to_parquet(salida, index=False)
     salida.with_suffix(".json").write_text(json.dumps(resumen, indent=2))
