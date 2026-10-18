@@ -1,7 +1,8 @@
 import numpy as np
+import pandas as pd
 import pytest
 
-from mibici.features_p2 import acumular_ocupacion, etiquetar_ocupacion
+from mibici.features_p2 import acumular_ocupacion, cargar_viajes, etiquetar_ocupacion
 
 
 def test_etiquetas_por_umbral():
@@ -106,3 +107,31 @@ def test_media_misma_hora_usa_cuatro_semanas():
         esperado = np.mean([neto[(est, ts_obj - pd.Timedelta(weeks=k))] for k in range(1, 5)])
         assert valor == esperado
         assert lag168 == neto[(est, ts_obj - pd.Timedelta(weeks=1))]
+
+
+def test_cargar_viajes_descarta_duplicados_y_menos_de_un_minuto(tmp_path):
+    # misma limpieza que P3: el duplicado y el viaje de 59 s salen; el de 60 s se queda
+    viajes = pd.DataFrame(
+        {
+            "Viaje_Id": [1, 1, 2, 3],
+            "Usuario_Id": [9, 9, 9, 9],
+            "Inicio_del_viaje": ["2025-03-03 08:00:00"] * 4,
+            "Fin_del_viaje": [
+                "2025-03-03 08:10:00",
+                "2025-03-03 08:10:00",
+                "2025-03-03 08:00:59",
+                "2025-03-03 08:01:00",
+            ],
+            "Origen_Id": [1, 1, 1, 2],
+            "Destino_Id": [2, 2, 1, 1],
+        }
+    )
+    ruta = tmp_path / "combined_dataset.csv"
+    viajes.to_csv(ruta, index=False)
+    validos, bitacora = cargar_viajes(ruta)
+    assert sorted(validos["Viaje_Id"]) == [1, 3]
+    assert "Usuario_Id" not in validos
+    tot = bitacora.drop(columns="mes").sum()
+    assert tot.duplicados_exactos == 1
+    assert tot.duracion_menor_1min == 1
+    assert tot.viajes_validos == 2
