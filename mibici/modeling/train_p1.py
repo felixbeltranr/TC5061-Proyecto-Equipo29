@@ -30,14 +30,14 @@ from sklearn.preprocessing import FunctionTransformer, OneHotEncoder, StandardSc
 
 from mibici import features as fe
 from mibici import tracking
-from mibici.config import CONFIG, PROJ_ROOT
+from mibici.config import CONFIG, CONFIG_P1
 
-# Mismos cortes temporales que train_p2.CORTES, para que P1 y P2 se evaluen en los mismos meses
+# Cortes temporales de CONFIG_P1 (los mismos meses que train_p2.CORTES)
 CORTES = {
-    "train_inicio": "2025-01-01",
-    "val_inicio": "2026-03-01",
-    "test_inicio": "2026-05-01",
-    "test_fin": "2026-10-01",
+    "train_inicio": CONFIG_P1.train_inicio,
+    "val_inicio": CONFIG_P1.val_inicio,
+    "test_inicio": CONFIG_P1.test_inicio,
+    "test_fin": CONFIG_P1.test_fin,
 }
 CONTEOS = [
     "lag_2",
@@ -50,12 +50,8 @@ CONTEOS = [
     "media_misma_dsem_4",
 ]
 BINARIAS = ["festivo", "festivo_lag7"]
-ALPHAS_POISSON = [1e-4, 1e-3, 1e-2, 1e-1, 1.0]
-REJILLA_HGB = [
-    {"learning_rate": 0.1, "max_leaf_nodes": 15, "max_iter": 200, "l2_regularization": 0.0},
-    {"learning_rate": 0.05, "max_leaf_nodes": 31, "max_iter": 300, "l2_regularization": 1.0},
-    {"learning_rate": 0.05, "max_leaf_nodes": 63, "max_iter": 400, "l2_regularization": 1.0},
-]
+ALPHAS_POISSON = list(CONFIG_P1.alphas_poisson)
+REJILLA_HGB = [dict(c) for c in CONFIG_P1.rejilla_hgb]
 SEGMENTOS = ("baja", "media", "alta", "nuevas")
 CANDIDATOS = ("poisson", "hgb_poisson")
 FEATURES_BASELINE = {"semana_previa": ["lag_7"], "persistencia": ["lag_2"]}
@@ -327,10 +323,10 @@ def parametros_comunes(
 def main(argv: list[str] | None = None) -> dict:
     """Punto de entrada: python -m mibici.modeling.train_p1."""
     ap = argparse.ArgumentParser(description="Experimento base P1 en MLflow")
-    ap.add_argument("--panel", default=str(CONFIG.interim_data_dir / "p1_panel_diario.parquet"))
-    ap.add_argument("--semilla", type=int, default=29)
+    ap.add_argument("--panel", default=str(CONFIG_P1.panel_path))
+    ap.add_argument("--semilla", type=int, default=CONFIG_P1.semilla)
     ap.add_argument("--tracking-uri", default=tracking.TRACKING_URI)
-    ap.add_argument("--artefactos", default=str(PROJ_ROOT / "mlartifacts"))
+    ap.add_argument("--artefactos", default=str(CONFIG_P1.artefactos_dir))
     ap.add_argument("--figuras", default=str(CONFIG.reports_dir / "figures"))
     ap.add_argument("--manifiesto", default=str(tracking.MANIFIESTO))
     ap.add_argument("--autor", default=None, help="por defecto, git config user.name")

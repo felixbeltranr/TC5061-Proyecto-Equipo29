@@ -24,13 +24,13 @@ import numpy as np
 import pandas as pd
 import typer
 
-from mibici.config import CONFIG
+from mibici.config import CONFIG, CONFIG_P1
 
 app = typer.Typer()
 
-# --- Que se sabe cuando se emite el pronostico ---
-HORA_EMISION = 23  # el pronostico del dia D se emite a las 23:00 del dia D-1
-RETRASO_CONTEO_MIN = 60  # el conteo de un dia queda disponible 60 min despues de cerrar
+# --- Que se sabe cuando se emite el pronostico (valores en CONFIG_P1) ---
+HORA_EMISION = CONFIG_P1.hora_emision  # el pronostico del dia D se emite a esa hora de D-1
+RETRASO_CONTEO_MIN = CONFIG_P1.retraso_conteo_min  # minutos tras el cierre del dia
 
 LAGS_SEMANALES = (7, 14, 21, 28)
 VENTANA_CORTA = 7
@@ -277,7 +277,7 @@ def construir_features(panel: pd.DataFrame) -> pd.DataFrame:
 @app.command()
 def main(
     entrada: Path = CONFIG.processed_data_dir / CONFIG.output_filename,
-    salida: Path = CONFIG.interim_data_dir / "p1_panel_diario.parquet",
+    salida: Path = CONFIG_P1.panel_path,
     inicio: str | None = None,
     fin: str | None = None,
 ) -> None:

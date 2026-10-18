@@ -14,12 +14,12 @@ import subprocess
 
 import mlflow
 
-from mibici.config import PROJ_ROOT
+from mibici.config import CONFIG_P1, PROJ_ROOT
 
-EXPERIMENTO = "mibici-equipo29"
-EQUIPO = "29"
-TRACKING_URI = f"sqlite:///{PROJ_ROOT / 'mlflow.db'}"
-MANIFIESTO = PROJ_ROOT / "references" / "manifiesto_datos_p2.json"
+EXPERIMENTO = CONFIG_P1.experimento
+EQUIPO = CONFIG_P1.equipo
+TRACKING_URI = CONFIG_P1.tracking_uri
+MANIFIESTO = CONFIG_P1.manifiesto_path
 
 
 def git_commit() -> tuple[str, bool]:
@@ -58,7 +58,7 @@ def version_datos(manifiesto: Path = MANIFIESTO) -> str:
 
 
 def configurar(
-    tracking_uri: str = TRACKING_URI, carpeta_artefactos: Path = PROJ_ROOT / "mlartifacts"
+    tracking_uri: str = TRACKING_URI, carpeta_artefactos: Path = CONFIG_P1.artefactos_dir
 ) -> None:
     """Apunta MLflow al almacen indicado y deja activo el experimento del equipo.
 
