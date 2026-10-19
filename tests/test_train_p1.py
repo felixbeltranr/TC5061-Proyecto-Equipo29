@@ -244,7 +244,7 @@ def test_afinar_entrena_con_fit_y_los_modelos_finales_con_train(mundo_base, monk
     t1.predecir(partes, 29, completo=False)
     fit = (fe.ultimo_dia_conocido(t1.CORTES["val_inicio"]), len(partes["fit"]))
     train = (fe.ultimo_dia_conocido(t1.CORTES["test_inicio"]), len(partes["train"]))
-    # afinar: un Poisson y un HGB solo con fit; finales: los dos con train (fit mas validacion)
+    # afinar: un Poisson y un HGB solo con fit; finales: los dos con train (hasta el fin de val)
     assert sorted(vistos) == [fit, fit, train, train]
 
 

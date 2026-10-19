@@ -7,7 +7,8 @@ Ejemplo:
 Baselines: misma estacion y mismo dia de la semana previa (D-7) y persistencia del ultimo
 dia completo (D-2). Candidatos: regresion de Poisson regularizada y gradient boosting con
 perdida de Poisson. Los hiperparametros y el modelo seleccionado se eligen solo con la
-validacion; la prueba se evalua una vez, con el modelo reentrenado en fit mas validacion.
+validacion; la prueba se evalua una vez, con el modelo reentrenado con todas las filas
+elegibles de train, hasta el ultimo objetivo disponible al iniciar la prueba.
 """
 
 from __future__ import annotations
