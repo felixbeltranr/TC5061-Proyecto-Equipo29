@@ -20,7 +20,7 @@ Los ML Canvas de cada pregunta están en `references/`.
 
 - Fuente: [Datos abiertos MiBici](https://mibici.net/es/datos-abiertos/): viajes mensuales (`datos_abiertos_AAAA_MM.csv`) y nomenclatura de estaciones (`nomenclatura_AAAA_MM.csv`). Las condiciones de uso son las publicadas en ese portal.
 - Rango acordado: enero de 2025 a septiembre de 2026 (21 meses) y la nomenclatura 2026-09; 7,894,097 viajes.
-- Versión: `references/manifiesto_datos_p2.json` guarda el SHA256 y el número de registros de cada archivo; su campo `version` (`66dd3d190bba`) se registra en cada run de MLflow como `data_version`.
+- Versión: `references/manifiesto_datos_p2.json` guarda el SHA256 y el número de registros de cada archivo; su campo `version` (`66dd3d190bba`) se registra en cada run de MLflow como `data_version`. Para regenerarlo después de la descarga: `python -m mibici.manifiesto_p2`.
 - Privacidad: `data/` no se versiona. Cada pregunta lee sólo las columnas que necesita (P1: `Inicio_del_viaje` y `Origen_Id`) y en MLflow sólo se registran métricas agregadas, nunca columnas de usuario.
 
 ## Instalación
@@ -80,6 +80,7 @@ El rango incluye los meses inicial y final. Si omites las opciones, se usa el ra
 | --- | --- |
 | `CONFIG` | Carpetas de datos, nombre del parquet combinado y rango de meses de la descarga. |
 | `CONFIG_P1` | Ruta del panel y del manifiesto, hora de emisión y retraso del conteo, cortes temporales, semilla, rejillas de Poisson y HistGradientBoosting, experimento y almacén de MLflow. |
+| `CONFIG_P2` | Cortes temporales, umbrales de riesgo, horizonte, limpieza de viajes, semilla, rejilla de HistGradientBoosting, experimento y almacén de MLflow de P2. |
 | `CONFIG_P3` | Fechas, franjas, umbrales, semilla, valores de k y MLflow de P3. |
 
 Se quedan en su módulo las constantes internas que forman parte de la definición del código: columnas que lee cada pregunta, nombres de variables, rezagos y ventanas de P1 (los nombres `lag_7`, `media_28d`, ... dependen de ellos) y el umbral de fechas ilegibles al cargar. Todos los parámetros que cambian un run (rango de fechas, versión de datos, semilla e hiperparámetros) se registran además en MLflow.
@@ -103,6 +104,7 @@ Partición por fecha objetivo: FIT hasta 2026-02-27, VAL de 2026-03-01 a 2026-04
 ### P2 · riesgo de estación
 
 ```bash
+python -m mibici.manifiesto_p2
 python -m mibici.features_p2
 python -m mibici.modeling.train_p2
 ```
@@ -173,7 +175,7 @@ Seguimos GitHub Flow:
 ├── models             <- Modelos serializados (fuera de git)
 ├── notebooks          <- Exploración: número-iniciales-descripción.ipynb
 ├── pyproject.toml     <- Metadatos del paquete y configuración de Ruff
-├── references         <- ML Canvas y manifiesto de datos
+├── references         <- ML Canvas del equipo, diagrama de arquitectura y manifiesto de datos
 ├── reports
 │   └── figures        <- Figuras y resultados del experimento base
 ├── requirements.txt   <- Dependencias con versión fija
