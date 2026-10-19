@@ -33,6 +33,7 @@ from sklearn.metrics import (
 from mibici import features_p2 as fp
 from mibici.config import CONFIG, CONFIG_P2, PROJ_ROOT
 
+EXPERIMENTO = CONFIG_P2.experimento
 RIESGO = ["sin_bicicletas", "sin_anclajes"]
 CORTES = {
     "train_inicio": CONFIG_P2.fecha_inicio_entrenamiento,
