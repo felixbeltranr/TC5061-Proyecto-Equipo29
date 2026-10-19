@@ -300,16 +300,16 @@ def preprocess_dataframe(df):
     dataframe = dataframe.dropna(subset=["destino_nombre"])
 
     #Drop columns that does not have meaningful data for the model
-    dataframe = dataframe.drop(columns=['Viaje_Id', 'Usuario_Id', 'Origen_Id', 'Destino_Id', 'origen_nombre', 'destino_nombre'])
+    dataframe = dataframe.drop(columns=['Usuario_Id'])
 
     #Drop columns with incorrect data for year of birth
-    dataframe = dataframe.drop(df[df["Año_de_nacimiento"] < 1900].index)
+    dataframe = dataframe.drop(dataframe[dataframe["Año_de_nacimiento"] < 1900].index)
 
     # For gender, to preserve data, replace NaN values with "desconocido"
     dataframe["Genero"] = dataframe["Genero"].fillna("Desconocido")
 
     #For year of birth, impute with median
-    dataframe["Año_de_nacimiento"] = dataframe["Año_de_nacimiento"].fillna(df["Año_de_nacimiento"].median())
+    dataframe["Año_de_nacimiento"] = dataframe["Año_de_nacimiento"].fillna(dataframe["Año_de_nacimiento"].median())
 
     #Drop duplicates
     dataframe = dataframe.drop_duplicates()
