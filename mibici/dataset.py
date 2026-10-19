@@ -290,6 +290,33 @@ def merge_dataset_define_nomenclature(
     return trips
 
 
+#Preprocessing of the data frame
+def preprocess_dataframe(df):
+    #output_file_path = CONFIG.processed_data_dir / CONFIG.processed_filename
+    dataframe = df.copy()  # Create a copy of the original DataFrame to avoid modifying it directly
+
+    #Drop rows where Origen_Id is null and rows where Destino_Id is null, as it does not find id for the station
+    dataframe = dataframe.dropna(subset=["origen_nombre"])
+    dataframe = dataframe.dropna(subset=["destino_nombre"])
+
+    #Drop columns that does not have meaningful data for the model
+    dataframe = dataframe.drop(columns=['Usuario_Id'], errors="ignore")
+
+    #Drop columns with incorrect data for year of birth
+    dataframe = dataframe.drop(dataframe[dataframe["Año_de_nacimiento"] < 1900].index)
+
+    # For gender, to preserve data, replace NaN values with "desconocido"
+    dataframe["Genero"] = dataframe["Genero"].fillna("Desconocido")
+
+    #For year of birth, impute with median
+    dataframe["Año_de_nacimiento"] = dataframe["Año_de_nacimiento"].fillna(dataframe["Año_de_nacimiento"].median())
+
+    #Drop duplicates
+    dataframe = dataframe.drop_duplicates()
+
+    return dataframe
+
+
 @app.command()
 def main(
     page_url: str = DATA_PAGE_URL,
