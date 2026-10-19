@@ -122,3 +122,44 @@ try:
     logger.add(lambda msg: tqdm.write(msg, end=""), colorize=True)
 except ModuleNotFoundError:
     pass
+
+
+# P1 · demanda diaria de salidas por estacion (regresion). Parametros del experimento de P1:
+# rutas, momento del pronostico, cortes temporales, semilla, rejillas y MLflow. Los leen
+# features.py, modeling/train_p1.py y tracking.py. Las definiciones de las variables (rezagos,
+# ventanas y nombres de columnas) se quedan en features.py porque los nombres de las variables
+# dependen de ellas.
+@dataclass(frozen=True)
+class P1Config:
+    # Datos: panel estacion-dia que genera python -m mibici.features y manifiesto de los CSV
+    panel_path: Path = CONFIG.interim_data_dir / "p1_panel_diario.parquet"
+    manifiesto_path: Path = PROJ_ROOT / "references" / "manifiesto_datos_p2.json"
+
+    # Momento del pronostico: el dia D se emite a las 23:00 de D-1 y el conteo de un dia queda
+    # disponible 60 min despues de cerrar
+    hora_emision: int = 23
+    retraso_conteo_min: int = 60
+
+    # Particion por fecha objetivo (test_fin es exclusivo); los mismos meses que train_p2.CORTES
+    train_inicio: str = "2025-01-01"
+    val_inicio: str = "2026-03-01"
+    test_inicio: str = "2026-05-01"
+    test_fin: str = "2026-10-01"
+    semilla: int = 29
+
+    # Rejillas de los candidatos; la configuracion se elige con el MAE de validacion
+    alphas_poisson: tuple[float, ...] = (1e-4, 1e-3, 1e-2, 1e-1, 1.0)
+    rejilla_hgb: tuple[dict, ...] = (
+        {"learning_rate": 0.1, "max_leaf_nodes": 15, "max_iter": 200, "l2_regularization": 0.0},
+        {"learning_rate": 0.05, "max_leaf_nodes": 31, "max_iter": 300, "l2_regularization": 1.0},
+        {"learning_rate": 0.05, "max_leaf_nodes": 63, "max_iter": 400, "l2_regularization": 1.0},
+    )
+
+    # MLflow: almacen local de P1 y experimento del equipo (mismo esquema que CONFIG_P3)
+    experimento: str = "mibici-equipo29"
+    equipo: str = "29"
+    tracking_uri: str = f"sqlite:///{PROJ_ROOT / 'mlflow.db'}"
+    artefactos_dir: Path = PROJ_ROOT / "mlartifacts"
+
+
+CONFIG_P1 = P1Config()
