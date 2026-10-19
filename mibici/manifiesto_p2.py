@@ -9,7 +9,7 @@ from pathlib import Path
 from loguru import logger
 import typer
 
-from mibici.config import CONFIG, PROJ_ROOT
+from mibici.config import CONFIG, CONFIG_P2
 from mibici.features_p2 import manifiesto_datos
 
 app = typer.Typer()
@@ -17,12 +17,12 @@ app = typer.Typer()
 
 @app.command()
 def main(
-    salida: Path = PROJ_ROOT / "references" / "manifiesto_datos_p2.json",
+    salida: Path = CONFIG_P2.manifiesto_path,
     carpeta: Path = CONFIG.raw_data_dir,
 ) -> None:
     """Calcula el manifiesto de los CSV mensuales y la nomenclatura en carpeta."""
     archivos = sorted(carpeta.glob("datos_abiertos_*.csv")) + [
-        carpeta / "nomenclatura_2026_09.csv"
+        carpeta / CONFIG_P2.nomenclatura_path.name
     ]
     manifiesto = manifiesto_datos(archivos)
     salida.write_text(json.dumps(manifiesto, indent=2) + "\n")

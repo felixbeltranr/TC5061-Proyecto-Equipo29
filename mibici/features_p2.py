@@ -3,7 +3,7 @@
 Los datos abiertos no traen inventario por estacion, asi que aproximamos la
 ocupacion con el flujo neto (llegadas menos salidas) acumulado por dia de
 servicio desde un nivel inicial supuesto, recortado a [0, capacidad].
-Se construye sobre combined_dataset.parquet generado por mibici.dataset.
+Se construye sobre el dataset combinado de mibici.dataset, con la limpieza de P3.
 """
 
 from __future__ import annotations
@@ -17,16 +17,12 @@ import numpy as np
 import pandas as pd
 import typer
 
-from mibici.config import CONFIG
+from mibici.config import CONFIG, CONFIG_P2
+from mibici.features_p3 import leer_viajes, limpiar_viajes
 
 app = typer.Typer()
 
 CLASES = ["segura", "sin_bicicletas", "sin_anclajes"]
-UMBRAL_BAJO = 0.10
-UMBRAL_ALTO = 0.90
-# el sistema opera aprox. de 5:00 a 24:00, el dia de servicio arranca a las 5
-HORA_INICIO_SERVICIO = 5
-HORAS_ETIQUETA = range(6, 24)
 
 FEATURES = [
     "hora",
@@ -53,8 +49,8 @@ FEATURES = [
 def etiquetar_ocupacion(
     ocupacion: np.ndarray | pd.Series,
     capacidad: np.ndarray | pd.Series,
-    umbral_bajo: float = UMBRAL_BAJO,
-    umbral_alto: float = UMBRAL_ALTO,
+    umbral_bajo: float = CONFIG_P2.umbral_bajo,
+    umbral_alto: float = CONFIG_P2.umbral_alto,
 ) -> np.ndarray:
     """Clase por fila: sin_bicicletas (< umbral_bajo), sin_anclajes (> umbral_alto) o segura."""
     ocupacion = np.asarray(ocupacion, dtype=float)
@@ -91,17 +87,14 @@ def acumular_ocupacion(
     return ocupacion
 
 
-def cargar_viajes(ruta: Path) -> pd.DataFrame:
-    """Lee del dataset combinado solo fechas y estaciones; no carga datos de usuario."""
-    columnas = ["Inicio_del_viaje", "Fin_del_viaje", "Origen_Id", "Destino_Id"]
-    # Parquet es la salida de mibici.dataset; el CSV queda por si alguien trae uno anterior
-    if ruta.suffix == ".parquet":
-        viajes = pd.read_parquet(ruta, columns=columnas)
-    else:
-        viajes = pd.read_csv(ruta, usecols=columnas)
-    viajes["Inicio_del_viaje"] = pd.to_datetime(viajes["Inicio_del_viaje"], errors="coerce")
-    viajes["Fin_del_viaje"] = pd.to_datetime(viajes["Fin_del_viaje"], errors="coerce")
-    return viajes
+def cargar_viajes(ruta: Path) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Lee y limpia los viajes con la misma regla que P3; regresa viajes validos y bitacora.
+
+    Se reutiliza features_p3.limpiar_viajes para que la limpieza viva en un solo lugar:
+    duplicados exactos, fechas o ids invalidos y duraciones negativas o de menos de 1 minuto.
+    No se leen datos de usuario.
+    """
+    return limpiar_viajes(leer_viajes(ruta))
 
 
 def tabla_estaciones(nomenclatura: pd.DataFrame) -> pd.DataFrame:
@@ -114,7 +107,7 @@ def tabla_estaciones(nomenclatura: pd.DataFrame) -> pd.DataFrame:
 
 
 def construir_panel(
-    viajes: pd.DataFrame, estaciones: pd.DataFrame, fin: str = "2026-09-30 23:00"
+    viajes: pd.DataFrame, estaciones: pd.DataFrame, fin: str = CONFIG_P2.panel_fin
 ) -> tuple[pd.DataFrame, dict]:
     """Panel estacion-hora con salidas, llegadas y flujo neto.
 
@@ -159,11 +152,13 @@ def construir_panel(
     fin_ts = pd.Timestamp(fin)
     piezas = []
     for est_id, grupo in flujo.groupby("estacion"):
-        inicio = (grupo["ts"].min() - pd.Timedelta(hours=HORA_INICIO_SERVICIO)).normalize()
-        inicio += pd.Timedelta(hours=HORA_INICIO_SERVICIO)
+        inicio = (
+            grupo["ts"].min() - pd.Timedelta(hours=CONFIG_P2.hora_inicio_servicio)
+        ).normalize()
+        inicio += pd.Timedelta(hours=CONFIG_P2.hora_inicio_servicio)
         horas = pd.date_range(
             inicio,
-            fin_ts.normalize() + pd.Timedelta(hours=24 + HORA_INICIO_SERVICIO - 1),
+            fin_ts.normalize() + pd.Timedelta(hours=24 + CONFIG_P2.hora_inicio_servicio - 1),
             freq="h",
         )
         g = grupo.set_index("ts")[["salidas", "llegadas"]].reindex(horas, fill_value=0)
@@ -238,7 +233,7 @@ def construir_features(panel: pd.DataFrame) -> pd.DataFrame:
     df["ocupacion_lag168"] = razon.groupby(df["estacion"]).shift(167)
     # baseline: clase del mismo instante una semana antes
     df["baseline_semana"] = g["clase_actual"].shift(167)
-    df = df[df["objetivo"].notna() & df["hora"].isin(list(HORAS_ETIQUETA))]
+    df = df[df["objetivo"].notna() & df["hora"].isin(list(CONFIG_P2.horas_etiqueta))]
     return df.reset_index(drop=True)
 
 
@@ -297,12 +292,14 @@ def manifiesto_datos(archivos: list[Path], contar_filas: bool = True) -> dict:
 @app.command()
 def main(
     entrada: Path = CONFIG.processed_data_dir / CONFIG.output_filename,
-    nomenclatura: Path = CONFIG.raw_data_dir / "nomenclatura_2026_09.csv",
-    salida: Path = CONFIG.interim_data_dir / "p2_panel_horario.parquet",
+    nomenclatura: Path = CONFIG_P2.nomenclatura_path,
+    salida: Path = CONFIG_P2.panel_path,
 ) -> None:
     """Genera el panel estacion-hora de flujos para P2."""
-    viajes = cargar_viajes(entrada)
+    viajes, bitacora = cargar_viajes(entrada)
     panel, resumen = construir_panel(viajes, tabla_estaciones(pd.read_csv(nomenclatura)))
+    limpieza = bitacora.drop(columns="mes").sum().astype(int).to_dict()
+    resumen = {f"limpieza_{k}": v for k, v in limpieza.items()} | resumen
     salida.parent.mkdir(parents=True, exist_ok=True)
     panel.to_parquet(salida, index=False)
     salida.with_suffix(".json").write_text(json.dumps(resumen, indent=2))

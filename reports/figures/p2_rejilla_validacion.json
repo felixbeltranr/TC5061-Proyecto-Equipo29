@@ -4,20 +4,20 @@
     "max_leaf_nodes": 31,
     "max_iter": 200,
     "l2_regularization": 0.0,
-    "val_macro_f1": 0.7500063430673948
+    "val_macro_f1": 0.7501398055648089
   },
   {
     "learning_rate": 0.1,
     "max_leaf_nodes": 63,
     "max_iter": 300,
     "l2_regularization": 1.0,
-    "val_macro_f1": 0.7566645143497465
+    "val_macro_f1": 0.7561554100003506
   },
   {
     "learning_rate": 0.05,
     "max_leaf_nodes": 63,
     "max_iter": 400,
     "l2_regularization": 1.0,
-    "val_macro_f1": 0.7545489356551434
+    "val_macro_f1": 0.7541216815544747
   }
 ]

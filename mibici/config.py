@@ -113,6 +113,62 @@ class P3Config:
 
 CONFIG_P3 = P3Config()
 
+
+# ---------------------------------------------------------------------------
+# P2 · clasificacion de estaciones en riesgo (Operacion)
+# Parametros de P2; features_p2.py, manifiesto_p2.py y modeling/train_p2.py los leen de CONFIG_P2.
+# Las carpetas base se toman de CONFIG para no repetir rutas.
+# ---------------------------------------------------------------------------
+def _rejilla_p2() -> tuple[dict[str, float | int], ...]:
+    # Hiperparametros de HistGradientBoosting; la primera es la de --sin-afinar
+    return (
+        {"learning_rate": 0.1, "max_leaf_nodes": 31, "max_iter": 200, "l2_regularization": 0.0},
+        {"learning_rate": 0.1, "max_leaf_nodes": 63, "max_iter": 300, "l2_regularization": 1.0},
+        {"learning_rate": 0.05, "max_leaf_nodes": 63, "max_iter": 400, "l2_regularization": 1.0},
+    )
+
+
+@dataclass(frozen=True)
+class P2Config:
+    # Datos
+    nomenclatura_path: Path = CONFIG.raw_data_dir / "nomenclatura_2026_09.csv"
+    panel_path: Path = CONFIG.interim_data_dir / "p2_panel_horario.parquet"
+    manifiesto_path: Path = PROJ_ROOT / "references" / "manifiesto_datos_p2.json"
+    figuras_dir: Path = CONFIG.reports_dir / "figures"
+    panel_fin: str = "2026-09-30 23:00"  # ultima hora del panel (fin del rango descargado)
+
+    # Etiqueta: ocupacion estimada entre capacidad
+    umbral_bajo: float = 0.10  # menos es sin_bicicletas
+    umbral_alto: float = 0.90  # mas es sin_anclajes
+    nivel_inicial: float = 0.5  # ocupacion supuesta al iniciar el dia de servicio
+    niveles_sensibilidad: tuple[float, ...] = (0.5, 0.3, 0.7)
+    hora_inicio_servicio: int = 5  # el sistema opera aprox. de 5:00 a 24:00
+    horas_etiqueta: tuple[int, ...] = tuple(range(6, 24))  # horas objetivo que se evaluan
+    horizonte_horas: int = 1
+
+    # Particion temporal por fecha objetivo (inicio incluido, fin excluido)
+    fecha_inicio_entrenamiento: str = "2025-01-01"
+    fecha_inicio_validacion: str = "2026-03-01"
+    fecha_inicio_prueba: str = "2026-05-01"
+    fecha_fin_prueba: str = "2026-10-01"
+
+    # Modelo
+    seed: int = 29
+    rejilla: tuple[dict[str, float | int], ...] = field(default_factory=_rejilla_p2)
+    muestra_importancia: int = 150_000  # filas de test para la importancia por permutacion
+    repeticiones_importancia: int = 3
+
+    # MLflow: backend local en la raiz del repo, compartido con P3
+    experimento: str = "mibici-equipo29"
+    tracking_uri: str = f"sqlite:///{(PROJ_ROOT / 'mlflow.db').as_posix()}"
+    artifact_location: str = (PROJ_ROOT / "mlartifacts").as_uri()
+    question: str = "P2"
+    team: str = "29"
+    author: str = "carlosgalvan"
+
+
+CONFIG_P2 = P2Config()
+
 # If tqdm is installed, configure loguru with tqdm.write
 # https://github.com/Delgan/loguru/issues/135
 try:
