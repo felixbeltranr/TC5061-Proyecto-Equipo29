@@ -95,6 +95,7 @@ class P3Config:
     umbral_vif: float = 5.0
 
     # Modelo
+    model: str = "kmeans"
     seed: int = 42
     k_baseline: int = 5
     k_comparacion: tuple[int, ...] = (4, 5, 6)
@@ -153,6 +154,7 @@ class P2Config:
     fecha_fin_prueba: str = "2026-10-01"
 
     # Modelo
+    model: str = "hist_gradient_boosting"
     seed: int = 29
     rejilla: tuple[dict[str, float | int], ...] = field(default_factory=_rejilla_p2)
     muestra_importancia: int = 150_000  # filas de test para la importancia por permutacion
@@ -204,6 +206,7 @@ class P1Config:
     semilla: int = 29
 
     # Rejillas de los candidatos; la configuracion se elige con el MAE de validacion
+    model: str = "auto"
     alphas_poisson: tuple[float, ...] = (1e-4, 1e-3, 1e-2, 1e-1, 1.0)
     rejilla_hgb: tuple[dict, ...] = (
         {"learning_rate": 0.1, "max_leaf_nodes": 15, "max_iter": 200, "l2_regularization": 0.0},

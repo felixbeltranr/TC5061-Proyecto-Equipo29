@@ -184,7 +184,13 @@ def mae(y_real: pd.Series, y_pred: np.ndarray) -> float:
     return float(np.abs(np.asarray(y_pred, dtype=float) - y_real.to_numpy()).mean())
 
 
-def afinar(partes: dict, semilla: int, completo: bool = True) -> tuple[dict, dict, dict]:
+def afinar(
+    partes: dict,
+    semilla: int,
+    completo: bool = True,
+    model: str = CONFIG_P1.model,
+    hyperparameters: dict | None = None,
+) -> tuple[dict, dict, dict]:
     """Elige alpha de Poisson y parametros de HGB por MAE de validacion, entrenando solo con fit.
 
     Devuelve los parametros elegidos por candidato, la rejilla completa con su val_mae y las
@@ -195,6 +201,22 @@ def afinar(partes: dict, semilla: int, completo: bool = True) -> tuple[dict, dic
         "poisson": [{"alpha": a} for a in (ALPHAS_POISSON if completo else ALPHAS_POISSON[:1])],
         "hgb_poisson": REJILLA_HGB if completo else REJILLA_HGB[:1],
     }
+    if model not in ("auto", *CANDIDATOS):
+        raise ValueError(f"Unsupported P1 model: {model}")
+    hyperparameters = hyperparameters or {}
+    if hyperparameters and model == "auto":
+        raise ValueError("Choose 'poisson' or 'hgb_poisson' to override hyperparameters")
+    allowed = {
+        "poisson": {"alpha"},
+        "hgb_poisson": {"learning_rate", "max_leaf_nodes", "max_iter", "l2_regularization"},
+    }
+    if hyperparameters and not set(hyperparameters).issubset(allowed[model]):
+        invalid = sorted(set(hyperparameters).difference(allowed[model]))
+        raise ValueError(f"Unsupported {model} hyperparameters: {invalid}")
+    if model != "auto":
+        base = configs[model][0]
+        configs = {model: [{**base, **hyperparameters}]}
+
     rejilla: dict[str, list[dict]] = {}
     elegidos: dict[str, dict] = {}
     pred_val: dict[str, np.ndarray] = {}
@@ -220,7 +242,7 @@ def seleccionar(val_mae: dict[str, float]) -> str:
     """Modelo elegido: semana previa, salvo que un candidato tenga menor MAE de validacion."""
     mejor = "semana_previa"
     for candidato in CANDIDATOS:
-        if val_mae[candidato] < val_mae[mejor]:
+        if candidato in val_mae and val_mae[candidato] < val_mae[mejor]:
             mejor = candidato
     return mejor
 
@@ -257,26 +279,41 @@ def coeficientes_poisson(modelo: Pipeline) -> pd.DataFrame:
     ).sort_values("coeficiente", key=abs, ascending=False)
 
 
-def predecir(partes: dict, semilla: int, completo: bool) -> dict:
+def predecir(
+    partes: dict,
+    semilla: int,
+    completo: bool,
+    model: str = CONFIG_P1.model,
+    hyperparameters: dict | None = None,
+) -> dict:
     """Afina en validacion y devuelve las predicciones de val y test de los cuatro modelos.
 
     En val los candidatos estan entrenados solo con fit; en test, reentrenados con train.
     """
     val, train, test = partes["val"], partes["train"], partes["test"]
-    elegidos, rejilla, pred_val_cand = afinar(partes, semilla, completo=completo)
+    elegidos, rejilla, pred_val_cand = afinar(
+        partes,
+        semilla,
+        completo=completo,
+        model=model,
+        hyperparameters=hyperparameters,
+    )
     logger.info("Parametros elegidos: {}", elegidos)
     pred_val = {
         "semana_previa": val["baseline_semana_previa"].to_numpy(),
         "persistencia": val["baseline_persistencia"].to_numpy(),
     } | pred_val_cand
-    modelo_poisson = ajustar_poisson(train, elegidos["poisson"]["alpha"])
-    modelo_hgb = ajustar_hgb(train, elegidos["hgb_poisson"], semilla)
     pred_test = {
         "semana_previa": test["baseline_semana_previa"].to_numpy(),
         "persistencia": test["baseline_persistencia"].to_numpy(),
-        "poisson": modelo_poisson.predict(test[fe.FEATURES]),
-        "hgb_poisson": modelo_hgb.predict(test[fe.FEATURES]),
     }
+    modelo_poisson = None
+    if "poisson" in elegidos:
+        modelo_poisson = ajustar_poisson(train, elegidos["poisson"]["alpha"])
+        pred_test["poisson"] = modelo_poisson.predict(test[fe.FEATURES])
+    if "hgb_poisson" in elegidos:
+        modelo_hgb = ajustar_hgb(train, elegidos["hgb_poisson"], semilla)
+        pred_test["hgb_poisson"] = modelo_hgb.predict(test[fe.FEATURES])
     return {
         "elegidos": elegidos,
         "rejilla": rejilla,
@@ -332,9 +369,22 @@ def main(argv: list[str] | None = None) -> dict:
     ap.add_argument("--manifiesto", default=str(tracking.MANIFIESTO))
     ap.add_argument("--autor", default=None, help="por defecto, git config user.name")
     ap.add_argument(
+        "--model",
+        choices=("auto", *CANDIDATOS),
+        default=CONFIG_P1.model,
+        help="auto compara los modelos configurados; un modelo específico restringe la comparación",
+    )
+    ap.add_argument("--hyperparameters", default="{}")
+    ap.add_argument(
         "--sin-afinar", action="store_true", help="usa la primera configuracion de cada rejilla"
     )
     args = ap.parse_args(argv)
+    try:
+        hyperparameters = json.loads(args.hyperparameters)
+    except json.JSONDecodeError as exc:
+        ap.error(f"--hyperparameters must be valid JSON: {exc}")
+    if not isinstance(hyperparameters, dict):
+        ap.error("--hyperparameters must be a JSON object")
 
     tracking.configurar(args.tracking_uri, Path(args.artefactos))
     data_version = tracking.version_datos(Path(args.manifiesto))
@@ -346,7 +396,13 @@ def main(argv: list[str] | None = None) -> dict:
     figs = Path(args.figuras)
     figs.mkdir(parents=True, exist_ok=True)
 
-    r = predecir(partes, args.semilla, completo=not args.sin_afinar)
+    r = predecir(
+        partes,
+        args.semilla,
+        completo=not args.sin_afinar,
+        model=args.model,
+        hyperparameters=hyperparameters,
+    )
     segmento_test = segmentos(partes["train"], test)
     metricas_modelo = {}
     for nombre, pred in r["pred_test"].items():
@@ -364,12 +420,16 @@ def main(argv: list[str] | None = None) -> dict:
     params_comunes = parametros_comunes(partes, df, resumen, args.semilla, data_version)
     ruta_rejilla = figs / "p1_rejilla_validacion.json"
     ruta_rejilla.write_text(json.dumps(r["rejilla"], indent=2))
-    ruta_coef = figs / "p1_poisson_coeficientes.csv"
-    coeficientes_poisson(r["modelo_poisson"]).to_csv(ruta_coef, index=False)
+    ruta_coef = None
+    if r["modelo_poisson"] is not None:
+        ruta_coef = figs / "p1_poisson_coeficientes.csv"
+        coeficientes_poisson(r["modelo_poisson"]).to_csv(ruta_coef, index=False)
 
     # la figura cubre validacion y prueba de cada modelo
     val_test = pd.concat([val, test])
     for nombre, (run_name, etiqueta) in NOMBRES_RUN.items():
+        if nombre in CANDIDATOS and nombre not in r["elegidos"]:
+            continue
         pred = np.concatenate([r["pred_val"][nombre], r["pred_test"][nombre]])
         artefactos = [
             figura_agregado(
@@ -384,7 +444,7 @@ def main(argv: list[str] | None = None) -> dict:
         if nombre in CANDIDATOS:
             params_modelo |= r["elegidos"][nombre]
             artefactos += [ruta_rejilla, Path(args.manifiesto), ruta_resumen]
-        if nombre == "poisson":
+        if nombre == "poisson" and ruta_coef is not None:
             artefactos.append(ruta_coef)
         tags = tags_base | {
             "modelo": etiqueta,

@@ -1,0 +1,18 @@
+name: mibici
+
+python_env: python_env.yaml
+
+entry_points:
+  ingest:
+    command: "python -m mibici.mlflow_project ingest"
+
+  train:
+    parameters:
+      question: {type: string}
+      model: {type: string, default: ""}
+      hyperparameters: {type: string, default: ""}
+    command: >-
+      python -m mibici.mlflow_project train
+      --question {question}
+      --model {model}
+      --hyperparameters {hyperparameters}
