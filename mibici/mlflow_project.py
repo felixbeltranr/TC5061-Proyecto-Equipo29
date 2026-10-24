@@ -64,6 +64,13 @@ def _run_p3(model: str, hyperparameters: dict[str, Any]) -> None:
     from mibici.modeling.modelos_p3 import validar_hiperparametros
 
     hyperparameters = dict(hyperparameters)
+    if model == "seleccion":
+        # flujo completo: baseline, búsquedas, candidatas, campeón y Model Registry
+        if hyperparameters:
+            raise ValueError("model=seleccion no recibe hiperparámetros; se toman de CONFIG_P3")
+        features_p3.main()
+        train_p3.main(model="seleccion")
+        return
     # buscar=1 lanza la búsqueda de la rejilla de CONFIG_P3 con runs anidados
     buscar = bool(hyperparameters.pop("buscar", False))
     validar_hiperparametros(model, hyperparameters)
