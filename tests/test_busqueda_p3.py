@@ -75,6 +75,7 @@ def test_evaluar_validacion_regresa_metricas_y_estabilidad(model, params):
         "val_davies_bouldin_uso",
         "val_calinski_harabasz_uso",
         "val_ari_estabilidad",
+        "val_particiones_validas",
         "val_fit_seconds",
     }
     assert -1 <= m["val_silhouette_uso"] <= 1
@@ -151,3 +152,33 @@ def test_mlflow_project_lanza_la_busqueda_con_buscar(monkeypatch):
     assert llamadas["buscar_"] is True and llamadas["model"] == "gmm_uso"
     with pytest.raises(ValueError, match="buscar=1"):
         mlflow_project.run_train("p3", "kmeans_uso", {"buscar": 1, "k": 4})
+
+
+def test_particiones_invalidas_excluyen_la_configuracion(monkeypatch):
+    from mibici.modeling import busqueda_p3
+
+    original = busqueda_p3._metricas_validacion
+    llamadas = []
+
+    def una_valida(X, etiquetas):
+        llamadas.append(1)
+        m = original(X, etiquetas)
+        return m if len(llamadas) == 1 else dict.fromkeys(m, np.nan)  # 1 válida, 4 inválidas
+
+    monkeypatch.setattr(busqueda_p3, "_metricas_validacion", una_valida)
+    m = evaluar_validacion(_dataset(), "kmeans_uso", {"k": 3}, CFG)
+    assert m["val_particiones_validas"] == 1
+    assert np.isnan(m["val_silhouette_uso"]) and np.isnan(m["val_davies_bouldin_uso"])
+    ranking = ordenar(
+        [
+            {"model": "kmeans_uso", "params": {"k": 3}, **m},
+            _r("kmeans_uso", {"k": 4}, 0.1, 0.5, 2),
+        ],
+        CFG,
+    )
+    assert ranking[0]["params"]["k"] == 4  # la incompleta queda al final
+
+
+def test_configuracion_completa_reporta_cinco_particiones_validas():
+    m = evaluar_validacion(_dataset(), "kmeans_uso", {"k": 3}, CFG)
+    assert m["val_particiones_validas"] == CFG.n_particiones

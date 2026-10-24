@@ -13,6 +13,9 @@ Validación por estaciones completas
 Métricas de validación (promedio de las particiones)
     ``val_silhouette_uso`` (y su desviación estándar), ``val_davies_bouldin_uso`` y
     ``val_calinski_harabasz_uso``, sobre las estaciones reservadas en el espacio de uso.
+    Una partición es inválida si sus estaciones reservadas caen en un solo grupo (no hay
+    silueta). ``val_particiones_validas`` cuenta las válidas y, si falta alguna, las métricas
+    de validación quedan en NaN: la configuración se reporta pero no entra al ranking.
 
 Estabilidad
     ``val_ari_estabilidad``: los modelos de las particiones (cada uno con su 80 % y su semilla)
@@ -108,6 +111,9 @@ def evaluar_validacion(
         asignaciones.append(asignar(todas))
     segundos = time.perf_counter() - inicio
     m = pd.DataFrame(por_particion)
+    validas = int(m.silhouette.notna().sum())
+    if validas < len(m):  # regla explícita: solo se promedian configuraciones completas
+        m = m.assign(silhouette=np.nan, davies_bouldin=np.nan, calinski_harabasz=np.nan)
     ari = [adjusted_rand_score(a, b) for a, b in combinations(asignaciones, 2)]
     return {
         "val_silhouette_uso": float(m.silhouette.mean()),
@@ -115,6 +121,7 @@ def evaluar_validacion(
         "val_davies_bouldin_uso": float(m.davies_bouldin.mean()),
         "val_calinski_harabasz_uso": float(m.calinski_harabasz.mean()),
         "val_ari_estabilidad": float(np.mean(ari)),
+        "val_particiones_validas": float(validas),
         "val_fit_seconds": segundos,
     }
 
