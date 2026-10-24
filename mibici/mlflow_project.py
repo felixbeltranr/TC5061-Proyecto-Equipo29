@@ -63,7 +63,12 @@ def _run_p3(model: str, hyperparameters: dict[str, Any]) -> None:
     from mibici.modeling import train_p3
     from mibici.modeling.modelos_p3 import validar_hiperparametros
 
+    hyperparameters = dict(hyperparameters)
+    # buscar=1 lanza la búsqueda de la rejilla de CONFIG_P3 con runs anidados
+    buscar = bool(hyperparameters.pop("buscar", False))
     validar_hiperparametros(model, hyperparameters)
+    if buscar and (model == "kmeans_geo" or hyperparameters):
+        raise ValueError("buscar=1 solo aplica a kmeans_uso o gmm_uso, sin otros hiperparámetros")
     features_p3.main()
     k = hyperparameters.get("k")
     n_components = hyperparameters.get("n_components")
@@ -73,6 +78,7 @@ def _run_p3(model: str, hyperparameters: dict[str, Any]) -> None:
         n_init=hyperparameters.get("n_init"),
         n_components=[n_components] if n_components is not None else None,
         covariance_type=hyperparameters.get("covariance_type"),
+        buscar_=buscar,
     )
 
 
