@@ -60,10 +60,26 @@ CRITERIO = (
 )
 
 
-def nombre_grupo(fila_z: pd.Series, umbral: float) -> str:
-    """Nombre de un grupo por sus dos variables dominantes; vacío si ninguna llega al umbral."""
+# Variables cuyo nombre describe un sentido de flujo: se nombran con el signo del valor original
+FLUJOS = ("net_am", "net_pm")
+
+
+def nombre_grupo(fila_z: pd.Series, umbral: float, fila_original: pd.Series | None = None) -> str:
+    """Nombre de un grupo por sus dos variables dominantes; vacío si ninguna llega al umbral.
+
+    La dominancia se mide con el valor estandarizado (``fila_z``: qué tanto se aparta del
+    promedio). En ``net_am`` y ``net_pm`` el sentido ("se vacía" o "se llena") sale del signo
+    del promedio original del grupo (``fila_original``), no del estandarizado: un grupo que se
+    llena menos que el promedio sigue llenándose.
+    """
     dominantes = fila_z[fila_z.abs() >= umbral].abs().sort_values(ascending=False).index[:2]
-    return " · ".join(DESCRIPTORES[v][int(fila_z[v] > 0)] for v in dominantes)
+
+    def signo(v):
+        if v in FLUJOS and fila_original is not None:
+            return int(fila_original[v] > 0)
+        return int(fila_z[v] > 0)
+
+    return " · ".join(DESCRIPTORES[v][signo(v)] for v in dominantes)
 
 
 def criterios(
@@ -76,7 +92,8 @@ def criterios(
     z = perfiles_z(perfiles, etiquetas, variables)
     proporcion = pd.Series(etiquetas).value_counts(normalize=True).sort_index()
     net_am = perfiles.assign(grupo=etiquetas).groupby("grupo")["net_am"].mean()
-    nombres = z.apply(nombre_grupo, axis=1, umbral=cfg.umbral_z)
+    medias = perfiles[variables].assign(grupo=etiquetas).groupby("grupo").mean()
+    nombres = pd.Series({g: nombre_grupo(z.loc[g], cfg.umbral_z, medias.loc[g]) for g in z.index})
     z_grupo = z.abs().max(axis=1)
     z_par = [float((z.loc[a] - z.loc[b]).abs().max()) for a, b in combinations(z.index, 2)]
     resumen = {

@@ -165,3 +165,18 @@ def test_mlflow_project_seleccion_no_recibe_hiperparametros(monkeypatch):
     assert llamadas == {"model": "seleccion"}
     with pytest.raises(ValueError, match="seleccion"):
         mlflow_project.run_train("p3", "seleccion", {"k": 3})
+
+
+def test_el_sentido_del_flujo_usa_el_signo_original():
+    # el grupo se llena poco en la mañana (+0.05): muy debajo del promedio, pero se llena
+    z = pd.Series({"net_am": -1.5, "log_trips_day": 0.1})
+    original = pd.Series({"net_am": 0.05, "log_trips_day": 3.0})
+    assert sel.nombre_grupo(z, 0.5, original) == "se llena en la mañana"
+    assert sel.nombre_grupo(z, 0.5) == "se vacía en la mañana"  # sin original, signo de z
+
+
+def test_criterios_nombran_con_el_signo_original():
+    perfiles, grupo = _perfiles()
+    perfiles["net_am"] = np.array([0.02, 0.6, 0.3])[grupo]  # todas se llenan en la mañana
+    _, tabla = sel.criterios(perfiles, grupo, ["log_trips_day", "net_am"], CFG)
+    assert not tabla["nombre"].str.contains("se vacía en la mañana").any()
