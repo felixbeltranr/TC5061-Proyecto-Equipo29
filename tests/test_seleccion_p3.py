@@ -180,3 +180,20 @@ def test_criterios_nombran_con_el_signo_original():
     perfiles["net_am"] = np.array([0.02, 0.6, 0.3])[grupo]  # todas se llenan en la mañana
     _, tabla = sel.criterios(perfiles, grupo, ["log_trips_day", "net_am"], CFG)
     assert not tabla["nombre"].str.contains("se vacía en la mañana").any()
+
+
+def test_validacion_incompleta_no_puede_ser_champion_ni_challenger():
+    c1 = {**_r(5, np.nan, True), "val_davies_bouldin_uso": np.nan}  # una sola partición válida
+    with pytest.raises(ValueError, match="validación completa"):
+        sel.elegir_campeon({"C1": c1, "C2": _r(3, 0.20, False)}, CFG)
+    ranking = sel.elegir_campeon({"C1": c1, "C2": _r(3, 0.20, True), "C3": _r(4, 0.1, False)}, CFG)
+    papeles = {r["candidata"]: r["papel"] for r in ranking}
+    assert papeles == {"C2": "champion", "C1": "", "C3": ""}
+    motivo_c1 = next(r["motivo"] for r in ranking if r["candidata"] == "C1")
+    assert motivo_c1.startswith("validación incompleta")
+
+
+def test_flujo_cero_se_nombra_equilibrado():
+    z = pd.Series({"net_pm": -1.2, "log_trips_day": 0.1})
+    original = pd.Series({"net_pm": 0.0, "log_trips_day": 3.0})
+    assert sel.nombre_grupo(z, 0.5, original) == "equilibrada en la tarde"

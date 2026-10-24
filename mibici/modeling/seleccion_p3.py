@@ -62,6 +62,7 @@ CRITERIO = (
 
 # Variables cuyo nombre describe un sentido de flujo: se nombran con el signo del valor original
 FLUJOS = ("net_am", "net_pm")
+EQUILIBRADO = {"net_am": "equilibrada en la mañana", "net_pm": "equilibrada en la tarde"}
 
 
 def nombre_grupo(fila_z: pd.Series, umbral: float, fila_original: pd.Series | None = None) -> str:
@@ -70,16 +71,19 @@ def nombre_grupo(fila_z: pd.Series, umbral: float, fila_original: pd.Series | No
     La dominancia se mide con el valor estandarizado (``fila_z``: qué tanto se aparta del
     promedio). En ``net_am`` y ``net_pm`` el sentido ("se vacía" o "se llena") sale del signo
     del promedio original del grupo (``fila_original``), no del estandarizado: un grupo que se
-    llena menos que el promedio sigue llenándose.
+    llena menos que el promedio sigue llenándose. Un flujo original exactamente 0 se nombra
+    "equilibrada".
     """
     dominantes = fila_z[fila_z.abs() >= umbral].abs().sort_values(ascending=False).index[:2]
 
-    def signo(v):
+    def descriptor(v):
         if v in FLUJOS and fila_original is not None:
-            return int(fila_original[v] > 0)
-        return int(fila_z[v] > 0)
+            if fila_original[v] == 0:
+                return EQUILIBRADO[v]
+            return DESCRIPTORES[v][int(fila_original[v] > 0)]
+        return DESCRIPTORES[v][int(fila_z[v] > 0)]
 
-    return " · ".join(DESCRIPTORES[v][signo(v)] for v in dominantes)
+    return " · ".join(descriptor(v) for v in dominantes)
 
 
 def criterios(
@@ -133,12 +137,18 @@ def elegir_campeon(candidatas: dict[str, dict], cfg: P3Config = CONFIG_P3) -> li
     """Ranking de candidatas con su papel (champion, challenger o vacío) y el motivo.
 
     Cada candidata trae sus métricas de validación y ``criterios`` (resumen de ``criterios``).
+    Solo pueden ser champion o challenger las candidatas con validación completa (silueta de
+    validación definida en todas las particiones) que además cumplen los criterios.
     """
     filas = [{**c, "candidata": clave} for clave, c in candidatas.items()]
     ranking = ordenar(filas, cfg)
-    aptas = [r for r in ranking if r["criterios"]["cumple"]]
+    completa = {id(r): not np.isnan(r["val_silhouette_uso"]) for r in ranking}
+    aptas = [r for r in ranking if completa[id(r)] and r["criterios"]["cumple"]]
     if not aptas:
-        raise ValueError("Ninguna candidata cumple los criterios de interpretabilidad")
+        raise ValueError(
+            "Ninguna candidata tiene validación completa y cumple los criterios de "
+            "interpretabilidad"
+        )
     campeon = aptas[0]
     retador = aptas[1] if len(aptas) > 1 else None
     for r in ranking:
@@ -155,6 +165,8 @@ def elegir_campeon(candidatas: dict[str, dict], cfg: P3Config = CONFIG_P3) -> li
             if r is campeon and r["posicion"] == 1
             else "las anteriores del ranking no cumplen los criterios"
             if r is campeon
+            else "validación incompleta (alguna partición inválida)"
+            if not completa[id(r)]
             else "no cumple " + ", ".join(fallas)
             if fallas
             else "cumple, pero queda detrás en el ranking"
