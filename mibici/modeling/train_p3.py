@@ -49,6 +49,7 @@ import typer
 
 from mibici.config import CONFIG, CONFIG_P3, PROJ_ROOT, P3Config
 from mibici.features_p3 import DatasetP3, a_km, cargar_dataset
+from mibici.modeling import artefactos_p3 as art
 from mibici.modeling.busqueda_p3 import evaluar_validacion, ordenar, rejilla
 from mibici.modeling.modelos_p3 import (
     construir_modelo,
@@ -58,8 +59,6 @@ from mibici.modeling.modelos_p3 import (
 )
 
 app = typer.Typer()
-COLORES = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#6250d6", "#e34948"]
-MARCADORES = ["o", "s", "^", "D", "v", "P", "X", "*"]
 
 
 class Renumerado:
@@ -164,44 +163,6 @@ def etiquetas(
     }
 
 
-def _mapa(ds: DatasetP3, km: Renumerado, k: int, ruta: Path, cfg: P3Config = CONFIG_P3) -> None:
-    """Mapa de zonas: relleno = entrenamiento; hueco = estaciones nuevas asignadas con predict."""
-    import matplotlib
-
-    matplotlib.use("Agg")  # sin ventana: la figura solo se guarda como artefacto
-    import matplotlib.pyplot as plt
-
-    nom, en = ds.nom, ds.entrenamiento
-    et_nuevas = km.predict(a_km(nom, ds.nuevas, cfg.lat_ref))
-    fig, ax = plt.subplots(figsize=(6.5, 6.5))
-    for g in range(k):
-        est = en.index[km.labels_ == g]
-        ax.scatter(
-            nom.loc[est, "longitude"],
-            nom.loc[est, "latitude"],
-            s=16,
-            color=COLORES[g],
-            marker=MARCADORES[g],
-            label=f"zona {g}",
-        )
-        nv = ds.nuevas[et_nuevas == g]
-        ax.scatter(
-            nom.loc[nv, "longitude"],
-            nom.loc[nv, "latitude"],
-            s=22,
-            facecolor="none",
-            edgecolor=COLORES[g],
-            marker=MARCADORES[g],
-        )
-    ax.set_aspect(1 / np.cos(np.radians(cfg.lat_ref)))
-    ax.set_title(f"P3 baseline: zonas geográficas (k={k})", loc="left")
-    ax.set_xlabel("longitud")
-    ax.set_ylabel("latitud")
-    ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.1), ncol=k, fontsize=8, frameon=False)
-    fig.savefig(ruta, dpi=150, bbox_inches="tight")
-    plt.close(fig)
-
-
 def registrar_baseline(
     ds: DatasetP3, k: int, km: Renumerado, m: dict, cfg: P3Config = CONFIG_P3
 ) -> str:
@@ -230,36 +191,81 @@ def registrar_baseline(
             }
         )
         mlflow.log_metrics(m)
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp = Path(tmp)
-            _mapa(ds, km, k, tmp / f"p3_mapa_baseline_k{k}.png", cfg)
-            cols = ["name", "municipio", "latitude", "longitude"]
-            asignacion = pd.concat(
-                [
-                    nom.loc[en.index, cols].assign(zona=km.labels_, periodo="entrenamiento"),
-                    nom.loc[ds.nuevas, cols].assign(
-                        zona=km.predict(a_km(nom, ds.nuevas, cfg.lat_ref)),
-                        periodo="nueva (predict)",
-                    ),
-                ]
+        et_nv = km.predict(a_km(nom, ds.nuevas, cfg.lat_ref))
+        _registrar_archivos(
+            ds,
+            cfg,
+            et_en=km.labels_,
+            et_ev=km.predict(a_km(nom, ev.index, cfg.lat_ref)),
+            idx_nv=ds.nuevas,
+            et_nv=et_nv,
+            etiqueta="zona",
+            titulo=f"P3 baseline: zonas geográficas (k={k})",
+            config=art.config_corrida(
+                ds, "kmeans_geo", {"k": k, "n_init": cfg.n_init}, ds.variables, cfg
             )
-            asignacion.rename_axis("estacion").to_csv(tmp / "asignacion_estaciones.csv")
-            (
-                en.assign(zona=km.labels_)
-                .groupby("zona")[["trips_day", *ds.variables]]
-                .mean()
-                .round(4)
-                .to_csv(tmp / "perfil_uso_por_zona.csv")
-            )
-            ds.bitacora.to_csv(tmp / "bitacora_limpieza.csv", index=False)
-            mlflow.log_artifacts(str(tmp))
+            | {"variables_entrada": ["x_km", "y_km"]},  # el baseline agrupa por ubicación
+        )
         return run.info.run_id
 
 
+def _registrar_archivos(
+    ds: DatasetP3,
+    cfg: P3Config,
+    et_en: np.ndarray,
+    et_ev: np.ndarray,
+    idx_nv: pd.Index,
+    et_nv: np.ndarray,
+    etiqueta: str,
+    titulo: str,
+    config: dict,
+) -> None:
+    """Artefactos comunes del run activo en data/, plots/ y config/ (ver artefactos_p3.py)."""
+    en = ds.entrenamiento
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+        for sub in ("data", "plots", "config"):
+            (tmp / sub).mkdir()
+        if cfg.manifiesto_path.exists():
+            (tmp / "data" / cfg.manifiesto_path.name).write_bytes(cfg.manifiesto_path.read_bytes())
+        art.asignacion_estaciones(ds, et_en, et_ev, etiqueta).to_csv(
+            tmp / "data" / "asignacion_estaciones.csv"
+        )
+        perfil = art.perfil_por_grupo(en, et_en, list(cfg.prioridad_variables))
+        perfil.rename_axis(etiqueta).round(4).to_csv(
+            tmp / "data" / f"perfil_uso_por_{etiqueta}.csv"
+        )
+        ds.bitacora.to_csv(tmp / "data" / "bitacora_limpieza.csv", index=False)
+        art.mapa_grupos(
+            ds.nom,
+            en.index,
+            et_en,
+            idx_nv,
+            et_nv,
+            titulo,
+            tmp / "plots" / f"mapa_{etiqueta}s.png",
+            etiqueta,
+            cfg,
+        )
+        z = art.perfiles_z(en, et_en, ds.variables)
+        art.figura_perfiles(
+            z.rename_axis(etiqueta),
+            perfil["n_estaciones"],
+            f"{titulo}: perfil de uso (desv. estándar vs. promedio)",
+            tmp / "plots" / f"perfiles_{etiqueta}s.png",
+        )
+        art.guardar_json(config, tmp / "config" / "config_corrida.json")
+        mlflow.log_artifacts(str(tmp))
+
+
 def registrar_candidata(
-    ds: DatasetP3, model: str, params: dict, m: dict, cfg: P3Config = CONFIG_P3
+    ds: DatasetP3, model: str, params: dict, modelo, m: dict, cfg: P3Config = CONFIG_P3
 ) -> str:
-    """Registra un run de una candidata de uso con parámetros, métricas y etiquetas."""
+    """Registra un run de una candidata de uso con parámetros, métricas, etiquetas y artefactos.
+
+    Artefactos: el modelo con firma en ``model/``, los perfiles como entradas del run
+    (``log_input``) y los archivos de ``data/``, ``plots/`` y ``config/``.
+    """
     nombre = nombre_corrida(model, params, cfg)
     with mlflow.start_run(run_name=nombre) as run:
         mlflow.set_tags(etiquetas(ds, cfg, familia=model, etapa="candidate"))
@@ -283,6 +289,27 @@ def registrar_candidata(
             }
         )
         mlflow.log_metrics(m)
+        entrada = list(cfg.prioridad_variables)
+        en, ev = ds.entrenamiento, ds.evaluacion
+        et_en, et_ev = modelo.predict(en[entrada]), modelo.predict(ev[entrada])
+        nuevas = ev.index.isin(ds.nuevas)
+        variables_vif = list(modelo.named_steps["vif"].variables_)
+        mlflow.log_param("variables_vif", ",".join(variables_vif))
+        _registrar_archivos(
+            ds,
+            cfg,
+            et_en=et_en,
+            et_ev=et_ev,
+            idx_nv=ev.index[nuevas],
+            et_nv=et_ev[nuevas],
+            etiqueta="grupo",
+            titulo=nombre,
+            config=art.config_corrida(
+                ds, model, hiperparametros_efectivos(model, params, cfg), variables_vif, cfg
+            ),
+        )
+        art.registrar_datasets(ds, cfg)
+        art.registrar_modelo(modelo, en.head(5), cfg)
         return run.info.run_id
 
 
@@ -425,7 +452,7 @@ def main(
         if model == "kmeans_geo":
             km, m = entrenar_baseline(ds, params["k"], cfg)
         else:
-            _, m = entrenar_candidata(ds, model, params, cfg)
+            modelo, m = entrenar_candidata(ds, model, params, cfg)
         m |= evaluar_validacion(ds, model, params, cfg)
         resumen = " | ".join(f"{n} {v:.3f}" for n, v in m.items())
         logger.info(f"{model} {params}: {resumen}")
@@ -434,7 +461,7 @@ def main(
         if model == "kmeans_geo":
             run_id = registrar_baseline(ds, params["k"], km, m, cfg)
         else:
-            run_id = registrar_candidata(ds, model, params, m, cfg)
+            run_id = registrar_candidata(ds, model, params, modelo, m, cfg)
         logger.success(f"Run registrado: {model} {params} ({run_id[:8]})")
 
 
