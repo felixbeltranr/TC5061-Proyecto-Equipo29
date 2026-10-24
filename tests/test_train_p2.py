@@ -122,7 +122,8 @@ def cortes_y_configuracion_chicos(monkeypatch, tmp_path):
         muestra_importancia=200,
         repeticiones_importancia=1,
         tracking_uri=f"sqlite:///{tmp_path / 'mlflow_auto.db'}",
-        artifact_location=(tmp_path / "mlartifacts_auto").as_uri(),
+        artefactos_dir=tmp_path / "mlartifacts_auto",
+        corridas_dir=tmp_path / "corridas_auto",
     )
     monkeypatch.setattr(t2, "CONFIG_P2", config)
     # MLflow guarda la direccion del almacen en estado global: se restaura al terminar
@@ -144,6 +145,7 @@ def correr_main(carpeta: Path, extra: list[str] | None = None, niveles=("0.5",))
     args = [
         "--panel", str(entradas["panel"]), "--manifiesto", str(entradas["manifiesto"]),
         "--figuras", str(figuras), "--tracking-uri", uri, "--niveles", *niveles,
+        "--artefactos", str(carpeta / "mlartifacts"),
         *(extra or []),
     ]  # fmt: skip
     t2.main(args)
@@ -155,6 +157,7 @@ def correr_main(carpeta: Path, extra: list[str] | None = None, niveles=("0.5",))
         "experimento": experimento,
         "runs": {r.info.run_name: r for r in runs},
         "figuras": figuras,
+        "carpeta": carpeta,
         "resultados": json.loads((figuras / "p2_resultados.json").read_text()),
         "entradas": entradas,
     }
@@ -170,7 +173,6 @@ def correr_con_config_chica(fabrica, nombre: str, extra=None, niveles=("0.5",)) 
             rejilla=REJILLA_CORTA,
             muestra_importancia=200,
             repeticiones_importancia=1,
-            artifact_location=(fabrica.mktemp(f"arte_{nombre}") / "mlartifacts").as_uri(),
         )
         mpatch.setattr(t2, "CONFIG_P2", config)
         uri_previa = mlflow.get_tracking_uri()
@@ -217,6 +219,12 @@ def test_cortes_salen_de_la_configuracion_y_rango_meses_excluye_el_dia_final(mon
         "test_fin": CONFIG_P2.fecha_fin_prueba,
     }
     assert t2.RIESGO == ["sin_bicicletas", "sin_anclajes"]
+    # las carpetas de salida por defecto estan ignoradas por git: correr P2 no ensucia el repo
+    for carpeta in (CONFIG_P2.corridas_dir, CONFIG_P2.artefactos_dir):
+        ignorada = subprocess.run(
+            ["git", "check-ignore", "-q", str(carpeta / "archivo.png")], check=False, cwd=PROJ_ROOT
+        )
+        assert ignorada.returncode == 0, carpeta
     assert t2.rango_meses("2025-01-01", "2026-05-01") == "2025-01..2026-04"
     assert t2.rango_meses("2026-05-01", "2026-10-01") == "2026-05..2026-09"
     assert t2.rango_meses("2026-03-01", "2026-04-15") == "2026-03..2026-04"  # fin a mitad de mes
@@ -576,7 +584,9 @@ def test_main_registra_artefactos_por_run(corrida_completa):
 
 def test_main_no_escribe_archivos_en_el_repo(corrida_completa):
     assert corrida_completa["nuevos_en_repo"] == set()
-    assert PROJ_ROOT.as_uri() not in corrida_completa["experimento"].artifact_location
+    # --artefactos manda: los artefactos de MLflow van a la carpeta indicada, no al repo
+    esperado = (corrida_completa["carpeta"] / "mlartifacts").resolve().as_uri()
+    assert corrida_completa["experimento"].artifact_location == esperado
     assert (corrida_completa["figuras"] / "p2_resultados.json").exists()
 
 

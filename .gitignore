@@ -193,6 +193,7 @@ cython_debug/
 mlruns/
 mlartifacts/
 mlflow.db
+reports/runs_p2/
 models/*.pkl
 models/*.joblib
 .env

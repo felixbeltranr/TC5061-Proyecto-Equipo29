@@ -135,7 +135,8 @@ class P2Config:
     nomenclatura_path: Path = CONFIG.raw_data_dir / "nomenclatura_2026_09.csv"
     panel_path: Path = CONFIG.interim_data_dir / "p2_panel_horario.parquet"
     manifiesto_path: Path = PROJ_ROOT / "references" / "manifiesto_datos_p2.json"
-    figuras_dir: Path = CONFIG.reports_dir / "figures"
+    figuras_dir: Path = CONFIG.reports_dir / "figures"  # figuras versionadas del reporte
+    corridas_dir: Path = CONFIG.reports_dir / "runs_p2"  # salida de train_p2, ignorada por git
     panel_fin: str = "2026-09-30 23:00"  # ultima hora del panel (fin del rango descargado)
 
     # Etiqueta: ocupacion estimada entre capacidad
@@ -163,7 +164,7 @@ class P2Config:
     # MLflow: backend local en la raiz del repo, compartido con P3
     experimento: str = "mibici-equipo29"
     tracking_uri: str = f"sqlite:///{(PROJ_ROOT / 'mlflow.db').as_posix()}"
-    artifact_location: str = (PROJ_ROOT / "mlartifacts").as_uri()
+    artefactos_dir: Path = PROJ_ROOT / "mlartifacts"
     question: str = "P2"
     team: str = "29"
     author: str = "carlosgalvan"

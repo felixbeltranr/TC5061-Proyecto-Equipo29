@@ -400,7 +400,16 @@ def main(argv: list[str] | None = None) -> None:
     )
     ap.add_argument("--semilla", type=int, default=CONFIG_P2.seed)
     ap.add_argument("--tracking-uri", default=CONFIG_P2.tracking_uri)
-    ap.add_argument("--figuras", default=str(CONFIG_P2.figuras_dir))
+    ap.add_argument(
+        "--figuras",
+        default=str(CONFIG_P2.corridas_dir),
+        help="carpeta de figuras, CSV y p2_resultados.json (por defecto ignorada por git)",
+    )
+    ap.add_argument(
+        "--artefactos",
+        default=str(CONFIG_P2.artefactos_dir),
+        help="carpeta de artefactos de MLflow; solo aplica si el experimento aun no existe",
+    )
     ap.add_argument("--manifiesto", default=str(CONFIG_P2.manifiesto_path))
     ap.add_argument(
         "--sin-afinar", action="store_true", help="usa la primera configuracion de la rejilla"
@@ -420,7 +429,7 @@ def main(argv: list[str] | None = None) -> None:
     mlflow.set_tracking_uri(args.tracking_uri)
     if mlflow.get_experiment_by_name(CONFIG_P2.experimento) is None:
         mlflow.create_experiment(
-            CONFIG_P2.experimento, artifact_location=CONFIG_P2.artifact_location
+            CONFIG_P2.experimento, artifact_location=Path(args.artefactos).resolve().as_uri()
         )
     mlflow.set_experiment(CONFIG_P2.experimento)
 
