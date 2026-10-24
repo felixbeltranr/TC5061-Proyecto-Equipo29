@@ -38,6 +38,7 @@ REJILLA_CORTA = (
 ETIQUETAS_BASE = {
     "question", "team", "author", "data_range", "seed", "data_version", "git_commit", "git_dirty",
 }  # fmt: skip
+ETIQUETAS_MODELO = {"modelo", "model_family", "stage_of_work"}
 VERSION = "abc123def456"
 RUNS_INI50 = {
     "p2_baseline_mayoritaria_ini50",
@@ -492,9 +493,9 @@ def test_main_etiqueta_cada_run_con_la_convencion_del_equipo(corrida_completa):
     modelos = {}
     for nombre, run in corrida_completa["runs"].items():
         tags = run.data.tags
-        # etiquetas propias (sin las de sistema de MLflow, salvo la del commit) mas "modelo"
+        # etiquetas propias (sin las de sistema de MLflow, salvo la del commit) mas las del modelo
         propias = {k for k in tags if not k.startswith("mlflow.") or k.endswith("git.commit")}
-        assert propias == ETIQUETAS_BASE | {"mlflow.source.git.commit", "modelo"}, nombre
+        assert propias == ETIQUETAS_BASE | ETIQUETAS_MODELO | {"mlflow.source.git.commit"}, nombre
         assert tags["question"] == "P2" and tags["team"] == "29"
         assert tags["author"] == "carlosgalvan" and tags["seed"] == "29"
         assert tags["data_range"] == "2025-01..2026-09"
@@ -507,6 +508,20 @@ def test_main_etiqueta_cada_run_con_la_convencion_del_equipo(corrida_completa):
     assert modelos["p2_baseline_persistencia_ini50"] == "baseline_persistencia"
     assert modelos["p2_hgb_balanceado_ini50"] == "hist_gradient_boosting"
     assert modelos["p2_hgb_sin_pesos_ini50"] == "hist_gradient_boosting_sin_pesos"
+    # model_family y stage_of_work: las baselines son baseline, los modelos entrenados candidate
+    familias = {n: r.data.tags["model_family"] for n, r in corrida_completa["runs"].items()}
+    etapas = {n: r.data.tags["stage_of_work"] for n, r in corrida_completa["runs"].items()}
+    for nivel in ("ini50", "ini30"):
+        assert familias[f"p2_baseline_mayoritaria_{nivel}"] == "baseline_mayoritaria"
+        assert familias[f"p2_baseline_semana_previa_{nivel}"] == "baseline_semana_previa"
+        assert familias[f"p2_baseline_persistencia_{nivel}"] == "baseline_persistencia"
+        assert familias[f"p2_hgb_balanceado_{nivel}"] == "hist_gradient_boosting"
+        for nombre in (f"p2_baseline_{b}_{nivel}" for b in ("mayoritaria", "semana_previa")):
+            assert etapas[nombre] == "baseline"
+        assert etapas[f"p2_baseline_persistencia_{nivel}"] == "baseline"
+        assert etapas[f"p2_hgb_balanceado_{nivel}"] == "candidate"
+    assert familias["p2_hgb_sin_pesos_ini50"] == "hist_gradient_boosting"
+    assert etapas["p2_hgb_sin_pesos_ini50"] == "candidate"
 
 
 def test_main_registra_metricas_de_test_y_de_estaciones_nuevas(corrida_completa):

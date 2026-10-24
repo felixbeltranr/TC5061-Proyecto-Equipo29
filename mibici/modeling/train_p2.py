@@ -35,6 +35,7 @@ from mibici.config import CONFIG, CONFIG_P2, PROJ_ROOT
 
 EXPERIMENTO = CONFIG_P2.experimento
 RIESGO = ["sin_bicicletas", "sin_anclajes"]
+FAMILIA_HGB = "hist_gradient_boosting"
 CORTES = {
     "train_inicio": CONFIG_P2.fecha_inicio_entrenamiento,
     "val_inicio": CONFIG_P2.fecha_inicio_validacion,
@@ -253,6 +254,11 @@ def guardar_importancia(
     return [ruta_imp, ruta_fig]
 
 
+def etiquetas_modelo(modelo: str, familia: str, etapa: str) -> dict[str, str]:
+    """Etiquetas de un run: modelo, model_family y stage_of_work (baseline, search o candidate)."""
+    return {"modelo": modelo, "model_family": familia, "stage_of_work": etapa}
+
+
 def registrar(
     nombre: str, tags: dict, params: dict, mets: dict[str, float], artefactos: list[Path]
 ) -> None:
@@ -331,7 +337,7 @@ def correr_nivel(
     m = metricas_test_y_nuevas(test, nuevas, pred)
     registrar(
         f"p2_baseline_mayoritaria_{sufijo}",
-        tags_base | {"modelo": "baseline_mayoritaria"},
+        tags_base | etiquetas_modelo("baseline_mayoritaria", "baseline_mayoritaria", "baseline"),
         params_comunes | {"modelo": "clase_mayoritaria", "clase": mayoritaria},
         m | dist_m,
         [],
@@ -349,7 +355,8 @@ def correr_nivel(
     )
     registrar(
         f"p2_baseline_semana_previa_{sufijo}",
-        tags_base | {"modelo": "baseline_semana_previa"},
+        tags_base
+        | etiquetas_modelo("baseline_semana_previa", "baseline_semana_previa", "baseline"),
         params_comunes | {"modelo": "clase_misma_hora_semana_previa"},
         m | dist_m,
         [fig],
@@ -367,7 +374,7 @@ def correr_nivel(
     )
     registrar(
         f"p2_baseline_persistencia_{sufijo}",
-        tags_base | {"modelo": "baseline_persistencia"},
+        tags_base | etiquetas_modelo("baseline_persistencia", "baseline_persistencia", "baseline"),
         params_comunes | {"modelo": "clase_actual_se_repite"},
         m | dist_m,
         [fig],
@@ -398,7 +405,7 @@ def correr_nivel(
         artefactos.append(ruta_rej)
     registrar(
         f"p2_hgb_balanceado_{sufijo}",
-        tags_base | {"modelo": "hist_gradient_boosting"},
+        tags_base | etiquetas_modelo("hist_gradient_boosting", FAMILIA_HGB, "candidate"),
         params_comunes
         | {
             "modelo": "HistGradientBoostingClassifier",
@@ -424,7 +431,8 @@ def correr_nivel(
         )
         registrar(
             f"p2_hgb_sin_pesos_{sufijo}",
-            tags_base | {"modelo": "hist_gradient_boosting_sin_pesos"},
+            tags_base
+            | etiquetas_modelo("hist_gradient_boosting_sin_pesos", FAMILIA_HGB, "candidate"),
             params_comunes
             | {"modelo": "HistGradientBoostingClassifier", "class_weight": "ninguno"}
             | params_hgb,
