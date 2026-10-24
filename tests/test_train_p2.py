@@ -18,6 +18,7 @@ from mlflow.tracking import MlflowClient
 import numpy as np
 import pandas as pd
 import pytest
+from sklearn.base import BaseEstimator
 
 from mibici import features_p2 as fp
 from mibici import mlflow_project as mp
@@ -59,6 +60,10 @@ RUNS_INI50 = {
     "p2_logistica_balanceada_ini50",
     "p2_random_forest_balanceado_ini50",
 }
+
+
+class EstimadorAjeno(BaseEstimator):
+    """Estimador que no es de sklearn ni de numpy, para probar la lista de tipos confiables."""
 
 
 def hacer_panel(estaciones=(1, 2, 3), nueva=4) -> pd.DataFrame:
@@ -114,6 +119,17 @@ def escribir_entradas(carpeta: Path, panel: pd.DataFrame) -> dict[str, Path]:
     return {"panel": ruta_panel, "resumen": ruta_resumen, "manifiesto": ruta_manifiesto}
 
 
+def archivos_de(cliente, run_id: str, carpeta: str | None = None) -> set[str]:
+    """Rutas de todos los archivos de los artefactos de un run, entrando a las subcarpetas."""
+    rutas = set()
+    for a in cliente.list_artifacts(run_id, carpeta):
+        if a.is_dir:
+            rutas |= archivos_de(cliente, run_id, a.path)
+        else:
+            rutas.add(a.path)
+    return rutas
+
+
 def foto_del_repo() -> set[str]:
     """Rutas relativas de todos los archivos del repo (sin .git ni caches de herramientas)."""
     omitir = {".git", "__pycache__", ".pytest_cache", ".ruff_cache"}
@@ -167,6 +183,7 @@ def correr_main(carpeta: Path, extra: list[str] | None = None, niveles=("0.5",))
         "cliente": cliente,
         "experimento": experimento,
         "runs": {r.info.run_name: r for r in runs},
+        "uri": uri,
         "figuras": figuras,
         "carpeta": carpeta,
         "resultados": json.loads((figuras / "p2_resultados.json").read_text()),
@@ -337,6 +354,30 @@ def test_figura_confusion_guarda_un_png_con_una_o_varias_clases(tmp_path):
     assert ruta.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
     una = np.array(["segura", "segura"], dtype=object)
     assert t2.figura_confusion(una, una, "Una clase", tmp_path / "una.png").stat().st_size > 0
+
+
+def test_figura_pr_dibuja_las_dos_clases_de_riesgo_y_omite_las_ausentes(tmp_path):
+    y = np.array(["segura", "sin_bicicletas", "sin_anclajes", "sin_bicicletas"], dtype=object)
+    clases = ["segura", "sin_anclajes", "sin_bicicletas"]
+    proba = np.array(
+        [[0.8, 0.1, 0.1], [0.1, 0.1, 0.8], [0.1, 0.8, 0.1], [0.2, 0.1, 0.7]], dtype=float
+    )
+    ruta = t2.figura_pr(y, proba, clases, "PR", tmp_path / "pr.png")
+    assert ruta.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
+    # sin sin_anclajes en y_true solo queda una curva y no falla
+    solo = y[y != "sin_anclajes"]
+    assert t2.figura_pr(solo, proba[y != "sin_anclajes"], clases, "PR", tmp_path / "pr2.png")
+
+
+def test_tipos_confiables_solo_acepta_tipos_de_sklearn_y_numpy():
+    partes = t2.preparar(0.5, hacer_panel())
+    train = fp.unir_stats(partes["train"], *fp.stats_estacion(partes["train"]))
+    bosque = t2.ajustar_random_forest(train, RF_CHICO, 7)
+    tipos = t2.tipos_confiables(bosque)
+    assert tipos and all(t.startswith(("sklearn.", "numpy.")) for t in tipos)
+
+    with pytest.raises(ValueError, match="no confiables"):
+        t2.tipos_confiables(EstimadorAjeno())
 
 
 # preparar, ajustar y afinar
@@ -704,38 +745,120 @@ def test_main_registra_la_busqueda_como_runs_anidados(corrida_completa):
     mejor_f1 = max(h.data.metrics["val_macro_f1"] for h in hijos.values())
     assert padre.data.metrics["val_macro_f1"] == pytest.approx(mejor_f1)
     cliente = corrida_completa["cliente"]
-    assert {a.path for a in cliente.list_artifacts(padre.info.run_id)} == {
-        "p2_rejilla_validacion.json"
-    }
+    assert archivos_de(cliente, padre.info.run_id) == {"config/p2_rejilla_validacion.json"}
 
 
-def test_main_registra_artefactos_por_run(corrida_completa):
+def test_main_ordena_los_artefactos_en_plots_data_y_config(corrida_completa):
     cliente, runs = corrida_completa["cliente"], corrida_completa["runs"]
 
     def artefactos(nombre):
-        return {a.path for a in cliente.list_artifacts(runs[nombre].info.run_id)}
+        return archivos_de(cliente, runs[nombre].info.run_id)
 
     assert artefactos("p2_baseline_mayoritaria_ini50") == set()
-    assert artefactos("p2_baseline_semana_previa_ini50") == {"p2_cm_baseline_semana_ini50.png"}
-    assert artefactos("p2_baseline_persistencia_ini50") == {
-        "p2_cm_baseline_persistencia_ini50.png"
+    assert artefactos("p2_baseline_semana_previa_ini50") == {
+        "plots/p2_cm_baseline_semana_ini50.png"
     }
-    assert artefactos("p2_hgb_sin_pesos_ini50") == {"p2_cm_hgb_sin_pesos_ini50.png"}
+    assert artefactos("p2_baseline_persistencia_ini50") == {
+        "plots/p2_cm_baseline_persistencia_ini50.png"
+    }
+    # todas las candidatas: matriz de confusion, curva PR de las clases de riesgo, manifiesto
+    # y resumen del panel, estadisticas por estacion y hora, y la configuracion del run
+    comunes = {
+        "data/manifiesto.json",
+        "data/panel.json",
+        "data/stats_estacion.csv",
+        "data/stats_estacion_hora.csv",
+        "config/config_p2.json",
+    }
     for run, clave in (
         ("p2_logistica_balanceada_ini50", "logistica"),
         ("p2_random_forest_balanceado_ini50", "random_forest"),
     ):
-        assert artefactos(run) == {f"p2_cm_{clave}_ini50.png", f"p2_cm_{clave}_nuevas_ini50.png"}
-    assert artefactos("p2_hgb_balanceado_ini50") == {
-        "p2_cm_hgb_ini50.png",
-        "p2_cm_hgb_nuevas_ini50.png",
-        "p2_importancia_permutacion_ini50.csv",
-        "p2_importancia_permutacion_ini50.png",
-        "p2_rejilla_validacion.json",
-        "manifiesto.json",
-        "panel.json",
+        assert artefactos(run) == comunes | {
+            f"plots/p2_cm_{clave}_ini50.png",
+            f"plots/p2_cm_{clave}_nuevas_ini50.png",
+            f"plots/p2_pr_{clave}_ini50.png",
+        }
+    assert artefactos("p2_hgb_sin_pesos_ini50") == comunes | {
+        "plots/p2_cm_hgb_sin_pesos_ini50.png",
+        "plots/p2_pr_hgb_sin_pesos_ini50.png",
     }
-    assert "p2_rejilla_validacion.json" not in artefactos("p2_hgb_balanceado_ini30")
+    # el HGB suma la importancia por permutacion y la rejilla de la busqueda
+    assert artefactos("p2_hgb_balanceado_ini50") == comunes | {
+        "plots/p2_cm_hgb_ini50.png",
+        "plots/p2_cm_hgb_nuevas_ini50.png",
+        "plots/p2_pr_hgb_ini50.png",
+        "plots/p2_importancia_permutacion_ini50.png",
+        "data/p2_importancia_permutacion_ini50.csv",
+        "config/p2_rejilla_validacion.json",
+    }
+    assert "config/p2_rejilla_validacion.json" not in artefactos("p2_hgb_balanceado_ini30")
+
+
+def test_main_loguea_cada_candidata_con_firma_ejemplo_y_carga(corrida_completa):
+    mlflow.set_tracking_uri(corrida_completa["uri"])
+    runs = corrida_completa["runs"]
+    candidatas = {n: r for n, r in runs.items() if r.data.tags["stage_of_work"] == "candidate"}
+    modelos = mlflow.search_logged_models(
+        experiment_ids=[corrida_completa["experimento"].experiment_id], output_format="list"
+    )
+    por_run = {m.source_run_id: m for m in modelos}
+    assert len(modelos) == len(candidatas) == 7  # solo las candidatas (ni baselines ni busqueda)
+    for nombre, run in candidatas.items():
+        info = mlflow.models.get_model_info(por_run[run.info.run_id].model_uri)
+        # la firma pide las features del entrenamiento, en ese orden, y entrega la clase
+        assert info.signature.inputs.input_names() == fp.FEATURES, nombre
+        assert info.signature.outputs.input_names() == ["clase_riesgo"], nombre
+        assert info.saved_input_example_info is not None, nombre
+        assert info.flavors["sklearn"]["serialization_format"] == "skops", nombre
+    # carga con pyfunc y predice con el ejemplo guardado (hgb del primer nivel)
+    modelo = por_run[runs["p2_hgb_balanceado_ini50"].info.run_id]
+    ejemplo = mlflow.models.get_model_info(modelo.model_uri).saved_input_example_info
+    assert ejemplo["type"] == "dataframe"
+    cargado = mlflow.pyfunc.load_model(modelo.model_uri)
+    entrada = pd.DataFrame(
+        np.zeros((2, len(fp.FEATURES))), columns=fp.FEATURES, dtype="float64"
+    ).assign(capacidad=10.0, hora=8.0)
+    assert set(cargado.predict(entrada)) <= set(fp.CLASES)
+
+
+def test_main_guarda_las_estadisticas_que_un_consumidor_necesita_para_predecir(corrida_completa):
+    mlflow.set_tracking_uri(corrida_completa["uri"])
+    run = corrida_completa["runs"]["p2_hgb_balanceado_ini50"]
+    ruta = f"runs:/{run.info.run_id}/data"
+    est = pd.read_csv(mlflow.artifacts.download_artifacts(f"{ruta}/stats_estacion.csv"))
+    hora = pd.read_csv(mlflow.artifacts.download_artifacts(f"{ruta}/stats_estacion_hora.csv"))
+    esperado_est, esperado_hora = fp.stats_estacion(t2.preparar(0.5, hacer_panel())["train"])
+    # son las de train: con ellas el consumidor rearma las mismas features que vio el modelo
+    pd.testing.assert_frame_equal(est, esperado_est, check_dtype=False)
+    pd.testing.assert_frame_equal(hora, esperado_hora, check_dtype=False)
+    assert list(est.columns) == ["estacion", "est_tasa_sin_bicis", "est_tasa_sin_anclajes"]
+    assert list(hora.columns) == ["estacion", "hora", "est_neto_medio_hora"]
+    config = json.loads(
+        Path(
+            mlflow.artifacts.download_artifacts(f"runs:/{run.info.run_id}/config/config_p2.json")
+        ).read_text()
+    )
+    assert config["features"] == fp.FEATURES  # columnas y orden de entrada del modelo
+    assert config["cortes"] == CORTES_CHICOS and config["semilla"] == 29
+    assert config["nivel_inicial"] == 0.5
+    elegidos = corrida_completa["resultados"]["params_hgb"]
+    assert {k: config["modelo"][k] for k in elegidos} == elegidos
+
+
+def test_main_registra_los_datasets_de_entrada_sin_subir_los_datos(corrida_completa):
+    cliente, runs = corrida_completa["cliente"], corrida_completa["runs"]
+    run = cliente.get_run(runs["p2_hgb_balanceado_ini50"].info.run_id)
+    contextos = {}
+    for entrada in run.inputs.dataset_inputs:
+        etiquetas = {t.key: t.value for t in entrada.tags}
+        contextos[etiquetas["mlflow.data.context"]] = (entrada.dataset.name, etiquetas)
+    assert set(contextos) == {"training", "validation", "testing"}
+    assert contextos["training"][0] == "p2_training_ini50"
+    for _, etiquetas in contextos.values():
+        assert etiquetas["data_version"] == VERSION and int(etiquetas["n_filas"]) > 0
+    # son una muestra pequena: no se sube ninguna tabla de datos como artefacto
+    assert not [a for a in archivos_de(cliente, run.info.run_id) if a.endswith(".parquet")]
 
 
 def test_main_no_escribe_archivos_en_el_repo(corrida_completa):
@@ -753,8 +876,8 @@ def test_main_con_sin_afinar_usa_la_primera_configuracion(corrida_sin_afinar):
     assert set(corrida_sin_afinar["runs"]) == RUNS_INI50  # sin busqueda no hay runs anidados
     hgb = corrida_sin_afinar["runs"]["p2_hgb_balanceado_ini50"]
     assert "val_macro_f1" in hgb.data.metrics  # la validacion se registra aunque no haya rejilla
-    nombres = {a.path for a in corrida_sin_afinar["cliente"].list_artifacts(hgb.info.run_id)}
-    assert "p2_rejilla_validacion.json" not in nombres
+    nombres = archivos_de(corrida_sin_afinar["cliente"], hgb.info.run_id)
+    assert "config/p2_rejilla_validacion.json" not in nombres
 
 
 def test_main_con_hiperparametros_no_busca_en_la_rejilla_pero_evalua_esa_configuracion(
@@ -776,9 +899,7 @@ def test_main_con_hiperparametros_no_busca_en_la_rejilla_pero_evalua_esa_configu
     assert {"p2_busqueda_ini50", "p2_busqueda_ini50_c1"} <= nombres
     assert "p2_busqueda_ini50_c2" not in nombres
     cliente = corrida_con_hiperparametros["cliente"]
-    assert "p2_rejilla_validacion.json" in {
-        a.path for a in cliente.list_artifacts(hgb.info.run_id)
-    }
+    assert "config/p2_rejilla_validacion.json" in archivos_de(cliente, hgb.info.run_id)
 
 
 def test_main_rechaza_argumentos_invalidos_antes_de_tocar_datos(tmp_path):

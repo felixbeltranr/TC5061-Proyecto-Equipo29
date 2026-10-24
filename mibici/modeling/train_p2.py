@@ -1,14 +1,27 @@
-"""Experimento base de P2 (clasificacion de riesgo por estacion) registrado en MLflow.
+"""Experimento de P2 (clasificacion de riesgo por estacion) registrado en MLflow.
 
 Ejemplo:
     python -m mibici.modeling.train_p2 --niveles 0.5 0.3 0.7
+
+Cada candidata se registra con su modelo (sklearn, formato skops), firma y ejemplo de entrada.
+Para predecir, un consumidor necesita:
+- Las columnas de fp.FEATURES, en ese orden (estan en la firma del modelo y en
+  config/config_p2.json del run). hora, dia_semana y fin_semana son del instante objetivo (t+1).
+- Las tres ultimas, est_tasa_sin_bicis, est_tasa_sin_anclajes y est_neto_medio_hora, salen de
+  las estadisticas por estacion y por estacion y hora calculadas con train, que el run guarda en
+  data/stats_estacion.csv y data/stats_estacion_hora.csv; se unen con fp.unir_stats.
+- Las estaciones que no estaban en train quedan sin esas tres columnas (valores faltantes).
+La salida es la clase de riesgo (segura, sin_bicicletas o sin_anclajes); las probabilidades
+estan en el modelo sklearn (mlflow.sklearn.load_model y predict_proba, columnas en classes_).
 """
 
 from __future__ import annotations
 
 import argparse
+from collections.abc import Callable
 from contextlib import nullcontext
 from dataclasses import dataclass
+from importlib.metadata import version
 import json
 from pathlib import Path
 import pickle
@@ -21,6 +34,8 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import mlflow
+from mlflow.models import infer_signature
+import mlflow.sklearn
 import numpy as np
 from numpy.typing import ArrayLike
 import pandas as pd
@@ -34,10 +49,12 @@ from sklearn.metrics import (
     average_precision_score,
     confusion_matrix,
     f1_score,
+    precision_recall_curve,
     precision_recall_fscore_support,
 )
 from sklearn.pipeline import Pipeline, make_pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
+import skops.io as sio
 
 from mibici import features_p2 as fp
 from mibici.config import CONFIG, CONFIG_P2, PROJ_ROOT
@@ -48,6 +65,8 @@ FAMILIA_HGB = "hist_gradient_boosting"
 FAMILIA_LOGISTICA = "logistic_regression"
 FAMILIA_BOSQUE = "random_forest"
 CATEGORICAS = ["hora", "dia_semana"]  # enteros que la logistica codifica uno a uno
+MUESTRA_DATASET = 2000  # filas de muestra de cada dataset registrado con log_input
+PREFIJOS_CONFIABLES = ("sklearn.", "numpy.")  # unicos tipos que skops puede cargar sin avisar
 CORTES = {
     "train_inicio": CONFIG_P2.fecha_inicio_entrenamiento,
     "val_inicio": CONFIG_P2.fecha_inicio_validacion,
@@ -133,6 +152,35 @@ def figura_confusion(y_true: ArrayLike, y_pred: ArrayLike, titulo: str, ruta: Pa
         ax=ax, values_format="d", colorbar=False
     )
     ax.set_title(titulo)
+    fig.tight_layout()
+    fig.savefig(ruta, dpi=120)
+    plt.close(fig)
+    return ruta
+
+
+def figura_pr(
+    y_true: ArrayLike, proba: np.ndarray, clases: list[str], titulo: str, ruta: Path
+) -> Path:
+    """Curvas precision-recall de las clases de riesgo (una contra el resto) guardadas en ruta.
+
+    Una clase de riesgo que no aparece en y_true no tiene curva y se omite, como en metricas.
+    """
+    y_true = np.asarray(y_true)
+    fig, ax = plt.subplots(figsize=(6, 5))
+    for c in RIESGO:
+        y_bin = (y_true == c).astype(int)
+        if not y_bin.sum():
+            continue
+        columna = proba[:, clases.index(c)]
+        precision, recall, _ = precision_recall_curve(y_bin, columna)
+        ap = average_precision_score(y_bin, columna)
+        ax.plot(recall, precision, label=f"{c} (PR AUC {ap:.3f})")
+    ax.set_xlabel("Recall")
+    ax.set_ylabel("Precision")
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, 1.02)
+    ax.set_title(titulo)
+    ax.legend(loc="lower left")
     fig.tight_layout()
     fig.savefig(ruta, dpi=120)
     plt.close(fig)
@@ -269,7 +317,7 @@ def afinar(
         if registrando:
             mlflow.log_params({f"mejor_{k}": v for k, v in elegida.items()})
             mlflow.log_metric("val_macro_f1", mejor["val_macro_f1"])
-            mlflow.log_dict(resultados, "p2_rejilla_validacion.json")
+            mlflow.log_dict(resultados, "config/p2_rejilla_validacion.json")
     return elegida, resultados
 
 
@@ -353,19 +401,100 @@ def registrar(
     tags: dict,
     params: dict,
     mets: dict[str, float],
-    artefactos: list[Path],
+    artefactos: list[tuple[Path, str]],
     anidado: bool = False,
-) -> None:
+    dentro: Callable[[], None] | None = None,
+) -> str:
     """Crea un run en MLflow con nombre descriptivo, etiquetas, parametros, metricas y artefactos.
 
-    Con anidado el run cuelga del run activo (por ejemplo, el padre de una busqueda).
+    artefactos son pares (archivo, subcarpeta del run). Con anidado el run cuelga del run activo
+    (por ejemplo, el padre de una busqueda). dentro, si se da, se ejecuta con el run abierto
+    (para registrar el modelo, los datasets y otros objetos). Regresa el id del run.
     """
-    with mlflow.start_run(run_name=nombre, nested=anidado):
+    with mlflow.start_run(run_name=nombre, nested=anidado) as run:
         mlflow.set_tags(tags)
         mlflow.log_params(params)
         mlflow.log_metrics(mets)
-        for a in artefactos:
-            mlflow.log_artifact(str(a))
+        for ruta, carpeta in artefactos:
+            mlflow.log_artifact(str(ruta), carpeta)
+        if dentro:
+            dentro()
+    return run.info.run_id
+
+
+def tipos_confiables(modelo) -> list[str]:
+    """Tipos que skops marca como no confiables en el modelo, solo si son de sklearn o numpy.
+
+    Se pasan a log_model como skops_trusted_types para que el modelo se pueda cargar. Si hay
+    un tipo de otro paquete se rechaza en lugar de confiar en el sin revisarlo.
+    """
+    tipos = sio.get_untrusted_types(data=sio.dumps(modelo))
+    ajenos = [t for t in tipos if not t.startswith(PREFIJOS_CONFIABLES)]
+    if ajenos:
+        raise ValueError(f"Tipos no confiables en el modelo: {ajenos}")
+    return sorted(tipos)
+
+
+def requisitos_modelo() -> list[str]:
+    """Versiones instaladas de lo que necesita cargar el modelo (evita inferirlas en cada log)."""
+    paquetes = ("scikit-learn", "pandas", "numpy", "skops", "cloudpickle")
+    return [f"{p}=={version(p)}" for p in paquetes]
+
+
+def registrar_modelo(modelo, ejemplo: pd.DataFrame):
+    """Guarda el modelo con firma (features de entrada y clase_riesgo de salida) y ejemplo.
+
+    Regresa la informacion del modelo registrado (incluye model_uri).
+    """
+    entrada = ejemplo[fp.FEATURES].astype("float64")  # enteros y flotantes llegan como double
+    salida = pd.Series(modelo.predict(entrada), name="clase_riesgo")
+    return mlflow.sklearn.log_model(
+        modelo,
+        name="model",
+        signature=infer_signature(entrada, salida),
+        input_example=entrada,
+        serialization_format="skops",
+        skops_trusted_types=tipos_confiables(modelo),
+        pip_requirements=requisitos_modelo(),
+    )
+
+
+def registrar_datasets(ctx: ContextoNivel, semilla: int) -> None:
+    """Registra train, val y test como entradas del run con una muestra pequena de cada uno.
+
+    log_input guarda esquema, perfil y digest de la muestra, no los datos; n_filas lleva el
+    tamano real de cada particion y data_version la version del manifiesto.
+    """
+    for contexto, df in (("training", ctx.train), ("validation", ctx.val), ("testing", ctx.test)):
+        muestra = df[[*fp.FEATURES, "objetivo"]].sample(
+            min(MUESTRA_DATASET, len(df)), random_state=semilla
+        )
+        dataset = mlflow.data.from_pandas(
+            muestra, targets="objetivo", name=f"p2_{contexto}_{ctx.sufijo}"
+        )
+        mlflow.log_input(
+            dataset,
+            context=contexto,
+            tags={"data_version": ctx.data_version, "n_filas": str(len(df))},
+        )
+
+
+def config_run(ctx: ContextoNivel, params_modelo: dict) -> dict:
+    """Configuracion del run para config/config_p2.json: cortes, umbrales, features y modelo."""
+    return {
+        "question": CONFIG_P2.question,
+        "nivel_inicial": ctx.params_comunes["nivel_inicial"],
+        "cortes": dict(CORTES),
+        "umbral_bajo": CONFIG_P2.umbral_bajo,
+        "umbral_alto": CONFIG_P2.umbral_alto,
+        "horizonte_horas": CONFIG_P2.horizonte_horas,
+        "horas_objetivo": list(CONFIG_P2.horas_etiqueta),
+        "semilla": ctx.params_comunes["semilla"],
+        "data_version": ctx.data_version,
+        "features": fp.FEATURES,
+        "clases": fp.CLASES,
+        "modelo": params_modelo,
+    }
 
 
 def parametros_comunes(
@@ -412,6 +541,11 @@ class ContextoNivel:
     tags_base: dict
     params_comunes: dict
     dist: dict
+    data_version: str
+    ruta_manifiesto: Path
+    ruta_resumen: Path
+    stats_estacion: pd.DataFrame
+    stats_hora: pd.DataFrame
     fit: pd.DataFrame
     val: pd.DataFrame
     train: pd.DataFrame
@@ -451,6 +585,11 @@ def preparar_nivel(
             int(test.loc[nuevas, "estacion"].nunique()),
         ),
         dist={f"test_prop_{c}": float(dist.get(c, 0)) for c in fp.CLASES},
+        data_version=manifiesto["version"],
+        ruta_manifiesto=Path(args.manifiesto),
+        ruta_resumen=Path(args.panel).with_suffix(".json"),
+        stats_estacion=est_train,
+        stats_hora=hora_train,
         fit=fp.unir_stats(partes["fit"], est_fit, hora_fit),
         val=fp.unir_stats(partes["val"], est_fit, hora_fit),
         train=train,
@@ -498,14 +637,13 @@ def correr_baselines(ctx: ContextoNivel) -> dict[str, dict[str, float]]:
         params = {"modelo": modelo} | ({"clase": mayoritaria} if clave == "mayoritaria" else {})
         artefactos = []
         if titulo:
-            artefactos.append(
-                figura_confusion(
-                    ctx.test["objetivo"],
-                    pred_test[clave],
-                    f"{titulo} (inicio {ctx.sufijo})",
-                    ctx.figs / archivo,
-                )
+            figura = figura_confusion(
+                ctx.test["objetivo"],
+                pred_test[clave],
+                f"{titulo} (inicio {ctx.sufijo})",
+                ctx.figs / archivo,
             )
+            artefactos.append((figura, "plots"))
         registrar(
             f"p2_baseline_{nombre}_{ctx.sufijo}",
             ctx.tags_base
@@ -526,15 +664,20 @@ def correr_candidata(
     params: dict,
     ajustador,
     mejor_baseline: tuple[str, float],
+    semilla: int,
     con_nuevas: bool = True,
-    extras=None,
+    extras: Callable[[object], list[tuple[Path, str]]] | None = None,
+    run_ids: dict | None = None,
 ) -> dict[str, float]:
     """Ajusta una candidata dos veces y registra su run con validacion, prueba y costo.
 
     Con fit se ajusta para las metricas val_*; con train completo, para las test_* y el costo
     (fit_seconds y model_size_mb son los de este segundo ajuste). mejor_baseline es el nombre y
     el macro F1 de prueba de la mejor baseline por validacion, para medir la mejora.
-    extras(modelo) regresa archivos adicionales a registrar como artefactos.
+    extras(modelo) regresa pares (archivo, subcarpeta) adicionales a registrar como artefactos.
+    El run guarda el modelo con firma y ejemplo, los datasets de entrada, las estadisticas por
+    estacion y hora que el modelo necesita (data/), la configuracion (config/) y las graficas
+    (plots/). Si se da run_ids, se llena run_ids[clave] con el id del run y el uri del modelo.
     """
     modelo_val, _, _ = medir_ajuste(ajustador, ctx.fit)
     clases, proba, pred = predecir(modelo_val, ctx.val)
@@ -547,33 +690,59 @@ def correr_candidata(
         "model_size_mb": mb,
         "test_mejora_macro_f1_vs_mejor_baseline": m["test_macro_f1"] - mejor_baseline[1],
     }
-    sufijo = ctx.sufijo
-    artefactos = [
+    sufijo, test, titulo = ctx.sufijo, ctx.test["objetivo"], etiquetas["modelo"]
+    figuras = [
         figura_confusion(
-            ctx.test["objetivo"],
+            test,
             pred,
-            f"{etiquetas['modelo']} test (inicio {sufijo})",
+            f"{titulo} test (inicio {sufijo})",
             ctx.figs / f"p2_cm_{clave}_{sufijo}.png",
         )
     ]
     if con_nuevas:
-        artefactos.append(
+        figuras.append(
             figura_confusion(
-                ctx.test.loc[ctx.nuevas, "objetivo"],
+                test[ctx.nuevas],
                 pred[ctx.nuevas.to_numpy()],
-                f"{etiquetas['modelo']} estaciones nuevas (inicio {sufijo})",
+                f"{titulo} estaciones nuevas (inicio {sufijo})",
                 ctx.figs / f"p2_cm_{clave}_nuevas_{sufijo}.png",
             )
         )
+    figuras.append(
+        figura_pr(
+            test,
+            proba,
+            clases,
+            f"Precision-recall de riesgo, {titulo} (inicio {sufijo})",
+            ctx.figs / f"p2_pr_{clave}_{sufijo}.png",
+        )
+    )
+    artefactos = [(f, "plots") for f in figuras]
+    artefactos += [(ctx.ruta_manifiesto, "data"), (ctx.ruta_resumen, "data")]
     if extras:
         artefactos += extras(modelo)
-    registrar(
+    ejemplo = ctx.train.sample(5, random_state=semilla)
+    salida = {}
+
+    def dentro_del_run() -> None:
+        info = registrar_modelo(modelo, ejemplo)
+        salida["model_uri"] = info.model_uri
+        registrar_datasets(ctx, semilla)
+        # estadisticas de train: con ellas un consumidor rearma est_* con fp.unir_stats
+        mlflow.log_text(ctx.stats_estacion.to_csv(index=False), "data/stats_estacion.csv")
+        mlflow.log_text(ctx.stats_hora.to_csv(index=False), "data/stats_estacion_hora.csv")
+        mlflow.log_dict(config_run(ctx, params), "config/config_p2.json")
+
+    salida["run_id"] = registrar(
         nombre_run,
         ctx.tags_base | etiquetas,
         ctx.params_comunes | params | {"mejor_baseline": mejor_baseline[0]},
         m | ctx.dist,
         artefactos,
+        dentro=dentro_del_run,
     )
+    if run_ids is not None:
+        run_ids[clave] = salida
     return m | ctx.dist
 
 
@@ -587,12 +756,14 @@ def correr_nivel(
     rejilla: list[dict],
     tags_base: dict,
     sin_pesos: bool = False,
+    run_ids: dict | None = None,
 ) -> dict[str, dict[str, float]]:
     """Corre baselines y candidatas para un nivel inicial y registra cada modelo como run.
 
     Candidatas: C1 regresion logistica balanceada, C2 HGB balanceado con los hiperparametros
     de la busqueda y C3 RandomForest balanceado. Con sin_pesos se agrega el HGB sin pesos de
     clase para ver el efecto del balanceo. Los parametros de C1 y C3 salen de CONFIG_P2.
+    Si se da run_ids, se llena con el id del run y el uri del modelo de cada candidata.
     """
     ctx = preparar_nivel(nivel, panel, args, manifiesto, resumen, tags_base)
     salida = correr_baselines(ctx)
@@ -600,7 +771,7 @@ def correr_nivel(
     nombre_mejor = max(salida, key=lambda n: salida[n]["val_macro_f1"])
     mejor = (nombre_mejor.removeprefix("baseline_"), salida[nombre_mejor]["test_macro_f1"])
     semilla, sufijo = args.semilla, ctx.sufijo
-    common = {"ctx": ctx, "mejor_baseline": mejor}
+    common = {"ctx": ctx, "mejor_baseline": mejor, "semilla": semilla, "run_ids": run_ids}
 
     salida["logistica"] = correr_candidata(
         **common,
@@ -614,13 +785,14 @@ def correr_nivel(
         ajustador=lambda df: ajustar_logistica(df, CONFIG_P2.params_logistica, semilla),
     )
 
-    def extras_hgb(modelo) -> list[Path]:
-        archivos = guardar_importancia(modelo, ctx.test, semilla, ctx.figs, sufijo)
+    def extras_hgb(modelo) -> list[tuple[Path, str]]:
+        ruta_csv, ruta_png = guardar_importancia(modelo, ctx.test, semilla, ctx.figs, sufijo)
+        archivos = [(ruta_png, "plots"), (ruta_csv, "data")]
         if rejilla:
             ruta_rej = ctx.figs / "p2_rejilla_validacion.json"
             ruta_rej.write_text(json.dumps(rejilla, indent=2))
-            archivos.append(ruta_rej)
-        return archivos + [Path(args.manifiesto), Path(args.panel).with_suffix(".json")]
+            archivos.append((ruta_rej, "config"))
+        return archivos
 
     salida["hgb"] = correr_candidata(
         **common,
