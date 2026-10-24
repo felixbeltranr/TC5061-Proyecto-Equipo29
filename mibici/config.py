@@ -178,6 +178,10 @@ class P2Config:
     experimento: str = "mibici-equipo29"
     tracking_uri: str = f"sqlite:///{(PROJ_ROOT / 'mlflow.db').as_posix()}"
     artefactos_dir: Path = PROJ_ROOT / "mlartifacts"
+    modelo_registrado: str = "mibici-equipo29-p2-riesgo"  # un solo modelo para la pregunta P2
+    alias_campeon: str = "champion"
+    # candidatas balanceadas entre las que se elige el campeon (la regla esta en registro.py)
+    candidatas_campeon: tuple[str, ...] = ("logistica", "hgb", "random_forest")
     question: str = "P2"
     team: str = "29"
     author: str = "carlosgalvan"

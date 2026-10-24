@@ -22,6 +22,7 @@ from sklearn.base import BaseEstimator
 
 from mibici import features_p2 as fp
 from mibici import mlflow_project as mp
+from mibici import registro
 from mibici.config import CONFIG_P2, PROJ_ROOT
 from mibici.modeling import train_p2 as t2
 
@@ -697,7 +698,7 @@ def test_main_registra_parametros_comunes(corrida_completa):
 
 def test_main_afina_solo_con_el_primer_nivel_y_guarda_el_json_de_resultados(corrida_completa):
     resultados, runs = corrida_completa["resultados"], corrida_completa["runs"]
-    assert set(resultados) == {"params_hgb", "rejilla", "resultados"}
+    assert set(resultados) == {"params_hgb", "rejilla", "resultados", "campeon"}
     assert set(resultados["resultados"]) == {"0.5", "0.3"}
     assert "hgb_sin_pesos" in resultados["resultados"]["0.5"]
     assert "hgb_sin_pesos" not in resultados["resultados"]["0.3"]
@@ -900,6 +901,55 @@ def test_main_con_hiperparametros_no_busca_en_la_rejilla_pero_evalua_esa_configu
     assert "p2_busqueda_ini50_c2" not in nombres
     cliente = corrida_con_hiperparametros["cliente"]
     assert "config/p2_rejilla_validacion.json" in archivos_de(cliente, hgb.info.run_id)
+
+
+def test_main_registra_solo_al_campeon_en_el_registry_con_el_alias(corrida_completa):
+    mlflow.set_tracking_uri(corrida_completa["uri"])
+    cliente, runs = corrida_completa["cliente"], corrida_completa["runs"]
+    campeon = corrida_completa["resultados"]["campeon"]
+    # la regla se evalua con la validacion del primer nivel (el de referencia) y solo ve candidatas
+    esperado = registro.seleccionar_campeon(
+        corrida_completa["resultados"]["resultados"]["0.5"], CONFIG_P2.candidatas_campeon
+    )
+    assert campeon["clave"] == esperado["clave"]
+    assert campeon["clave"] in {"logistica", "hgb", "random_forest"}
+    nombre_run = {
+        "logistica": "p2_logistica_balanceada_ini50",
+        "hgb": "p2_hgb_balanceado_ini50",
+        "random_forest": "p2_random_forest_balanceado_ini50",
+    }[campeon["clave"]]
+    registrados = cliente.search_registered_models()
+    assert [m.name for m in registrados] == ["mibici-equipo29-p2-riesgo"]
+    assert registrados[0].aliases == {"champion": 1}
+    versiones = cliente.search_model_versions("name='mibici-equipo29-p2-riesgo'")
+    assert len(versiones) == 1  # solo el campeon, no las demas candidatas
+    version = versiones[0]
+    assert version.run_id == runs[nombre_run].info.run_id == campeon["run_id"]
+    assert version.tags["nivel_inicial"] == "0.5"
+    assert version.tags["experimento"] == CONFIG_P2.experimento
+    assert version.tags["git_commit"] == runs[nombre_run].data.tags["git_commit"]
+    assert version.tags["data_version"] == VERSION
+    assert "recall" in version.tags["criterio_seleccion"]
+    # carga por alias y predice con el ejemplo: lo mismo que verifico main
+    ejemplo = pd.DataFrame(np.zeros((2, len(fp.FEATURES))), columns=fp.FEATURES)
+    clases = registro.verificar_campeon(
+        CONFIG_P2.modelo_registrado, CONFIG_P2.alias_campeon, ejemplo
+    )
+    assert len(clases) == 2 and set(clases) <= set(fp.CLASES)
+
+
+def test_main_con_no_registrar_no_toca_el_registry(tmp_path):
+    corrida = correr_main(tmp_path, ["--sin-afinar", "--no-registrar"])
+    assert corrida["cliente"].search_registered_models() == []
+    assert "campeon" not in corrida["resultados"]
+
+
+def test_main_registra_por_omision_y_con_sin_afinar_tambien(tmp_path):
+    corrida = correr_main(tmp_path, ["--sin-afinar"])
+    assert [m.name for m in corrida["cliente"].search_registered_models()] == [
+        CONFIG_P2.modelo_registrado
+    ]
+    assert corrida["resultados"]["campeon"]["version"] == 1
 
 
 def test_main_rechaza_argumentos_invalidos_antes_de_tocar_datos(tmp_path):

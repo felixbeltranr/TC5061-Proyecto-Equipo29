@@ -57,6 +57,7 @@ from sklearn.preprocessing import OneHotEncoder, StandardScaler
 import skops.io as sio
 
 from mibici import features_p2 as fp
+from mibici import registro
 from mibici.config import CONFIG, CONFIG_P2, PROJ_ROOT
 
 EXPERIMENTO = CONFIG_P2.experimento
@@ -834,6 +835,49 @@ def correr_nivel(
     return salida
 
 
+def registrar_ganadora(args: argparse.Namespace, todo: dict, run_ids: dict) -> dict:
+    """Elige al campeon con el primer nivel, lo registra con alias y comprueba que se carga.
+
+    Regresa un resumen (clave, run, version, promedios del criterio y ranking) para el JSON.
+    """
+    nivel = str(args.niveles[0])
+    campeon = registro.seleccionar_campeon(todo[nivel], CONFIG_P2.candidatas_campeon)
+    origen = run_ids[nivel][campeon["clave"]]
+    version = registro.registrar_campeon(
+        CONFIG_P2.modelo_registrado,
+        CONFIG_P2.alias_campeon,
+        origen["run_id"],
+        origen["model_uri"],
+        campeon,
+        {"experimento": CONFIG_P2.experimento, "nivel_inicial": nivel},
+    )
+    # prueba de humo: carga por alias y predice con una fila de ejemplo de cada clase de entrada
+    ejemplo = pd.DataFrame([dict.fromkeys(fp.FEATURES, 0.0)])
+    clases = registro.verificar_campeon(
+        CONFIG_P2.modelo_registrado, CONFIG_P2.alias_campeon, ejemplo
+    )
+    logger.info(
+        "Campeon {} registrado como {} v{} (alias {}), prediccion de ejemplo {}",
+        campeon["clave"],
+        CONFIG_P2.modelo_registrado,
+        version.version,
+        CONFIG_P2.alias_campeon,
+        clases,
+    )
+    return {
+        "clave": campeon["clave"],
+        "nivel_referencia": nivel,
+        "run_id": origen["run_id"],
+        "model_uri": origen["model_uri"],
+        "modelo_registrado": CONFIG_P2.modelo_registrado,
+        "alias": CONFIG_P2.alias_campeon,
+        "version": int(version.version),
+        "criterio": registro.CRITERIO_CAMPEON,
+        "conjunto": campeon["conjunto"],
+        "ranking": campeon["ranking"],
+    }
+
+
 def main(argv: list[str] | None = None) -> None:
     """Punto de entrada: python -m mibici.modeling.train_p2 --niveles 0.5 0.3 0.7."""
     ap = argparse.ArgumentParser(description="Experimento base P2 en MLflow")
@@ -870,6 +914,16 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--manifiesto", default=str(CONFIG_P2.manifiesto_path))
     ap.add_argument(
         "--sin-afinar", action="store_true", help="usa la primera configuracion de la rejilla"
+    )
+    ap.add_argument(
+        "--registrar",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "registra al campeon en el Model Registry (CONFIG_P2.modelo_registrado, alias "
+            "CONFIG_P2.alias_campeon) con la regla de registro.py sobre el primer nivel; "
+            "--no-registrar lo omite"
+        ),
     )
     args = ap.parse_args(argv)
     try:
@@ -932,7 +986,7 @@ def main(argv: list[str] | None = None) -> None:
         )
     logger.info("Parametros elegidos: {}", params_hgb)
 
-    todo = {}
+    todo, run_ids = {}, {}
     for i, nivel in enumerate(args.niveles):
         todo[str(nivel)] = correr_nivel(
             nivel,
@@ -944,11 +998,13 @@ def main(argv: list[str] | None = None) -> None:
             rejilla if i == 0 else [],
             tags_base,
             sin_pesos=i == 0,
+            run_ids=run_ids.setdefault(str(nivel), {}),
         )
+    salida = {"params_hgb": params_hgb, "rejilla": rejilla, "resultados": todo}
+    if args.registrar:
+        salida["campeon"] = registrar_ganadora(args, todo, run_ids)
     ruta = Path(args.figuras) / "p2_resultados.json"
-    ruta.write_text(
-        json.dumps({"params_hgb": params_hgb, "rejilla": rejilla, "resultados": todo}, indent=2)
-    )
+    ruta.write_text(json.dumps(salida, indent=2))
     logger.info("Resultados en {}", ruta)
 
 
