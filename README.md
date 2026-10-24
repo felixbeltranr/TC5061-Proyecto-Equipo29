@@ -177,7 +177,13 @@ Reproducir el modelo elegido desde un clon limpio, después de `ingest` y de gen
 mlflow run . -e train -P question=p3 -P model=seleccion --env-manager local
 ```
 
-Ese comando (unos 2 minutos) corre todo el flujo de `train_p3.seleccionar`:
+En Windows con PowerShell agrega `-P 'hyperparameters={}'` (con comillas simples) a los comandos de P3 que no pasan hiperparámetros: si el parámetro se omite, MLflow envía unas comillas vacías que el punto de entrada no interpreta.
+
+```powershell
+mlflow run . -e train -P question=p3 -P model=seleccion -P 'hyperparameters={}' --env-manager local
+```
+
+Ese comando (unos 3 minutos) corre todo el flujo de `train_p3.seleccionar`:
 
 1. **Baseline** `kmeans_geo`: KMeans sobre la ubicación (k = 5).
 2. **Búsquedas con runs anidados** (un run padre `p3-busqueda-<modelo>` y un hijo por combinación): `kmeans_uso` con k de 3 a 8 y `gmm_uso` con 3 a 8 componentes y cuatro tipos de covarianza.
