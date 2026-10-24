@@ -129,13 +129,25 @@ def _rejilla_p2() -> tuple[dict[str, float | int], ...]:
     )
 
 
+def _logistica_p2() -> dict[str, float | int]:
+    # Regresion logistica balanceada (C1): iteraciones maximas del optimizador
+    return {"max_iter": 200}
+
+
+def _random_forest_p2() -> dict[str, float | int]:
+    # RandomForest balanceado (C3): max_samples acota el costo de cada arbol y
+    # min_samples_leaf el tamano del modelo (con hojas de 1 muestra pesa cientos de MB)
+    return {"n_estimators": 100, "max_samples": 200_000, "min_samples_leaf": 50}
+
+
 @dataclass(frozen=True)
 class P2Config:
     # Datos
     nomenclatura_path: Path = CONFIG.raw_data_dir / "nomenclatura_2026_09.csv"
     panel_path: Path = CONFIG.interim_data_dir / "p2_panel_horario.parquet"
     manifiesto_path: Path = PROJ_ROOT / "references" / "manifiesto_datos_p2.json"
-    figuras_dir: Path = CONFIG.reports_dir / "figures"
+    figuras_dir: Path = CONFIG.reports_dir / "figures"  # figuras versionadas del reporte
+    corridas_dir: Path = CONFIG.reports_dir / "runs_p2"  # salida de train_p2, ignorada por git
     panel_fin: str = "2026-09-30 23:00"  # ultima hora del panel (fin del rango descargado)
 
     # Etiqueta: ocupacion estimada entre capacidad
@@ -157,13 +169,19 @@ class P2Config:
     model: str = "hist_gradient_boosting"
     seed: int = 29
     rejilla: tuple[dict[str, float | int], ...] = field(default_factory=_rejilla_p2)
+    params_logistica: dict[str, float | int] = field(default_factory=_logistica_p2)
+    params_random_forest: dict[str, float | int] = field(default_factory=_random_forest_p2)
     muestra_importancia: int = 150_000  # filas de test para la importancia por permutacion
     repeticiones_importancia: int = 3
 
     # MLflow: backend local en la raiz del repo, compartido con P3
     experimento: str = "mibici-equipo29"
     tracking_uri: str = f"sqlite:///{(PROJ_ROOT / 'mlflow.db').as_posix()}"
-    artifact_location: str = (PROJ_ROOT / "mlartifacts").as_uri()
+    artefactos_dir: Path = PROJ_ROOT / "mlartifacts"
+    modelo_registrado: str = "mibici-equipo29-p2-riesgo"  # un solo modelo para la pregunta P2
+    alias_campeon: str = "champion"
+    # candidatas balanceadas entre las que se elige el campeon (la regla esta en registro.py)
+    candidatas_campeon: tuple[str, ...] = ("logistica", "hgb", "random_forest")
     question: str = "P2"
     team: str = "29"
     author: str = "carlosgalvan"
