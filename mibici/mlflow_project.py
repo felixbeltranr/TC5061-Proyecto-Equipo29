@@ -9,7 +9,14 @@ from typing import Any
 from mibici.config import CONFIG_P1, CONFIG_P2, CONFIG_P3
 
 
+def _normalize_empty_argument(value: str) -> str:
+    if value.strip() in {"", '""', "''"}:
+        return ""
+    return value
+
+
 def _parse_hyperparameters(value: str) -> dict[str, Any]:
+    value = _normalize_empty_argument(value)
     if not value:
         return {}
     if value.lstrip().startswith("{"):
@@ -103,8 +110,12 @@ def run_train(
             _run_p2(model or CONFIG_P2.model, params)
         elif question == "p3":
             _run_p3(model or CONFIG_P3.model, params)
+        elif question == "all":
+            _run_p1(CONFIG_P1.model, params)
+            _run_p2(CONFIG_P2.model, params)
+            _run_p3(CONFIG_P3.model, params)
         else:
-            raise ValueError("question must be one of: p1, p2, p3")
+            raise ValueError("question must be one of: p1, p2, p3, all")
     finally:
         if project_run_id is not None:
             os.environ["MLFLOW_RUN_ID"] = project_run_id
@@ -116,7 +127,7 @@ def main(argv: list[str] | None = None) -> None:
     subparsers.add_parser("ingest", help="download and combine configured MiBici data")
 
     train_parser = subparsers.add_parser("train", help="prepare features and train one question")
-    train_parser.add_argument("--question", choices=("p1", "p2", "p3"), required=True)
+    train_parser.add_argument("--question", choices=("p1", "p2", "p3", "all"), required=True)
     train_parser.add_argument("--model", default="")
     train_parser.add_argument("--hyperparameters", default="")
 
@@ -129,7 +140,7 @@ def main(argv: list[str] | None = None) -> None:
 
     run_train(
         args.question,
-        model=args.model,
+        model=_normalize_empty_argument(args.model),
         hyperparameters=_parse_hyperparameters(args.hyperparameters),
     )
 

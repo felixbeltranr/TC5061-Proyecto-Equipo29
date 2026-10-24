@@ -103,6 +103,16 @@ MLflow hereda las variables del proceso que lo ejecuta. Una variable sólo tendr
 
 Se quedan en su módulo las constantes internas que forman parte de la definición del código: columnas que lee cada pregunta, nombres de variables, rezagos y ventanas de P1 (los nombres `lag_7`, `media_28d`, ... dependen de ellos) y el umbral de fechas ilegibles al cargar. Todos los parámetros que cambian un run (rango de fechas, versión de datos, semilla e hiperparámetros) se registran además en MLflow.
 
+### Transformaciones compartidas
+
+`mibici/features_pipeline.py` centraliza la construcción de pipelines tabulares de scikit-learn y un helper para ajustar transformadores exclusivamente con el conjunto de entrenamiento. No centraliza la creación de variables ni impone las mismas transformaciones a todas las preguntas: cada tarea conserva sus columnas, etiquetas y decisiones de modelado.
+
+- P1 usa el constructor compartido para la regresión de Poisson: aplica `log1p` y escalado a los conteos, codifica el día de la semana y deja pasar las variables binarias. HistGradientBoosting recibe sus features directamente, pues maneja el día como categórico y no necesita esa transformación.
+- P2 lo usa para la regresión logística (imputación y escalado numérico, one-hot para hora y día) y Random Forest (imputación). HistGradientBoosting continúa recibiendo las variables originales, ya que no requiere escalado y maneja valores faltantes.
+- P3 usa el helper de ajuste train-only para escalar el espacio de uso que alimenta las métricas. El clustering continúa usando coordenadas geográficas en kilómetros; escalar cada coordenada por separado cambiaría la distancia geográfica que representa el modelo.
+
+Al añadir un modelo, elige transformaciones según el algoritmo y el significado de sus features. Ajusta imputadores, escaladores y codificadores solo con `fit`/`fit_transform` sobre train; usa luego `transform` en validación, prueba y producción. Mantén juntas las transformaciones y el estimador en un `Pipeline` cuando formen parte de la predicción, para evitar diferencias entre entrenamiento e inferencia. No escales por defecto modelos de árboles ni apliques transformaciones pensadas para otro problema.
+
 ## Experimento base
 
 ### P1 · demanda diaria por estación

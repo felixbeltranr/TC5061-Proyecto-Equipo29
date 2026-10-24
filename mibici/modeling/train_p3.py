@@ -38,6 +38,7 @@ from sklearn.metrics import (
 from sklearn.preprocessing import StandardScaler
 import typer
 
+from mibici import features_pipeline
 from mibici.config import CONFIG, CONFIG_P3, PROJ_ROOT, P3Config
 from mibici.features_p3 import DatasetP3, a_km, cargar_dataset
 
@@ -76,8 +77,9 @@ def entrenar_baseline(
 ) -> tuple[Renumerado, dict[str, float]]:
     """Ajusta el baseline geográfico con k zonas y regresa el modelo y sus métricas."""
     en, ev, vars_ = ds.entrenamiento, ds.evaluacion, ds.variables
-    escalador = StandardScaler().fit(en[vars_])  # solo con el periodo de entrenamiento
-    X_en, X_ev = escalador.transform(en[vars_]), escalador.transform(ev[vars_])
+    X_en, X_ev = features_pipeline.fit_transform_train_and_holdouts(
+        StandardScaler(), en[vars_], ev[vars_]
+    )
     G_en, G_ev = a_km(ds.nom, en.index, cfg.lat_ref), a_km(ds.nom, ev.index, cfg.lat_ref)
     km = Renumerado(KMeans(n_clusters=k, n_init=cfg.n_init, random_state=cfg.seed).fit(G_en), 0)
     m = {

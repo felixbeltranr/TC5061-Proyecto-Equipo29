@@ -8,7 +8,7 @@ entry_points:
 
   train:
     parameters:
-      question: {type: string}
+      question: {type: string, default: all}
       model: {type: string, default: ""}
       hyperparameters: {type: string, default: ""}
     command: >-

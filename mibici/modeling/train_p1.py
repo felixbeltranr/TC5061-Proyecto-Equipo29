@@ -22,7 +22,6 @@ from loguru import logger
 from matplotlib.figure import Figure
 import numpy as np
 import pandas as pd
-from sklearn.compose import ColumnTransformer
 from sklearn.ensemble import HistGradientBoostingRegressor
 from sklearn.exceptions import ConvergenceWarning
 from sklearn.linear_model import PoissonRegressor
@@ -30,7 +29,7 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import FunctionTransformer, OneHotEncoder, StandardScaler
 
 from mibici import features as fe
-from mibici import tracking
+from mibici import features_pipeline, tracking
 from mibici.config import CONFIG, CONFIG_P1
 
 # Cortes temporales de CONFIG_P1 (los mismos meses que train_p2.CORTES)
@@ -145,14 +144,14 @@ def pipeline_poisson(alpha: float) -> Pipeline:
             ("escala", StandardScaler()),
         ]
     )
-    prep = ColumnTransformer(
-        [
-            ("conteos", conteos, CONTEOS),
-            ("dia", OneHotEncoder(categories=[list(range(7))], drop="first"), ["dia_semana"]),
-            ("binarias", "passthrough", BINARIAS),
-        ]
+    return features_pipeline.make_tabular_pipeline(
+        PoissonRegressor(alpha=alpha, max_iter=2000),
+        numerical_features=CONTEOS,
+        categorical_features=["dia_semana"],
+        passthrough_features=BINARIAS,
+        numerical_transformer=conteos,
+        categorical_transformer=OneHotEncoder(categories=[list(range(7))], drop="first"),
     )
-    return Pipeline([("prep", prep), ("modelo", PoissonRegressor(alpha=alpha, max_iter=2000))])
 
 
 def ajustar_poisson(entrena: pd.DataFrame, alpha: float) -> Pipeline:
