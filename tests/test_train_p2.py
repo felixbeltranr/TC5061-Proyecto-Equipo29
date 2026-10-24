@@ -612,17 +612,24 @@ def test_main_con_sin_afinar_usa_la_primera_configuracion(corrida_sin_afinar):
     assert "p2_rejilla_validacion.json" not in nombres
 
 
-def test_main_con_hiperparametros_salta_la_afinacion_y_mezcla_con_la_primera_configuracion(
+def test_main_con_hiperparametros_no_busca_en_la_rejilla_pero_evalua_esa_configuracion(
     corrida_con_hiperparametros,
 ):
     r = corrida_con_hiperparametros["resultados"]
-    assert r["params_hgb"] == REJILLA_CORTA[0] | {"max_iter": 12, "l2_regularization": 0.5}
-    assert r["rejilla"] == []
+    esperado = REJILLA_CORTA[0] | {"max_iter": 12, "l2_regularization": 0.5}
+    assert r["params_hgb"] == esperado  # lo no indicado sale de la primera configuracion
+    # la rejilla tiene un solo elemento: la configuracion evaluada en validacion
+    assert len(r["rejilla"]) == 1
+    assert {k: v for k, v in r["rejilla"][0].items() if k != "val_macro_f1"} == esperado
     hgb = corrida_con_hiperparametros["runs"]["p2_hgb_balanceado_ini50"]
     p = hgb.data.params
     assert p["max_iter"] == "12" and p["l2_regularization"] == "0.5"
-    assert p["max_leaf_nodes"] == "7"  # lo no indicado sale de la primera configuracion
-    assert "val_macro_f1" not in hgb.data.metrics
+    assert p["max_leaf_nodes"] == "7"
+    assert hgb.data.metrics["val_macro_f1"] == pytest.approx(r["rejilla"][0]["val_macro_f1"])
+    cliente = corrida_con_hiperparametros["cliente"]
+    assert "p2_rejilla_validacion.json" in {
+        a.path for a in cliente.list_artifacts(hgb.info.run_id)
+    }
 
 
 def test_main_rechaza_argumentos_invalidos_antes_de_tocar_datos(tmp_path):

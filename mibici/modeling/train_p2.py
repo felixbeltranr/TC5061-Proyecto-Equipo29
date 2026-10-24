@@ -153,13 +153,19 @@ def ajustar(
     return modelo
 
 
-def afinar(partes: dict, semilla: int) -> tuple[dict, list[dict]]:
-    """Elige hiperparametros de CONFIG_P2.rejilla por macro F1 en validacion."""
+def afinar(
+    partes: dict, semilla: int, rejilla: tuple[dict, ...] | list[dict] | None = None
+) -> tuple[dict, list[dict]]:
+    """Elige hiperparametros por macro F1 en validacion, entrenando solo con fit.
+
+    Por defecto recorre CONFIG_P2.rejilla; con una rejilla de una sola configuracion solo
+    la evalua. Regresa la configuracion elegida y la rejilla con su val_macro_f1.
+    """
     por_est, por_hora = fp.stats_estacion(partes["fit"])
     fit = fp.unir_stats(partes["fit"], por_est, por_hora)
     val = fp.unir_stats(partes["val"], por_est, por_hora)
     resultados = []
-    for params in CONFIG_P2.rejilla:
+    for params in CONFIG_P2.rejilla if rejilla is None else rejilla:
         modelo = ajustar(fit, params, semilla)
         f1 = macro_f1(val["objetivo"], modelo.predict(val[fp.FEATURES]))
         resultados.append({**params, "val_macro_f1": float(f1)})
@@ -427,7 +433,15 @@ def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(description="Experimento base P2 en MLflow")
     ap.add_argument("--panel", default=str(CONFIG_P2.panel_path))
     ap.add_argument("--model", choices=(CONFIG_P2.model,), default=CONFIG_P2.model)
-    ap.add_argument("--hyperparameters", default="{}")
+    ap.add_argument(
+        "--hyperparameters",
+        default="{}",
+        help=(
+            "objeto JSON con hiperparametros del HGB. Se mezcla con la primera configuracion de "
+            "CONFIG_P2.rejilla (lo no indicado toma ese valor), no hay busqueda en la rejilla y "
+            "solo esa configuracion se evalua en validacion. Tiene prioridad sobre --sin-afinar"
+        ),
+    )
     ap.add_argument(
         "--niveles",
         type=float,
@@ -487,8 +501,12 @@ def main(argv: list[str] | None = None) -> None:
     }
 
     if hyperparameters:
-        params_hgb = first_grid | hyperparameters
-        rejilla = []
+        # sin busqueda: se evalua en validacion solo esta configuracion, para registrar su
+        # val_macro_f1 y dejar la rejilla de un solo elemento
+        configuracion = first_grid | hyperparameters
+        params_hgb, rejilla = afinar(
+            preparar(args.niveles[0], panel), args.semilla, [configuracion]
+        )
     elif args.sin_afinar:
         params_hgb, rejilla = CONFIG_P2.rejilla[0], []
     else:
