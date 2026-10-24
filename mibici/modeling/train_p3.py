@@ -21,6 +21,8 @@ Uso desde la raíz del repositorio::
     python -m mibici.modeling.train_p3 --model kmeans_uso --k 5
     python -m mibici.modeling.train_p3 --model gmm_uso --n-components 5 --covariance-type diag
     python -m mibici.modeling.train_p3 --model kmeans_uso --buscar   # búsqueda con runs anidados
+    python -m mibici.modeling.train_p3 --model seleccion   # flujo completo: baseline, búsquedas,
+                                                           # C1-C3, campeón y Model Registry
 
 Además de las métricas de entrenamiento y evaluación, cada run lleva las de validación interna
 por estaciones (``val_``) y la estabilidad (``val_ari_estabilidad``); ver ``busqueda_p3.py``.
@@ -50,6 +52,7 @@ import typer
 from mibici.config import CONFIG, CONFIG_P3, PROJ_ROOT, P3Config
 from mibici.features_p3 import DatasetP3, a_km, cargar_dataset
 from mibici.modeling import artefactos_p3 as art
+from mibici.modeling import seleccion_p3 as sel
 from mibici.modeling.busqueda_p3 import evaluar_validacion, ordenar, rejilla
 from mibici.modeling.modelos_p3 import (
     construir_modelo,
@@ -259,16 +262,29 @@ def _registrar_archivos(
 
 
 def registrar_candidata(
-    ds: DatasetP3, model: str, params: dict, modelo, m: dict, cfg: P3Config = CONFIG_P3
+    ds: DatasetP3,
+    model: str,
+    params: dict,
+    modelo,
+    m: dict,
+    cfg: P3Config = CONFIG_P3,
+    extra_tags: dict | None = None,
+    extra_data: dict[str, pd.DataFrame] | None = None,
 ) -> str:
     """Registra un run de una candidata de uso con parámetros, métricas, etiquetas y artefactos.
 
     Artefactos: el modelo con firma en ``model/``, los perfiles como entradas del run
-    (``log_input``) y los archivos de ``data/``, ``plots/`` y ``config/``.
+    (``log_input``) y los archivos de ``data/``, ``plots/`` y ``config/``. ``extra_tags`` y
+    ``extra_data`` (tablas que van a ``data/``) los agrega la selección del campeón.
     """
     nombre = nombre_corrida(model, params, cfg)
     with mlflow.start_run(run_name=nombre) as run:
-        mlflow.set_tags(etiquetas(ds, cfg, familia=model, etapa="candidate"))
+        mlflow.set_tags(etiquetas(ds, cfg, familia=model, etapa="candidate") | (extra_tags or {}))
+        for archivo, tabla in (extra_data or {}).items():
+            with tempfile.TemporaryDirectory() as tmp:
+                ruta = Path(tmp) / archivo
+                tabla.round(4).to_csv(ruta, index=tabla.index.name is not None)
+                mlflow.log_artifact(str(ruta), "data")
         mlflow.log_params(
             {
                 "fecha_inicio_entrenamiento": cfg.fecha_inicio_entrenamiento,
@@ -309,7 +325,8 @@ def registrar_candidata(
             ),
         )
         art.registrar_datasets(ds, cfg)
-        art.registrar_modelo(modelo, en.head(5), cfg)
+        info = art.registrar_modelo(modelo, en.head(5), cfg)
+        mlflow.set_tag("model_uri", info.model_uri)  # lo usa el registro en el Model Registry
         return run.info.run_id
 
 
@@ -383,6 +400,69 @@ def buscar(
     return ranking
 
 
+def seleccionar(ds: DatasetP3, cfg: P3Config = CONFIG_P3, registrar: bool = True) -> list[dict]:
+    """Flujo completo de P3 con la regla de ``seleccion_p3``.
+
+    1. Baseline geográfico con ``k = cfg.k_baseline`` (con métricas de validación).
+    2. Búsquedas de KMeans de uso y GaussianMixture (runs anidados).
+    3. Candidatas C1, C2 y C3 reentrenadas con todo el periodo de entrenamiento, con sus criterios
+       de interpretabilidad.
+    4. Ranking, campeón y retador; un run por candidata con ``data/criterios_interpretabilidad.csv``.
+    5. Registro del campeón (alias ``champion``) y del retador (``challenger``) en el Model
+       Registry, y prueba de carga por nombre y alias.
+    """
+    k = cfg.k_baseline
+    km, m = entrenar_baseline(ds, k, cfg)
+    m |= evaluar_validacion(ds, "kmeans_geo", {"k": k}, cfg)
+    if registrar:
+        registrar_baseline(ds, k, km, m, cfg)
+    candidatas = sel.elegir_candidatas(
+        buscar(ds, "kmeans_uso", cfg, registrar), buscar(ds, "gmm_uso", cfg, registrar), cfg
+    )
+    entrada = list(cfg.prioridad_variables)
+    modelos, metricas_ = {}, {}
+    for clave, c in candidatas.items():
+        modelo, mm = entrenar_candidata(ds, c["model"], c["params"], cfg)
+        modelos[clave] = modelo
+        metricas_[clave] = mm | {n: v for n, v in c.items() if n.startswith("val_")}
+        c["criterios"], c["grupos"] = sel.criterios(
+            ds.entrenamiento, modelo.predict(ds.entrenamiento[entrada]), ds.variables, cfg
+        )
+    ranking = sel.elegir_campeon(candidatas, cfg)
+    tabla = sel.tabla_seleccion(ranking)
+    logger.info("Selección de P3:\n" + tabla.to_string(index=False))
+    if not registrar:
+        return ranking
+    run_ids = {}
+    for r in ranking:
+        clave = r["candidata"]
+        run_ids[clave] = registrar_candidata(
+            ds,
+            r["model"],
+            r["params"],
+            modelos[clave],
+            metricas_[clave],
+            cfg,
+            extra_tags={
+                "candidata": clave,
+                "posicion_ranking": str(r["posicion"]),
+                "seleccion": r["papel"] or "ninguno",
+                "cumple_criterios": str(r["criterios"]["cumple"]),
+            },
+            extra_data={
+                "criterios_interpretabilidad.csv": tabla,
+                "grupos_interpretabilidad.csv": r["grupos"],
+            },
+        )
+    versiones = sel.registrar_en_registry(ranking, run_ids, cfg.experimento, cfg)
+    grupos = sel.verificar_alias(ds.entrenamiento.head(5), cfg.alias_campeon, cfg)
+    logger.success(
+        f"{cfg.modelo_registrado}: versiones {versiones}; carga por "
+        f"models:/{cfg.modelo_registrado}@{cfg.alias_campeon} OK (grupos {grupos.tolist()})"
+    )
+    return ranking
+
+
 def combinaciones(
     model: str,
     k: list[int] | None,
@@ -408,7 +488,10 @@ def main(
     tracking_uri: str = CONFIG_P3.tracking_uri,
     registrar: Annotated[bool, typer.Option(help="Escribir los runs en MLflow.")] = True,
     model: Annotated[
-        str, typer.Option(help="kmeans_geo (baseline), kmeans_uso o gmm_uso.")
+        str,
+        typer.Option(
+            help="kmeans_geo (baseline), kmeans_uso, gmm_uso o seleccion (flujo completo)."
+        ),
     ] = CONFIG_P3.model,
     n_init: int | None = None,
     n_components: Annotated[
@@ -425,10 +508,15 @@ def main(
         ),
     ] = False,
 ):
-    """Entrena el baseline o una candidata de P3 y registra un run de MLflow por combinación."""
-    corridas = combinaciones(model, k, n_components, covariance_type, n_init)
-    for params in corridas:
-        validar_hiperparametros(model, params)
+    """Entrena el baseline o una candidata de P3 y registra un run de MLflow por combinación.
+
+    Con ``--model seleccion`` corre el flujo completo (ver ``seleccionar``).
+    """
+    corridas = []
+    if model != "seleccion":
+        corridas = combinaciones(model, k, n_components, covariance_type, n_init)
+        for params in corridas:
+            validar_hiperparametros(model, params)
     cfg = replace(CONFIG_P3, n_init=n_init) if n_init is not None else CONFIG_P3
     ds = cargar_dataset(perfiles_dir)
     logger.info(
@@ -440,6 +528,9 @@ def main(
         if mlflow.get_experiment_by_name(cfg.experimento) is None:
             mlflow.create_experiment(cfg.experimento, artifact_location=cfg.artifact_location)
         mlflow.set_experiment(cfg.experimento)
+    if model == "seleccion":
+        seleccionar(ds, cfg, registrar)
+        return
     if buscar_:
         ranking = buscar(ds, model, cfg, registrar)
         mejor = ranking[0]
