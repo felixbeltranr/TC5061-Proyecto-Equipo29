@@ -1,0 +1,696 @@
+"""Pruebas de caracterizacion de P2: fijan lo que hace hoy el entrenamiento antes de refactorizar.
+
+No buscan decir que el comportamiento sea el ideal, solo que un refactor no lo cambie sin
+querer. Usan un panel horario sintetico pequeno, cortes de fecha reducidos y una rejilla corta,
+y todo lo que se escribe (panel, manifiesto, figuras, base de MLflow y artefactos) va a tmp_path.
+Donde el comportamiento actual es discutible se deja un comentario con la observacion.
+"""
+
+import argparse
+import dataclasses
+import json
+import os
+from pathlib import Path
+import subprocess
+
+import mlflow
+from mlflow.tracking import MlflowClient
+import numpy as np
+import pandas as pd
+import pytest
+
+from mibici import features_p2 as fp
+from mibici import mlflow_project as mp
+from mibici.config import CONFIG_P2, PROJ_ROOT
+from mibici.modeling import train_p2 as t2
+
+# Cortes reducidos (mismo orden y mismas reglas de inicio incluido y fin excluido que los reales)
+CORTES_CHICOS = {
+    "train_inicio": "2026-01-05",
+    "val_inicio": "2026-02-02",
+    "test_inicio": "2026-02-16",
+    "test_fin": "2026-03-02",
+}
+REJILLA_CORTA = (
+    {"learning_rate": 0.1, "max_leaf_nodes": 7, "max_iter": 20, "l2_regularization": 0.0},
+    {"learning_rate": 0.05, "max_leaf_nodes": 15, "max_iter": 30, "l2_regularization": 1.0},
+)
+ETIQUETAS_BASE = {
+    "question", "team", "author", "data_range", "seed", "data_version", "git_commit", "git_dirty",
+}  # fmt: skip
+VERSION = "abc123def456"
+RUNS_INI50 = {
+    "p2_baseline_mayoritaria_ini50",
+    "p2_baseline_semana_previa_ini50",
+    "p2_baseline_persistencia_ini50",
+    "p2_hgb_balanceado_ini50",
+    "p2_hgb_sin_pesos_ini50",
+}
+
+
+def hacer_panel(estaciones=(1, 2, 3), nueva=4) -> pd.DataFrame:
+    """Panel estacion-hora sintetico, como el que arma features_p2.construir_panel.
+
+    Cada estacion trae dias de servicio completos (de 5:00 a 4:00) del 2026-01-01 al 2026-03-01.
+    Por la manana salen muchas bicicletas y por la tarde llegan muchas (la estacion 2 al reves),
+    asi que las tres clases aparecen todos los dias. La estacion nueva empieza el primer dia
+    de la prueba, de modo que cuenta como estacion nueva en test.
+    """
+    rng = np.random.default_rng(29)
+    piezas = []
+    for estacion in (*estaciones, nueva):
+        inicio = "2026-02-16 05:00" if estacion == nueva else "2026-01-01 05:00"
+        horas = pd.date_range(inicio, "2026-03-02 05:00", freq="h", inclusive="left")
+        h = horas.hour.to_numpy()
+        manana, tarde = (h >= 7) & (h <= 9), (h >= 17) & (h <= 19)
+        if estacion == 2:
+            manana, tarde = tarde, manana
+        salidas = 1 + 4 * manana + rng.integers(0, 2, len(horas))
+        llegadas = 1 + 4 * tarde + rng.integers(0, 2, len(horas))
+        piezas.append(
+            pd.DataFrame(
+                {
+                    "ts": horas,
+                    "estacion": estacion,
+                    "capacidad": np.float32(10),
+                    "salidas": salidas.astype("float32"),
+                    "llegadas": llegadas.astype("float32"),
+                    "primer_dia": horas[0],
+                }
+            )
+        )
+    panel = pd.concat(piezas, ignore_index=True)
+    panel["neto"] = panel["llegadas"] - panel["salidas"]
+    return panel
+
+
+def escribir_entradas(carpeta: Path, panel: pd.DataFrame) -> dict[str, Path]:
+    """Escribe panel, resumen del panel y manifiesto en carpeta, como los lee train_p2.main."""
+    carpeta.mkdir(parents=True, exist_ok=True)
+    ruta_panel = carpeta / "panel.parquet"
+    panel.to_parquet(ruta_panel, index=False)
+    resumen = {
+        "estaciones_modeladas": int(panel["estacion"].nunique()),
+        "estaciones_sin_nomenclatura": 2,
+        "estaciones_capacidad_cero": 1,
+    }
+    ruta_resumen = ruta_panel.with_suffix(".json")
+    ruta_resumen.write_text(json.dumps(resumen))
+    ruta_manifiesto = carpeta / "manifiesto.json"
+    ruta_manifiesto.write_text(json.dumps({"version": VERSION}))
+    return {"panel": ruta_panel, "resumen": ruta_resumen, "manifiesto": ruta_manifiesto}
+
+
+def foto_del_repo() -> set[str]:
+    """Rutas relativas de todos los archivos del repo (sin .git ni caches de herramientas)."""
+    omitir = {".git", "__pycache__", ".pytest_cache", ".ruff_cache"}
+    archivos = set()
+    for raiz, carpetas, nombres in os.walk(PROJ_ROOT):
+        carpetas[:] = [c for c in carpetas if c not in omitir]
+        archivos.update(str((Path(raiz) / n).relative_to(PROJ_ROOT)) for n in nombres)
+    return archivos
+
+
+@pytest.fixture(autouse=True)
+def cortes_y_configuracion_chicos(monkeypatch, tmp_path):
+    """Cortes reducidos y CONFIG_P2 con rejilla corta y MLflow dentro de tmp_path."""
+    for clave, valor in CORTES_CHICOS.items():
+        monkeypatch.setitem(t2.CORTES, clave, valor)
+    config = dataclasses.replace(
+        CONFIG_P2,
+        rejilla=REJILLA_CORTA,
+        muestra_importancia=200,
+        repeticiones_importancia=1,
+        tracking_uri=f"sqlite:///{tmp_path / 'mlflow_auto.db'}",
+        artifact_location=(tmp_path / "mlartifacts_auto").as_uri(),
+    )
+    monkeypatch.setattr(t2, "CONFIG_P2", config)
+    # MLflow guarda la direccion del almacen en estado global: se restaura al terminar
+    uri_previa = mlflow.get_tracking_uri()
+    variable_previa = os.environ.get("MLFLOW_TRACKING_URI")
+    yield
+    mlflow.set_tracking_uri(uri_previa)
+    if variable_previa is None:
+        os.environ.pop("MLFLOW_TRACKING_URI", None)
+    else:
+        os.environ["MLFLOW_TRACKING_URI"] = variable_previa
+
+
+def correr_main(carpeta: Path, extra: list[str] | None = None, niveles=("0.5",)) -> dict:
+    """Corre train_p2.main con un panel chico y todas las rutas dentro de carpeta."""
+    entradas = escribir_entradas(carpeta, hacer_panel())
+    figuras = carpeta / "figuras"
+    uri = f"sqlite:///{carpeta / 'mlflow.db'}"
+    args = [
+        "--panel", str(entradas["panel"]), "--manifiesto", str(entradas["manifiesto"]),
+        "--figuras", str(figuras), "--tracking-uri", uri, "--niveles", *niveles,
+        *(extra or []),
+    ]  # fmt: skip
+    t2.main(args)
+    cliente = MlflowClient(tracking_uri=uri)
+    experimento = cliente.get_experiment_by_name(CONFIG_P2.experimento)
+    runs = cliente.search_runs([experimento.experiment_id], max_results=100)
+    return {
+        "cliente": cliente,
+        "experimento": experimento,
+        "runs": {r.info.run_name: r for r in runs},
+        "figuras": figuras,
+        "resultados": json.loads((figuras / "p2_resultados.json").read_text()),
+        "entradas": entradas,
+    }
+
+
+def correr_con_config_chica(fabrica, nombre: str, extra=None, niveles=("0.5",)) -> dict:
+    """Corre main con cortes y config reducidos (para fixtures de modulo, fuera del autouse)."""
+    with pytest.MonkeyPatch.context() as mpatch:
+        for clave, valor in CORTES_CHICOS.items():
+            mpatch.setitem(t2.CORTES, clave, valor)
+        config = dataclasses.replace(
+            CONFIG_P2,
+            rejilla=REJILLA_CORTA,
+            muestra_importancia=200,
+            repeticiones_importancia=1,
+            artifact_location=(fabrica.mktemp(f"arte_{nombre}") / "mlartifacts").as_uri(),
+        )
+        mpatch.setattr(t2, "CONFIG_P2", config)
+        uri_previa = mlflow.get_tracking_uri()
+        try:
+            return correr_main(fabrica.mktemp(nombre), extra, niveles)
+        finally:
+            mlflow.set_tracking_uri(uri_previa)
+
+
+@pytest.fixture(scope="module")
+def corrida_completa(tmp_path_factory) -> dict:
+    """main con afinacion y dos niveles iniciales; registra que archivos nuevos hay en el repo."""
+    antes = foto_del_repo()
+    corrida = correr_con_config_chica(tmp_path_factory, "completa", niveles=("0.5", "0.3"))
+    corrida["nuevos_en_repo"] = foto_del_repo() - antes
+    return corrida
+
+
+@pytest.fixture(scope="module")
+def corrida_sin_afinar(tmp_path_factory) -> dict:
+    """main con --sin-afinar: usa la primera configuracion de la rejilla y no hay rejilla."""
+    return correr_con_config_chica(tmp_path_factory, "sin_afinar", ["--sin-afinar"])
+
+
+@pytest.fixture(scope="module")
+def corrida_con_hiperparametros(tmp_path_factory) -> dict:
+    """main con --hyperparameters: se salta la afinacion y mezcla con la primera configuracion."""
+    return correr_con_config_chica(
+        tmp_path_factory,
+        "hiperparametros",
+        ["--hyperparameters", '{"max_iter": 12, "l2_regularization": 0.5}'],
+    )
+
+
+# particionar y rango_meses
+
+
+def test_cortes_salen_de_la_configuracion_y_rango_meses_excluye_el_dia_final(monkeypatch):
+    monkeypatch.undo()  # sin los cortes reducidos del autouse
+    assert t2.CORTES == {
+        "train_inicio": CONFIG_P2.fecha_inicio_entrenamiento,
+        "val_inicio": CONFIG_P2.fecha_inicio_validacion,
+        "test_inicio": CONFIG_P2.fecha_inicio_prueba,
+        "test_fin": CONFIG_P2.fecha_fin_prueba,
+    }
+    assert t2.RIESGO == ["sin_bicicletas", "sin_anclajes"]
+    assert t2.rango_meses("2025-01-01", "2026-05-01") == "2025-01..2026-04"
+    assert t2.rango_meses("2026-05-01", "2026-10-01") == "2026-05..2026-09"
+    assert t2.rango_meses("2026-03-01", "2026-04-15") == "2026-03..2026-04"  # fin a mitad de mes
+
+
+def test_particionar_respeta_limites_no_solapa_y_usa_la_fecha_objetivo():
+    un_seg = pd.Timedelta(seconds=1)
+    c = {k: pd.Timestamp(v) for k, v in CORTES_CHICOS.items()}
+    marcas = {
+        "antes_train": c["train_inicio"] - un_seg,
+        "train_inicio": c["train_inicio"],
+        "fin_fit": c["val_inicio"] - un_seg,
+        "val_inicio": c["val_inicio"],
+        "fin_val": c["test_inicio"] - un_seg,
+        "test_inicio": c["test_inicio"],
+        "fin_test": c["test_fin"] - un_seg,
+        "test_fin": c["test_fin"],
+    }
+    df = pd.DataFrame({"ts_objetivo": list(marcas.values()), "marca": list(marcas)})
+    # la columna ts no cuenta: solo ts_objetivo define el conjunto
+    df["ts"] = df["ts_objetivo"] - pd.Timedelta(days=60)
+    partes = t2.particionar(df)
+    assert set(partes) == {"fit", "val", "train", "test"}
+    assert partes["fit"]["marca"].tolist() == ["train_inicio", "fin_fit"]
+    assert partes["val"]["marca"].tolist() == ["val_inicio", "fin_val"]
+    assert partes["train"]["marca"].tolist() == [
+        "train_inicio",
+        "fin_fit",
+        "val_inicio",
+        "fin_val",
+    ]
+    assert partes["test"]["marca"].tolist() == ["test_inicio", "fin_test"]  # fin excluido
+
+
+def test_particionar_sin_fechas_de_prueba_regresa_test_vacio_sin_error():
+    # discutible: train_p1.particionar si falla en este caso; aqui solo queda un test vacio
+    df = pd.DataFrame({"ts_objetivo": pd.date_range("2026-01-05", "2026-02-10", freq="D")})
+    partes = t2.particionar(df)
+    assert len(partes["test"]) == 0
+    assert len(partes["train"]) == len(df)
+
+
+# metricas
+
+
+def test_metricas_con_prediccion_perfecta_y_prefijo():
+    y = np.array(["segura", "sin_bicicletas", "sin_anclajes", "segura"], dtype=object)
+    m = t2.metricas(y, y, None, fp.CLASES, "test_nuevas")
+    esperadas = {"test_nuevas_macro_f1"} | {
+        f"test_nuevas_{k}_{c}" for c in fp.CLASES for k in ("precision", "recall", "f1")
+    }
+    assert set(m) == esperadas  # sin probas no hay PR AUC
+    assert all(v == pytest.approx(1.0) and type(v) is float for v in m.values())
+
+
+def test_metricas_con_valores_conocidos_y_clase_ausente():
+    y_true = np.array(["segura", "segura", "sin_bicicletas", "sin_anclajes"], dtype=object)
+    y_pred = np.array(["segura", "sin_bicicletas", "sin_bicicletas", "segura"], dtype=object)
+    m = t2.metricas(y_true, y_pred, None, fp.CLASES, "t")
+    assert m["t_precision_segura"] == pytest.approx(1 / 2)
+    assert m["t_recall_segura"] == pytest.approx(1 / 2)
+    assert m["t_precision_sin_bicicletas"] == pytest.approx(1 / 2)
+    assert m["t_recall_sin_bicicletas"] == pytest.approx(1.0)
+    assert m["t_f1_sin_bicicletas"] == pytest.approx(2 / 3)
+    assert m["t_precision_sin_anclajes"] == 0.0 and m["t_recall_sin_anclajes"] == 0.0
+    assert m["t_macro_f1"] == pytest.approx((1 / 2 + 2 / 3 + 0) / 3)
+    # discutible: una clase ausente cuenta como 0 en el macro F1 (aqui 1/3 con todo acertado)
+    solo_segura = np.array(["segura", "segura"], dtype=object)
+    assert t2.metricas(solo_segura, solo_segura, None, fp.CLASES, "t")["t_macro_f1"] == (
+        pytest.approx(1 / 3)
+    )
+
+
+def test_metricas_pr_auc_solo_con_probas_y_de_las_clases_de_riesgo_presentes():
+    y = np.array(["segura", "sin_bicicletas", "sin_anclajes", "sin_bicicletas"], dtype=object)
+    # el orden de columnas de proba es el de clases (el de classes_ de sklearn, alfabetico)
+    clases = ["segura", "sin_anclajes", "sin_bicicletas"]
+    proba = np.array(
+        [[0.8, 0.1, 0.1], [0.1, 0.1, 0.8], [0.1, 0.8, 0.1], [0.2, 0.1, 0.7]], dtype=float
+    )
+    pred = np.array(clases, dtype=object)[proba.argmax(1)]
+    m = t2.metricas(y, pred, proba, clases, "test")
+    assert m["test_pr_auc_sin_bicicletas"] == pytest.approx(1.0)
+    assert m["test_pr_auc_sin_anclajes"] == pytest.approx(1.0)
+    assert "test_pr_auc_segura" not in m
+    assert "test_pr_auc_sin_bicicletas" not in t2.metricas(y, pred, None, clases, "test")
+    # si una clase de riesgo no aparece en y_true se omite su PR AUC
+    sin_anclajes = np.array(["segura", "sin_bicicletas", "segura"], dtype=object)
+    p = np.array([[0.7, 0.1, 0.2], [0.1, 0.1, 0.8], [0.6, 0.2, 0.2]])
+    m = t2.metricas(sin_anclajes, sin_anclajes, p, clases, "test")
+    assert "test_pr_auc_sin_bicicletas" in m and "test_pr_auc_sin_anclajes" not in m
+
+
+# figura_confusion
+
+
+def test_figura_confusion_guarda_un_png_con_una_o_varias_clases(tmp_path):
+    y = np.array(["segura", "sin_bicicletas", "sin_anclajes", "segura"], dtype=object)
+    pred = np.array(["segura", "segura", "sin_anclajes", "sin_bicicletas"], dtype=object)
+    ruta = tmp_path / "cm.png"
+    assert t2.figura_confusion(y, pred, "Titulo", ruta) == ruta
+    assert ruta.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
+    una = np.array(["segura", "segura"], dtype=object)
+    assert t2.figura_confusion(una, una, "Una clase", tmp_path / "una.png").stat().st_size > 0
+
+
+# preparar, ajustar y afinar
+
+
+def test_preparar_etiqueta_construye_features_y_particiona():
+    partes = t2.preparar(0.5, hacer_panel())
+    assert set(partes) == {"fit", "val", "train", "test"}
+    for parte in partes.values():
+        assert set(parte["objetivo"].unique()) <= set(fp.CLASES)
+        assert parte["hora"].between(min(CONFIG_P2.horas_etiqueta), 23).all()
+    assert set(partes["train"]["objetivo"].unique()) == set(fp.CLASES)
+    assert partes["test"]["ts_objetivo"].min() >= pd.Timestamp(CORTES_CHICOS["test_inicio"])
+    assert partes["test"]["ts_objetivo"].max() < pd.Timestamp(CORTES_CHICOS["test_fin"])
+    assert len(partes["train"]) == len(partes["fit"]) + len(partes["val"])
+
+
+def test_ajustar_usa_pesos_balanceados_semilla_y_sin_parada_temprana():
+    partes = t2.preparar(0.5, hacer_panel())
+    fit = fp.unir_stats(partes["fit"], *fp.stats_estacion(partes["fit"]))
+    modelo = t2.ajustar(fit, REJILLA_CORTA[0], 7)
+    p = modelo.get_params()
+    assert p["class_weight"] == "balanced" and p["random_state"] == 7
+    assert p["early_stopping"] is False
+    assert p["max_iter"] == 20 and p["max_leaf_nodes"] == 7
+    # las clases quedan en orden alfabetico, distinto de fp.CLASES
+    assert list(modelo.classes_) == ["segura", "sin_anclajes", "sin_bicicletas"]
+
+
+def test_afinar_elige_por_macro_f1_de_validacion_y_regresa_la_rejilla():
+    partes = t2.preparar(0.5, hacer_panel())
+    mejor, rejilla = t2.afinar(partes, 29)
+    assert len(rejilla) == len(REJILLA_CORTA)
+    for fila, params in zip(rejilla, REJILLA_CORTA, strict=True):
+        assert {k: v for k, v in fila.items() if k != "val_macro_f1"} == params
+        assert 0.0 <= fila["val_macro_f1"] <= 1.0
+    esperado = max(rejilla, key=lambda r: r["val_macro_f1"])
+    assert mejor == {k: v for k, v in esperado.items() if k != "val_macro_f1"}
+    assert t2.afinar(partes, 29) == (mejor, rejilla)  # misma semilla, mismo resultado
+
+
+def test_afinar_en_empate_se_queda_con_la_primera_configuracion(monkeypatch):
+    partes = t2.preparar(0.5, hacer_panel())
+
+    class Constante:
+        def predict(self, x):
+            return np.full(len(x), "segura", dtype=object)
+
+    monkeypatch.setattr(t2, "ajustar", lambda train, params, semilla: Constante())
+    mejor, rejilla = t2.afinar(partes, 29)
+    assert rejilla[0]["val_macro_f1"] == rejilla[1]["val_macro_f1"]
+    assert mejor == REJILLA_CORTA[0]
+
+
+def test_afinar_ajusta_solo_con_fit(monkeypatch):
+    partes = t2.preparar(0.5, hacer_panel())
+    vistos = []
+    original = t2.ajustar
+
+    def espiar(train, params, semilla):
+        vistos.append((train["ts_objetivo"].min(), train["ts_objetivo"].max(), len(train)))
+        return original(train, params, semilla)
+
+    monkeypatch.setattr(t2, "ajustar", espiar)
+    t2.afinar(partes, 29)
+    assert len(vistos) == len(REJILLA_CORTA)
+    for minimo, maximo, n in vistos:
+        assert minimo >= pd.Timestamp(CORTES_CHICOS["train_inicio"])
+        assert maximo < pd.Timestamp(CORTES_CHICOS["val_inicio"])  # nunca ve validacion ni test
+        assert n == len(partes["fit"])
+
+
+# correr_nivel
+
+
+def test_correr_nivel_regresa_resultados_y_ajusta_el_modelo_final_con_train(tmp_path, monkeypatch):
+    entradas = escribir_entradas(tmp_path, hacer_panel())
+    panel = pd.read_parquet(entradas["panel"])
+    mlflow.set_tracking_uri(f"sqlite:///{tmp_path / 'directo.db'}")
+    mlflow.create_experiment("directo", artifact_location=(tmp_path / "arte").as_uri())
+    mlflow.set_experiment("directo")
+    args = argparse.Namespace(
+        figuras=str(tmp_path / "figuras"),
+        semilla=29,
+        manifiesto=str(entradas["manifiesto"]),
+        panel=str(entradas["panel"]),
+    )
+    vistos = []
+    original = t2.ajustar
+
+    def espiar(train, params, semilla):
+        vistos.append(train["ts_objetivo"].max())
+        return original(train, params, semilla)
+
+    monkeypatch.setattr(t2, "ajustar", espiar)
+    salida = t2.correr_nivel(
+        0.5,
+        panel,
+        args,
+        {"version": VERSION},
+        json.loads(entradas["resumen"].read_text()),
+        REJILLA_CORTA[0],
+        [],
+        {"question": "P2"},
+        sin_pesos=True,
+    )
+    assert list(salida) == [
+        "baseline_mayoritaria",
+        "baseline_semana_previa",
+        "baseline_persistencia",
+        "hgb",
+        "hgb_sin_pesos",
+    ]
+    # el HGB final usa train completo (fit + val); el de sin pesos no pasa por ajustar
+    assert len(vistos) == 1
+    assert pd.Timestamp(CORTES_CHICOS["val_inicio"]) <= vistos[0]
+    assert vistos[0] < pd.Timestamp(CORTES_CHICOS["test_inicio"])
+    assert "val_macro_f1" not in salida["hgb"]  # sin rejilla no se reporta
+    figuras = {p.name for p in (tmp_path / "figuras").iterdir()}
+    assert {
+        "p2_cm_baseline_semana_ini50.png",
+        "p2_cm_baseline_persistencia_ini50.png",
+        "p2_cm_hgb_ini50.png",
+        "p2_cm_hgb_nuevas_ini50.png",
+        "p2_cm_hgb_sin_pesos_ini50.png",
+        "p2_importancia_permutacion_ini50.csv",
+        "p2_importancia_permutacion_ini50.png",
+    } <= figuras
+    assert "p2_rejilla_validacion.json" not in figuras
+
+
+# main de extremo a extremo
+
+
+def test_main_crea_los_runs_esperados(corrida_completa):
+    # el primer nivel trae los cinco runs; los demas niveles no traen el HGB sin pesos
+    assert set(corrida_completa["runs"]) == RUNS_INI50 | {
+        "p2_baseline_mayoritaria_ini30",
+        "p2_baseline_semana_previa_ini30",
+        "p2_baseline_persistencia_ini30",
+        "p2_hgb_balanceado_ini30",
+    }
+    assert corrida_completa["experimento"].name == "mibici-equipo29"
+
+
+def test_main_etiqueta_cada_run_con_la_convencion_del_equipo(corrida_completa):
+    sha, _ = t2.git_commit()
+    modelos = {}
+    for nombre, run in corrida_completa["runs"].items():
+        tags = run.data.tags
+        # etiquetas propias (sin las de sistema de MLflow, salvo la del commit) mas "modelo"
+        propias = {k for k in tags if not k.startswith("mlflow.") or k.endswith("git.commit")}
+        assert propias == ETIQUETAS_BASE | {"mlflow.source.git.commit", "modelo"}, nombre
+        assert tags["question"] == "P2" and tags["team"] == "29"
+        assert tags["author"] == "carlosgalvan" and tags["seed"] == "29"
+        assert tags["data_range"] == "2025-01..2026-09"
+        assert tags["data_version"] == VERSION
+        assert tags["git_commit"] == sha == tags["mlflow.source.git.commit"]
+        assert tags["git_dirty"] in {"True", "False"}
+        modelos[nombre] = tags["modelo"]
+    assert modelos["p2_baseline_mayoritaria_ini50"] == "baseline_mayoritaria"
+    assert modelos["p2_baseline_semana_previa_ini50"] == "baseline_semana_previa"
+    assert modelos["p2_baseline_persistencia_ini50"] == "baseline_persistencia"
+    assert modelos["p2_hgb_balanceado_ini50"] == "hist_gradient_boosting"
+    assert modelos["p2_hgb_sin_pesos_ini50"] == "hist_gradient_boosting_sin_pesos"
+
+
+def test_main_registra_metricas_de_test_y_de_estaciones_nuevas(corrida_completa):
+    for nombre, run in corrida_completa["runs"].items():
+        metricas = run.data.metrics
+        for prefijo in ("test", "test_nuevas"):
+            assert f"{prefijo}_macro_f1" in metricas, nombre
+            for c in fp.CLASES:
+                assert f"{prefijo}_f1_{c}" in metricas, nombre
+        assert sum(metricas[f"test_prop_{c}"] for c in fp.CLASES) == pytest.approx(1.0)
+        con_probas = "hgb" in nombre
+        assert ("test_pr_auc_sin_bicicletas" in metricas) == con_probas, nombre
+        assert ("test_nuevas_pr_auc_sin_anclajes" in metricas) == con_probas, nombre
+    # el baseline mayoritario predice una sola clase: la mas frecuente de train
+    mayoritaria = t2.preparar(0.5, hacer_panel())["train"]["objetivo"].mode()[0]
+    run = corrida_completa["runs"]["p2_baseline_mayoritaria_ini50"]
+    assert run.data.params["clase"] == mayoritaria
+    for c in fp.CLASES:
+        assert run.data.metrics[f"test_recall_{c}"] == (1.0 if c == mayoritaria else 0.0)
+
+
+def test_main_registra_parametros_comunes(corrida_completa):
+    runs = corrida_completa["runs"]
+    p = runs["p2_hgb_balanceado_ini50"].data.params
+    assert p["nivel_inicial"] == "0.5"
+    assert (p["umbral_bajo"], p["umbral_alto"]) == ("0.1", "0.9")
+    assert p["horizonte_horas"] == "1" and p["horas_objetivo"] == "6-23"
+    assert p["hora_inicio_dia_servicio"] == "5"
+    assert p["train_rango"] == "2026-01..2026-02"
+    assert p["val_rango"] == "2026-02..2026-02"
+    assert p["test_rango"] == "2026-02..2026-03"
+    assert p["semilla"] == "29" and p["data_version"] == VERSION
+    assert p["estaciones_modeladas"] == "4"
+    assert p["estaciones_sin_nomenclatura"] == "2" and p["estaciones_capacidad_cero"] == "1"
+    assert p["estaciones_nuevas_test"] == "1"
+    assert p["modelo"] == "HistGradientBoostingClassifier" and p["class_weight"] == "balanced"
+    assert p["features"] == ",".join(fp.FEATURES)
+    assert runs["p2_hgb_sin_pesos_ini50"].data.params["class_weight"] == "ninguno"
+
+
+def test_main_afina_solo_con_el_primer_nivel_y_guarda_el_json_de_resultados(corrida_completa):
+    resultados, runs = corrida_completa["resultados"], corrida_completa["runs"]
+    assert set(resultados) == {"params_hgb", "rejilla", "resultados"}
+    assert set(resultados["resultados"]) == {"0.5", "0.3"}
+    assert "hgb_sin_pesos" in resultados["resultados"]["0.5"]
+    assert "hgb_sin_pesos" not in resultados["resultados"]["0.3"]
+    assert len(resultados["rejilla"]) == len(REJILLA_CORTA)
+    elegido = max(resultados["rejilla"], key=lambda r: r["val_macro_f1"])
+    assert resultados["params_hgb"] == {k: v for k, v in elegido.items() if k != "val_macro_f1"}
+    # el run del primer nivel reporta val_macro_f1 (el mejor de la rejilla); el segundo no
+    hgb50 = runs["p2_hgb_balanceado_ini50"]
+    assert hgb50.data.metrics["val_macro_f1"] == pytest.approx(elegido["val_macro_f1"])
+    assert "val_macro_f1" not in runs["p2_hgb_balanceado_ini30"].data.metrics
+    assert hgb50.data.metrics["test_macro_f1"] == pytest.approx(
+        resultados["resultados"]["0.5"]["hgb"]["test_macro_f1"]
+    )
+    # los dos niveles usan los mismos hiperparametros elegidos
+    for nombre in ("p2_hgb_balanceado_ini50", "p2_hgb_balanceado_ini30"):
+        p = runs[nombre].data.params
+        assert {k: float(p[k]) for k in resultados["params_hgb"]} == pytest.approx(
+            resultados["params_hgb"]
+        )
+
+
+def test_main_registra_artefactos_por_run(corrida_completa):
+    cliente, runs = corrida_completa["cliente"], corrida_completa["runs"]
+
+    def artefactos(nombre):
+        return {a.path for a in cliente.list_artifacts(runs[nombre].info.run_id)}
+
+    assert artefactos("p2_baseline_mayoritaria_ini50") == set()
+    assert artefactos("p2_baseline_semana_previa_ini50") == {"p2_cm_baseline_semana_ini50.png"}
+    assert artefactos("p2_baseline_persistencia_ini50") == {
+        "p2_cm_baseline_persistencia_ini50.png"
+    }
+    assert artefactos("p2_hgb_sin_pesos_ini50") == {"p2_cm_hgb_sin_pesos_ini50.png"}
+    assert artefactos("p2_hgb_balanceado_ini50") == {
+        "p2_cm_hgb_ini50.png",
+        "p2_cm_hgb_nuevas_ini50.png",
+        "p2_importancia_permutacion_ini50.csv",
+        "p2_importancia_permutacion_ini50.png",
+        "p2_rejilla_validacion.json",
+        "manifiesto.json",
+        "panel.json",
+    }
+    assert "p2_rejilla_validacion.json" not in artefactos("p2_hgb_balanceado_ini30")
+
+
+def test_main_no_escribe_archivos_en_el_repo(corrida_completa):
+    assert corrida_completa["nuevos_en_repo"] == set()
+    assert PROJ_ROOT.as_uri() not in corrida_completa["experimento"].artifact_location
+    assert (corrida_completa["figuras"] / "p2_resultados.json").exists()
+
+
+def test_main_con_sin_afinar_usa_la_primera_configuracion(corrida_sin_afinar):
+    r = corrida_sin_afinar["resultados"]
+    assert r["params_hgb"] == REJILLA_CORTA[0]
+    assert r["rejilla"] == []
+    assert set(corrida_sin_afinar["runs"]) == RUNS_INI50
+    hgb = corrida_sin_afinar["runs"]["p2_hgb_balanceado_ini50"]
+    assert "val_macro_f1" not in hgb.data.metrics
+    nombres = {a.path for a in corrida_sin_afinar["cliente"].list_artifacts(hgb.info.run_id)}
+    assert "p2_rejilla_validacion.json" not in nombres
+
+
+def test_main_con_hiperparametros_salta_la_afinacion_y_mezcla_con_la_primera_configuracion(
+    corrida_con_hiperparametros,
+):
+    r = corrida_con_hiperparametros["resultados"]
+    assert r["params_hgb"] == REJILLA_CORTA[0] | {"max_iter": 12, "l2_regularization": 0.5}
+    assert r["rejilla"] == []
+    hgb = corrida_con_hiperparametros["runs"]["p2_hgb_balanceado_ini50"]
+    p = hgb.data.params
+    assert p["max_iter"] == "12" and p["l2_regularization"] == "0.5"
+    assert p["max_leaf_nodes"] == "7"  # lo no indicado sale de la primera configuracion
+    assert "val_macro_f1" not in hgb.data.metrics
+
+
+def test_main_rechaza_argumentos_invalidos_antes_de_tocar_datos(tmp_path):
+    invalidos = [
+        ["--hyperparameters", "{no es json"],
+        ["--hyperparameters", "[1, 2]"],
+        ["--hyperparameters", '{"profundidad": 3}'],
+        ["--model", "random_forest"],
+    ]
+    for extra in invalidos:
+        with pytest.raises(SystemExit) as salida:
+            t2.main(["--panel", str(tmp_path / "no_existe.parquet"), *extra])
+        assert salida.value.code == 2, extra
+
+
+def test_git_commit_regresa_el_sha_del_repo_y_desconocido_si_falla_git(monkeypatch):
+    sha, sucio = t2.git_commit()
+    esperado = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=PROJ_ROOT, text=True)
+    assert sha == esperado.strip() and isinstance(sucio, bool)
+
+    def falla(*args, **kwargs):
+        raise FileNotFoundError("git")
+
+    monkeypatch.setattr(t2.subprocess, "check_output", falla)
+    assert t2.git_commit() == ("desconocido", True)
+
+
+# despachador del MLflow Project (mibici.mlflow_project) para P2
+
+
+def test_hiperparametros_se_leen_como_json_o_como_pares_clave_valor():
+    assert mp._parse_hyperparameters("") == {}
+    assert mp._parse_hyperparameters('{"max_iter": 10, "learning_rate": 0.1}') == {
+        "max_iter": 10,
+        "learning_rate": 0.1,
+    }
+    asignado = mp._parse_hyperparameters("max_iter=10,learning_rate=0.05,nombre=abc,l2=1e-3")
+    assert asignado == {"max_iter": 10, "learning_rate": 0.05, "nombre": "abc", "l2": 1e-3}
+    assert type(asignado["max_iter"]) is int and type(asignado["learning_rate"]) is float
+    for texto in ["[1, 2]", "max_iter", "max_iter=", "=3", "a=1,,b=2"]:
+        with pytest.raises(ValueError):
+            mp._parse_hyperparameters(texto)
+
+
+@pytest.fixture
+def espias_p2(monkeypatch):
+    """Cambia features_p2.main y train_p2.main por espias para ver como los llama el despacho."""
+    llamadas = []
+    monkeypatch.setattr(fp, "main", lambda *a, **k: llamadas.append(("features_p2", a, k)))
+    monkeypatch.setattr(t2, "main", lambda argv=None: llamadas.append(("train_p2", argv)))
+    return llamadas
+
+
+def test_despachador_p2_prepara_features_y_llama_a_train_con_model_e_hiperparametros(espias_p2):
+    mp.run_train("p2", hyperparameters={"max_iter": 10, "learning_rate": 0.05})
+    assert [c[0] for c in espias_p2] == ["features_p2", "train_p2"]  # primero las features
+    # los hiperparametros viajan como JSON compacto y el modelo por defecto sale de la config
+    assert espias_p2[1][1] == [
+        "--model", CONFIG_P2.model, "--hyperparameters", '{"max_iter":10,"learning_rate":0.05}',
+    ]  # fmt: skip
+    espias_p2.clear()
+    mp.main(["train", "--question", "p2"])  # sin hiperparametros viaja un objeto vacio
+    assert espias_p2[1][1] == ["--model", "hist_gradient_boosting", "--hyperparameters", "{}"]
+    espias_p2.clear()
+    mp.main(["train", "--question", "p2", "--hyperparameters", "max_iter=10,max_leaf_nodes=7"])
+    assert json.loads(espias_p2[1][1][3]) == {"max_iter": 10, "max_leaf_nodes": 7}
+
+
+def test_despachador_rechaza_modelo_pregunta_o_hiperparametros_invalidos_sin_entrenar(espias_p2):
+    with pytest.raises(ValueError, match="P2"):
+        mp.run_train("p2", model="random_forest")
+    with pytest.raises(ValueError, match="question"):
+        mp.run_train("p9")
+    with pytest.raises(TypeError):
+        mp.run_train("p2", hyperparameters=[1, 2])
+    with pytest.raises(SystemExit):  # la pregunta va en minusculas (la etiqueta de MLflow es P2)
+        mp.main(["train", "--question", "P2"])
+    assert espias_p2 == []
+
+
+def test_despachador_quita_mlflow_run_id_durante_el_entrenamiento_y_lo_restaura(
+    monkeypatch, espias_p2
+):
+    # con mlflow run el proyecto ya abre un run; train_p2 debe crear los suyos sin anidarse
+    monkeypatch.setenv("MLFLOW_RUN_ID", "run_del_proyecto")
+    visto = []
+    monkeypatch.setattr(
+        t2, "main", lambda argv=None: visto.append(os.environ.get("MLFLOW_RUN_ID"))
+    )
+    mp.run_train("p2")
+    assert visto == [None]
+    assert os.environ["MLFLOW_RUN_ID"] == "run_del_proyecto"
