@@ -1,9 +1,12 @@
-"""Entrenamiento y registro en MLflow del baseline de la pregunta 3 (P3).
+"""Entrenamiento y registro en MLflow de la pregunta 3 (P3): baseline y candidatas de uso.
 
-Baseline: KMeans sobre la ubicación de las estaciones (lat/lon en km). Se entrena solo con el
-periodo de entrenamiento y se califica en el espacio de uso: silueta, Davies-Bouldin y
-Calinski-Harabasz sobre las variables de uso estandarizadas, en entrenamiento (``train_``) y en
-evaluación (``test_``).
+- ``kmeans_geo`` (baseline): KMeans sobre la ubicación de las estaciones (lat/lon en km).
+- ``kmeans_uso`` y ``gmm_uso`` (candidatas): pipelines de ``modelos_p3.py`` sobre las variables
+  de uso (selección por VIF, escalado y KMeans o GaussianMixture).
+
+Todos se entrenan solo con el periodo de entrenamiento y se califican en el mismo espacio de uso:
+silueta, Davies-Bouldin y Calinski-Harabasz sobre las variables de uso estandarizadas, en
+entrenamiento (``train_``) y en evaluación (``test_``).
 
 Lee los perfiles que genera ``python -m mibici.features_p3`` en ``data/interim``. Los
 parámetros (fechas, semilla, k) están en ``CONFIG_P3`` (``mibici/config.py``).
@@ -15,6 +18,8 @@ Uso desde la raíz del repositorio::
     python -m mibici.modeling.train_p3                 # 3. baseline con k = 4, 5 y 6
     python -m mibici.modeling.train_p3 --k 5           #    solo k = 5
     python -m mibici.modeling.train_p3 --no-registrar  #    métricas sin escribir en MLflow
+    python -m mibici.modeling.train_p3 --model kmeans_uso --k 5
+    python -m mibici.modeling.train_p3 --model gmm_uso --n-components 5 --covariance-type diag
 
 La interfaz de MLflow se abre con ``mlflow ui --backend-store-uri sqlite:///mlflow.db``.
 """
@@ -40,6 +45,12 @@ import typer
 
 from mibici.config import CONFIG, CONFIG_P3, PROJ_ROOT, P3Config
 from mibici.features_p3 import DatasetP3, a_km, cargar_dataset
+from mibici.modeling.modelos_p3 import (
+    construir_modelo,
+    hiperparametros_efectivos,
+    nombre_corrida,
+    validar_hiperparametros,
+)
 
 app = typer.Typer()
 COLORES = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#6250d6", "#e34948"]
@@ -71,13 +82,22 @@ def metricas(prefijo: str, X: np.ndarray, etiquetas) -> dict[str, float]:
     }
 
 
+def espacio_uso(ds: DatasetP3) -> tuple[np.ndarray, np.ndarray]:
+    """Variables de uso estandarizadas de entrenamiento y evaluación, donde se califica todo modelo.
+
+    El escalado se aprende solo con el periodo de entrenamiento.
+    """
+    en, ev, vars_ = ds.entrenamiento, ds.evaluacion, ds.variables
+    escalador = StandardScaler().fit(en[vars_])
+    return escalador.transform(en[vars_]), escalador.transform(ev[vars_])
+
+
 def entrenar_baseline(
     ds: DatasetP3, k: int, cfg: P3Config = CONFIG_P3
 ) -> tuple[Renumerado, dict[str, float]]:
     """Ajusta el baseline geográfico con k zonas y regresa el modelo y sus métricas."""
-    en, ev, vars_ = ds.entrenamiento, ds.evaluacion, ds.variables
-    escalador = StandardScaler().fit(en[vars_])  # solo con el periodo de entrenamiento
-    X_en, X_ev = escalador.transform(en[vars_]), escalador.transform(ev[vars_])
+    en, ev = ds.entrenamiento, ds.evaluacion
+    X_en, X_ev = espacio_uso(ds)
     G_en, G_ev = a_km(ds.nom, en.index, cfg.lat_ref), a_km(ds.nom, ev.index, cfg.lat_ref)
     km = Renumerado(KMeans(n_clusters=k, n_init=cfg.n_init, random_state=cfg.seed).fit(G_en), 0)
     m = {
@@ -88,13 +108,40 @@ def entrenar_baseline(
     return km, m
 
 
+def entrenar_candidata(
+    ds: DatasetP3, model: str, params: dict, cfg: P3Config = CONFIG_P3
+) -> tuple[object, dict[str, float]]:
+    """Entrena una candidata de uso con el periodo de entrenamiento y regresa el modelo y métricas.
+
+    El pipeline recibe las 12 variables candidatas y elige las suyas por VIF; las métricas se
+    calculan en el mismo espacio de uso que el baseline.
+    """
+    entrada = list(cfg.prioridad_variables)
+    modelo = construir_modelo(model, params, cfg).fit(ds.entrenamiento[entrada])
+    X_en, X_ev = espacio_uso(ds)
+    m = {
+        **metricas("train", X_en, modelo.predict(ds.entrenamiento[entrada])),
+        **metricas("test", X_ev, modelo.predict(ds.evaluacion[entrada])),
+    }
+    return modelo, m
+
+
 def _git(*args: str) -> str:
     r = subprocess.run(["git", *args], cwd=PROJ_ROOT, capture_output=True, text=True, check=False)
     return r.stdout.strip()
 
 
-def etiquetas(ds: DatasetP3, cfg: P3Config = CONFIG_P3) -> dict[str, str]:
-    """Etiquetas del run con el mismo esquema que P2 (question, team, author, ...)."""
+def etiquetas(
+    ds: DatasetP3,
+    cfg: P3Config = CONFIG_P3,
+    familia: str = "kmeans_geo",
+    etapa: str = "baseline",
+) -> dict[str, str]:
+    """Etiquetas del run con el mismo esquema que P2 (question, team, author, ...).
+
+    ``familia`` va en ``model_family`` y ``etapa`` en ``stage_of_work`` (baseline, search o
+    candidate).
+    """
     sha = _git("rev-parse", "HEAD") or "sin-git"
     return {
         "question": "P3",
@@ -106,7 +153,8 @@ def etiquetas(ds: DatasetP3, cfg: P3Config = CONFIG_P3) -> dict[str, str]:
         "mlflow.source.git.commit": sha,
         "git_commit": sha,
         "git_dirty": str(bool(_git("status", "--porcelain", "--untracked-files=no"))),
-        "tipo": "baseline",
+        "model_family": familia,
+        "stage_of_work": etapa,
         "origen": "mibici/modeling/train_p3.py",
     }
 
@@ -203,18 +251,75 @@ def registrar_baseline(
         return run.info.run_id
 
 
+def registrar_candidata(
+    ds: DatasetP3, model: str, params: dict, m: dict, cfg: P3Config = CONFIG_P3
+) -> str:
+    """Registra un run de una candidata de uso con parámetros, métricas y etiquetas."""
+    nombre = nombre_corrida(model, params, cfg)
+    with mlflow.start_run(run_name=nombre) as run:
+        mlflow.set_tags(etiquetas(ds, cfg, familia=model, etapa="candidate"))
+        mlflow.log_params(
+            {
+                "fecha_inicio_entrenamiento": cfg.fecha_inicio_entrenamiento,
+                "fecha_fin_entrenamiento": cfg.fecha_fin_entrenamiento,
+                "fecha_inicio_evaluacion": cfg.fecha_inicio_evaluacion,
+                "fecha_fin_evaluacion": cfg.fecha_fin_evaluacion,
+                "data_version": ds.data_version,
+                "seed": cfg.seed,
+                "modelo": model,
+                **hiperparametros_efectivos(model, params, cfg),
+                "entrada_modelo": ",".join(cfg.prioridad_variables),
+                "umbral_vif": cfg.umbral_vif,
+                "variables_evaluacion": ",".join(ds.variables),
+                "min_dias_activos": cfg.min_dias_activos,
+                "duracion_min_seg": cfg.duracion_min_seg,
+                "n_estaciones_entrenamiento": len(ds.entrenamiento),
+                "n_estaciones_evaluacion": len(ds.evaluacion),
+            }
+        )
+        mlflow.log_metrics(m)
+        return run.info.run_id
+
+
+def combinaciones(
+    model: str,
+    k: list[int] | None,
+    n_components: list[int] | None,
+    covariance_type: str | None,
+    n_init: int | None,
+    cfg: P3Config = CONFIG_P3,
+) -> list[dict]:
+    """Hiperparámetros de cada run que pide la CLI (uno por valor de k o de n_components)."""
+    extra = {"n_init": n_init} if n_init is not None else {}
+    if model == "kmeans_geo":
+        return [{"k": kk, **extra} for kk in k or cfg.k_comparacion]
+    if model == "kmeans_uso":
+        return [{"k": kk, **extra} for kk in k or [cfg.k_baseline]]
+    cov = {"covariance_type": covariance_type or cfg.covarianza_gmm}
+    return [{"n_components": n, **cov, **extra} for n in n_components or [cfg.k_baseline]]
+
+
 @app.command()
 def main(
     k: Annotated[list[int] | None, typer.Option(help="Número de zonas; se puede repetir.")] = None,
     perfiles_dir: Path = CONFIG.interim_data_dir,
     tracking_uri: str = CONFIG_P3.tracking_uri,
     registrar: Annotated[bool, typer.Option(help="Escribir los runs en MLflow.")] = True,
-    model: str = CONFIG_P3.model,
+    model: Annotated[
+        str, typer.Option(help="kmeans_geo (baseline), kmeans_uso o gmm_uso.")
+    ] = CONFIG_P3.model,
     n_init: int | None = None,
+    n_components: Annotated[
+        list[int] | None, typer.Option(help="Componentes de gmm_uso; se puede repetir.")
+    ] = None,
+    covariance_type: Annotated[
+        str | None, typer.Option(help="Covarianza de gmm_uso: full, tied, diag o spherical.")
+    ] = None,
 ):
-    """Entrena el baseline geográfico de P3 y registra un run de MLflow por cada k."""
-    if model != CONFIG_P3.model:
-        raise ValueError(f"Unsupported P3 model: {model}")
+    """Entrena el baseline o una candidata de P3 y registra un run de MLflow por combinación."""
+    corridas = combinaciones(model, k, n_components, covariance_type, n_init)
+    for params in corridas:
+        validar_hiperparametros(model, params)
     cfg = replace(CONFIG_P3, n_init=n_init) if n_init is not None else CONFIG_P3
     ds = cargar_dataset(perfiles_dir)
     logger.info(
@@ -226,13 +331,20 @@ def main(
         if mlflow.get_experiment_by_name(cfg.experimento) is None:
             mlflow.create_experiment(cfg.experimento, artifact_location=cfg.artifact_location)
         mlflow.set_experiment(cfg.experimento)
-    for kk in k or cfg.k_comparacion:
-        km, m = entrenar_baseline(ds, kk, cfg)
+    for params in corridas:
+        if model == "kmeans_geo":
+            km, m = entrenar_baseline(ds, params["k"], cfg)
+        else:
+            _, m = entrenar_candidata(ds, model, params, cfg)
         resumen = " | ".join(f"{n} {v:.3f}" for n, v in m.items())
-        logger.info(f"k={kk}: {resumen}")
-        if registrar:
-            run_id = registrar_baseline(ds, kk, km, m, cfg)
-            logger.success(f"Run registrado: p3-baseline-kmeans-geo-k{kk} ({run_id[:8]})")
+        logger.info(f"{model} {params}: {resumen}")
+        if not registrar:
+            continue
+        if model == "kmeans_geo":
+            run_id = registrar_baseline(ds, params["k"], km, m, cfg)
+        else:
+            run_id = registrar_candidata(ds, model, params, m, cfg)
+        logger.success(f"Run registrado: {model} {params} ({run_id[:8]})")
 
 
 if __name__ == "__main__":

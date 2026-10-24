@@ -94,12 +94,14 @@ class P3Config:
     )  # orden en que se conservan las variables al quitar redundancia
     umbral_vif: float = 5.0
 
-    # Modelo
-    model: str = "kmeans"
+    # Modelo: kmeans_geo (baseline geográfico), kmeans_uso o gmm_uso (candidatas de uso, en
+    # mibici/modeling/modelos_p3.py). Los valores de abajo son los de omisión de cada uno.
+    model: str = "kmeans_geo"
     seed: int = 42
     k_baseline: int = 5
     k_comparacion: tuple[int, ...] = (4, 5, 6)
     n_init: int = 20
+    covarianza_gmm: str = "full"
     lat_ref: float = 20.67  # latitud de Guadalajara para proyectar a km
 
     # MLflow: mismo backend local y esquema de etiquetas que P2. No se usa
