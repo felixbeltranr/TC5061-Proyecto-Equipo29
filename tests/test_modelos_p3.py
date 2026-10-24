@@ -126,3 +126,33 @@ def test_hiperparametros_efectivos_completan_con_config():
         "n_components": CONFIG_P3.k_baseline,
         "covariance_type": "tied",
     }
+
+
+@pytest.mark.parametrize(
+    "model,opciones,mensaje",
+    [
+        ("gmm_uso", {"k": [8]}, "--k"),
+        ("kmeans_uso", {"n_components": [4]}, "--n-components"),
+        ("kmeans_geo", {"covariance_type": "diag"}, "--covariance-type"),
+        ("seleccion", {"k": [3]}, "seleccion"),
+        ("seleccion", {"buscar_": True}, "--buscar"),
+        ("kmeans_geo", {"buscar_": True}, "--buscar"),
+        ("kmeans_uso", {"buscar_": True, "k": [4]}, "--buscar"),
+        ("dbscan", {}, "no soportado"),
+    ],
+)
+def test_cli_rechaza_opciones_que_no_aplican(model, opciones, mensaje):
+    from mibici.modeling.train_p3 import validar_opciones
+
+    args = {"k": None, "n_components": None, "covariance_type": None, "n_init": None}
+    with pytest.raises(ValueError, match=mensaje):
+        validar_opciones(model, **(args | opciones))
+
+
+def test_cli_acepta_opciones_compatibles():
+    from mibici.modeling.train_p3 import validar_opciones
+
+    validar_opciones("gmm_uso", None, [3, 4], "tied", 10)
+    validar_opciones("kmeans_uso", [3], None, None, 10)
+    validar_opciones("kmeans_uso", None, None, None, None, buscar_=True)
+    validar_opciones("seleccion", None, None, None, None)

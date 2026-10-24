@@ -463,6 +463,46 @@ def seleccionar(ds: DatasetP3, cfg: P3Config = CONFIG_P3, registrar: bool = True
     return ranking
 
 
+MODELOS_CLI = ("kmeans_geo", "kmeans_uso", "gmm_uso", "seleccion")
+
+
+def validar_opciones(
+    model: str,
+    k: list[int] | None,
+    n_components: list[int] | None,
+    covariance_type: str | None,
+    n_init: int | None,
+    buscar_: bool = False,
+) -> None:
+    """Rechaza opciones de la CLI que no aplican al modelo, en lugar de ignorarlas.
+
+    - ``kmeans_geo`` y ``kmeans_uso``: no aceptan ``--n-components`` ni ``--covariance-type``.
+    - ``gmm_uso``: no acepta ``--k``.
+    - ``seleccion``: no acepta hiperparámetros ni ``--buscar`` (todo sale de ``CONFIG_P3``).
+    - ``--buscar``: solo con ``kmeans_uso`` o ``gmm_uso`` y sin hiperparámetros (usa la rejilla).
+    """
+    if model not in MODELOS_CLI:
+        raise ValueError(f"Modelo de P3 no soportado: {model}. Opciones: {list(MODELOS_CLI)}")
+    dadas = {
+        "--k": k,
+        "--n-components": n_components,
+        "--covariance-type": covariance_type,
+        "--n-init": n_init,
+    }
+    dadas = [nombre for nombre, valor in dadas.items() if valor not in (None, [])]
+    if model == "seleccion" or buscar_:
+        if buscar_ and model not in ("kmeans_uso", "gmm_uso"):
+            raise ValueError("--buscar solo aplica a kmeans_uso o gmm_uso")
+        no_aplican = dadas
+    elif model == "gmm_uso":
+        no_aplican = [o for o in dadas if o == "--k"]
+    else:
+        no_aplican = [o for o in dadas if o in ("--n-components", "--covariance-type")]
+    if no_aplican:
+        contexto = "--buscar" if buscar_ else model
+        raise ValueError(f"Opciones que no aplican a {contexto}: {no_aplican}")
+
+
 def combinaciones(
     model: str,
     k: list[int] | None,
@@ -512,6 +552,7 @@ def main(
 
     Con ``--model seleccion`` corre el flujo completo (ver ``seleccionar``).
     """
+    validar_opciones(model, k, n_components, covariance_type, n_init, buscar_)
     corridas = []
     if model != "seleccion":
         corridas = combinaciones(model, k, n_components, covariance_type, n_init)
