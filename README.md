@@ -70,6 +70,24 @@ python -m mibici.dataset --start-year 2024 --start-month 12 --end-year 2025 --en
 
 El rango incluye los meses inicial y final. Si omites las opciones, se usa el rango de `mibici/config.py`. Debes proporcionar los cuatro valores juntos; los meses deben estar entre 1 y 12 y el inicio no puede ser posterior al final.
 
+## MLflow Project
+
+El `MLproject` de la raíz define dos entry points. El entorno usa las dependencias de `requirements.txt`; los defaults de rutas, fechas, semillas y parámetros del modelo se leen desde `mibici/config.py`:
+
+```powershell
+mlflow run . -e ingest --env-manager local
+mlflow run . -e train -P question=p1 -P model=hgb_poisson -P hyperparameters=max_iter=300 --env-manager local
+mlflow run . -e train -P question=p2 -P model=hist_gradient_boosting -P hyperparameters=max_iter=300,max_leaf_nodes=63 --env-manager local
+mlflow run . -e train -P question=p3 -P model=kmeans -P hyperparameters=k=5,n_init=30 --env-manager local
+```
+
+Ejecuta `ingest` antes de `train`. El entry point `train` genera las features del problema indicado (`p1`, `p2` o `p3`) y después llama su entrenador configurado. Los modelos disponibles actualmente son P1 `auto`, `poisson` y `hgb_poisson`; P2 `hist_gradient_boosting`; y P3 `kmeans`. `auto` usa la selección configurada para P1. `hyperparameters` acepta pares separados por coma: P1 Poisson admite `alpha`; P1 HGB Poisson y P2 admiten `learning_rate`, `max_leaf_nodes`, `max_iter` y `l2_regularization`; P3 admite `k` y `n_init`. Por ejemplo, Random Forest y `n_estimators` no son compatibles con los modelos actuales.
+
+Los ejemplos incluyen `--env-manager local` para reutilizar el entorno virtual activo. Si no vas a usar un entorno virtual ya activado y quieres que MLflow gestione el entorno del proyecto, puedes omitir esa opción.
+
+
+MLflow hereda las variables del proceso que lo ejecuta. Una variable sólo tendrá efecto si MLflow o el código del entry point la consulta; agregarla al entorno no crea automáticamente un parámetro de MLflow. Para parámetros definidos por el entry point, usa `-P nombre=valor`. En este proyecto, `mibici.config` carga un archivo `.env`, pero las rutas, fechas, semillas y URI de seguimiento se toman actualmente de `CONFIG`, `CONFIG_P1`, `CONFIG_P2` y `CONFIG_P3`; definir `MLFLOW_TRACKING_URI` por sí solo no reemplaza esos valores. La opción `--env-manager local` es un argumento de MLflow, no una variable de entorno; úsala para ejecutar con el entorno virtual activo y evitar que MLflow intente instalar Python con `pyenv`.
+
 `combined_dataset.parquet` es la entrada común de las tres preguntas: conserva todos los viajes y sus identificadores (`Viaje_Id`, `Origen_Id`, `Destino_Id`). Cada pregunta aplica después sus propios filtros.
 
 ## Configuración
@@ -103,23 +121,40 @@ Partición por fecha objetivo: FIT hasta 2026-02-27, VAL de 2026-03-01 a 2026-04
 
 ### P2 · riesgo de estación
 
+P2 clasifica el riesgo horario de que una estación se quede sin bicicletas o sin anclajes. La ocupación se estima a partir del flujo neto acumulado de viajes y la capacidad de la estación; no proviene de mediciones directas de inventario. El entrenamiento compara baselines con `HistGradientBoostingClassifier` balanceado y evalúa macro F1, métricas por clase y estaciones nuevas.
+
 ```bash
 python -m mibici.manifiesto_p2
 python -m mibici.features_p2
 python -m mibici.modeling.train_p2
 ```
 
+`features_p2` genera `data/interim/p2_panel_horario.parquet` y su resumen JSON. `train_p2` busca los hiperparámetros en la rejilla de `CONFIG_P2`, registra los runs y guarda matrices de confusión e importancia por permutación en `reports/figures/`. Los cortes temporales, umbrales de riesgo, nivel inicial de ocupación, semilla y rejilla están en `CONFIG_P2` de `mibici/config.py`.
+
+Con MLflow Project, después de la ingesta y de generar el manifiesto, se pueden ejecutar las features y el entrenamiento con:
+
+```powershell
+mlflow run . -e train -P question=p2 --env-manager local
+mlflow run . -e train -P question=p2 -P model=hist_gradient_boosting -P hyperparameters=max_iter=300,max_leaf_nodes=63 --env-manager local
+```
+
 ### P3 · grupos de estaciones
+
+P3 agrupa estaciones con perfiles de uso similares y compara los grupos con su ubicación. `features_p3` lee el parquet combinado, construye los perfiles de entrenamiento y evaluación, selecciona variables de uso y los guarda en `data/interim`. `train_p3` entrena el baseline geográfico `KMeans` para k = 4, 5 y 6, calcula métricas de clustering en el espacio de uso y registra un run por cada valor de k.
 
 ```bash
 python -m mibici.features_p3
 python -m mibici.modeling.train_p3
 ```
 
-1. `mibici.features_p3` lee del parquet combinado sólo las cinco columnas que usa P3, aplica su limpieza mínima y guarda los perfiles de uso de entrenamiento y evaluación en `data/interim`.
-2. `mibici.modeling.train_p3` entrena el baseline KMeans geográfico con k = 4, 5 y 6 (`--k` cambia los valores) y registra los runs en MLflow.
+Para ejecutar P3 mediante MLflow Project, después de la ingesta y de generar el manifiesto:
 
-Sus fechas, franjas, umbrales y semilla están en `CONFIG_P3` de `mibici/config.py`.
+```powershell
+mlflow run . -e train -P question=p3 --env-manager local
+mlflow run . -e train -P question=p3 -P model=kmeans -P hyperparameters=k=5,n_init=30 --env-manager local
+```
+
+Las fechas de entrenamiento y evaluación, franjas horarias, umbrales de limpieza, semilla, valores de k y número de inicializaciones están en `CONFIG_P3` de `mibici/config.py`. También se pueden cambiar los valores de k desde la CLI directa, por ejemplo `python -m mibici.modeling.train_p3 --k 5`.
 
 ### Pruebas, lint y formato
 

@@ -19,6 +19,7 @@ Uso desde la raíz del repositorio::
 La interfaz de MLflow se abre con ``mlflow ui --backend-store-uri sqlite:///mlflow.db``.
 """
 
+from dataclasses import replace
 from pathlib import Path
 import subprocess
 import tempfile
@@ -208,8 +209,13 @@ def main(
     perfiles_dir: Path = CONFIG.interim_data_dir,
     tracking_uri: str = CONFIG_P3.tracking_uri,
     registrar: Annotated[bool, typer.Option(help="Escribir los runs en MLflow.")] = True,
+    model: str = CONFIG_P3.model,
+    n_init: int | None = None,
 ):
     """Entrena el baseline geográfico de P3 y registra un run de MLflow por cada k."""
+    if model != CONFIG_P3.model:
+        raise ValueError(f"Unsupported P3 model: {model}")
+    cfg = replace(CONFIG_P3, n_init=n_init) if n_init is not None else CONFIG_P3
     ds = cargar_dataset(perfiles_dir)
     logger.info(
         f"data_version {ds.data_version} | entrenamiento {len(ds.entrenamiento)} | "
@@ -217,17 +223,15 @@ def main(
     )
     if registrar:
         mlflow.set_tracking_uri(tracking_uri)
-        if mlflow.get_experiment_by_name(CONFIG_P3.experimento) is None:
-            mlflow.create_experiment(
-                CONFIG_P3.experimento, artifact_location=CONFIG_P3.artifact_location
-            )
-        mlflow.set_experiment(CONFIG_P3.experimento)
-    for kk in k or CONFIG_P3.k_comparacion:
-        km, m = entrenar_baseline(ds, kk)
+        if mlflow.get_experiment_by_name(cfg.experimento) is None:
+            mlflow.create_experiment(cfg.experimento, artifact_location=cfg.artifact_location)
+        mlflow.set_experiment(cfg.experimento)
+    for kk in k or cfg.k_comparacion:
+        km, m = entrenar_baseline(ds, kk, cfg)
         resumen = " | ".join(f"{n} {v:.3f}" for n, v in m.items())
         logger.info(f"k={kk}: {resumen}")
         if registrar:
-            run_id = registrar_baseline(ds, kk, km, m)
+            run_id = registrar_baseline(ds, kk, km, m, cfg)
             logger.success(f"Run registrado: p3-baseline-kmeans-geo-k{kk} ({run_id[:8]})")
 
 

@@ -389,6 +389,8 @@ def main(argv: list[str] | None = None) -> None:
     """Punto de entrada: python -m mibici.modeling.train_p2 --niveles 0.5 0.3 0.7."""
     ap = argparse.ArgumentParser(description="Experimento base P2 en MLflow")
     ap.add_argument("--panel", default=str(CONFIG_P2.panel_path))
+    ap.add_argument("--model", choices=(CONFIG_P2.model,), default=CONFIG_P2.model)
+    ap.add_argument("--hyperparameters", default="{}")
     ap.add_argument(
         "--niveles",
         type=float,
@@ -404,6 +406,16 @@ def main(argv: list[str] | None = None) -> None:
         "--sin-afinar", action="store_true", help="usa la primera configuracion de la rejilla"
     )
     args = ap.parse_args(argv)
+    try:
+        hyperparameters = json.loads(args.hyperparameters)
+    except json.JSONDecodeError as exc:
+        ap.error(f"--hyperparameters must be valid JSON: {exc}")
+    if not isinstance(hyperparameters, dict):
+        ap.error("--hyperparameters must be a JSON object")
+    first_grid = CONFIG_P2.rejilla[0]
+    unsupported = set(hyperparameters).difference(first_grid)
+    if unsupported:
+        ap.error(f"Unsupported {args.model} hyperparameters: {sorted(unsupported)}")
 
     mlflow.set_tracking_uri(args.tracking_uri)
     if mlflow.get_experiment_by_name(CONFIG_P2.experimento) is None:
@@ -428,7 +440,10 @@ def main(argv: list[str] | None = None) -> None:
         "git_dirty": str(sucio),
     }
 
-    if args.sin_afinar:
+    if hyperparameters:
+        params_hgb = first_grid | hyperparameters
+        rejilla = []
+    elif args.sin_afinar:
         params_hgb, rejilla = CONFIG_P2.rejilla[0], []
     else:
         params_hgb, rejilla = afinar(preparar(args.niveles[0], panel), args.semilla)
