@@ -40,6 +40,7 @@ ETIQUETAS_BASE = {
 }  # fmt: skip
 ETIQUETAS_MODELO = {"modelo", "model_family", "stage_of_work"}
 VERSION = "abc123def456"
+BUSQUEDA_INI50 = {"p2_busqueda_ini50", "p2_busqueda_ini50_c1", "p2_busqueda_ini50_c2"}
 RUNS_INI50 = {
     "p2_baseline_mayoritaria_ini50",
     "p2_baseline_semana_previa_ini50",
@@ -383,8 +384,10 @@ def test_afinar_en_empate_se_queda_con_la_primera_configuracion(monkeypatch):
     partes = t2.preparar(0.5, hacer_panel())
 
     class Constante:
-        def predict(self, x):
-            return np.full(len(x), "segura", dtype=object)
+        classes_ = np.array(["segura", "sin_anclajes", "sin_bicicletas"], dtype=object)
+
+        def predict_proba(self, x):
+            return np.tile([1.0, 0.0, 0.0], (len(x), 1))
 
     monkeypatch.setattr(t2, "ajustar", lambda train, params, semilla: Constante())
     mejor, rejilla = t2.afinar(partes, 29)
@@ -478,8 +481,9 @@ def test_correr_nivel_regresa_resultados_y_ajusta_el_modelo_final_con_train(tmp_
 
 
 def test_main_crea_los_runs_esperados(corrida_completa):
-    # el primer nivel trae los cinco runs; los demas niveles no traen el HGB sin pesos
-    assert set(corrida_completa["runs"]) == RUNS_INI50 | {
+    # el primer nivel trae los cinco runs y la busqueda (padre mas un hijo por combinacion);
+    # los demas niveles no traen ni el HGB sin pesos ni la busqueda
+    assert set(corrida_completa["runs"]) == RUNS_INI50 | BUSQUEDA_INI50 | {
         "p2_baseline_mayoritaria_ini30",
         "p2_baseline_semana_previa_ini30",
         "p2_baseline_persistencia_ini30",
@@ -526,6 +530,8 @@ def test_main_etiqueta_cada_run_con_la_convencion_del_equipo(corrida_completa):
 
 def test_main_registra_metricas_de_test_y_de_estaciones_nuevas(corrida_completa):
     for nombre, run in corrida_completa["runs"].items():
+        if run.data.tags["stage_of_work"] == "search":
+            continue  # los runs de busqueda solo traen metricas de validacion
         metricas = run.data.metrics
         for prefijo in ("test", "test_nuevas"):
             assert f"{prefijo}_macro_f1" in metricas, nombre
@@ -586,6 +592,37 @@ def test_main_afina_solo_con_el_primer_nivel_y_guarda_el_json_de_resultados(corr
         )
 
 
+def test_main_registra_la_busqueda_como_runs_anidados(corrida_completa):
+    runs, resultados = corrida_completa["runs"], corrida_completa["resultados"]
+    padre = runs["p2_busqueda_ini50"]
+    hijos = {n: r for n, r in runs.items() if n.startswith("p2_busqueda_ini50_c")}
+    assert set(hijos) == BUSQUEDA_INI50 - {"p2_busqueda_ini50"}
+    assert padre.data.tags["stage_of_work"] == "search"
+    assert "mlflow.parentRunId" not in padre.data.tags  # el padre es de primer nivel
+    for i, (nombre, hijo) in enumerate(sorted(hijos.items()), start=1):
+        t = hijo.data.tags
+        assert t["mlflow.parentRunId"] == padre.info.run_id, nombre
+        assert t["stage_of_work"] == "search" and t["model_family"] == "hist_gradient_boosting"
+        assert ETIQUETAS_BASE <= set(t)
+        # cada hijo registra su combinacion, val_macro_f1, las metricas de riesgo y fit_seconds
+        combinacion = REJILLA_CORTA[i - 1]
+        assert {k: float(hijo.data.params[k]) for k in combinacion} == pytest.approx(combinacion)
+        m = hijo.data.metrics
+        assert m["val_macro_f1"] == pytest.approx(resultados["rejilla"][i - 1]["val_macro_f1"])
+        for c in t2.RIESGO:
+            assert f"val_recall_{c}" in m and f"val_pr_auc_{c}" in m
+        assert m["fit_seconds"] > 0
+    # el padre guarda la mejor combinacion (por val macro F1) y la rejilla completa
+    mejor = resultados["params_hgb"]
+    assert {k: float(padre.data.params[f"mejor_{k}"]) for k in mejor} == pytest.approx(mejor)
+    mejor_f1 = max(h.data.metrics["val_macro_f1"] for h in hijos.values())
+    assert padre.data.metrics["val_macro_f1"] == pytest.approx(mejor_f1)
+    cliente = corrida_completa["cliente"]
+    assert {a.path for a in cliente.list_artifacts(padre.info.run_id)} == {
+        "p2_rejilla_validacion.json"
+    }
+
+
 def test_main_registra_artefactos_por_run(corrida_completa):
     cliente, runs = corrida_completa["cliente"], corrida_completa["runs"]
 
@@ -622,7 +659,7 @@ def test_main_con_sin_afinar_usa_la_primera_configuracion(corrida_sin_afinar):
     r = corrida_sin_afinar["resultados"]
     assert r["params_hgb"] == REJILLA_CORTA[0]
     assert r["rejilla"] == []
-    assert set(corrida_sin_afinar["runs"]) == RUNS_INI50
+    assert set(corrida_sin_afinar["runs"]) == RUNS_INI50  # sin busqueda no hay runs anidados
     hgb = corrida_sin_afinar["runs"]["p2_hgb_balanceado_ini50"]
     assert "val_macro_f1" not in hgb.data.metrics
     nombres = {a.path for a in corrida_sin_afinar["cliente"].list_artifacts(hgb.info.run_id)}
@@ -643,6 +680,10 @@ def test_main_con_hiperparametros_no_busca_en_la_rejilla_pero_evalua_esa_configu
     assert p["max_iter"] == "12" and p["l2_regularization"] == "0.5"
     assert p["max_leaf_nodes"] == "7"
     assert hgb.data.metrics["val_macro_f1"] == pytest.approx(r["rejilla"][0]["val_macro_f1"])
+    # la busqueda de una sola combinacion tambien queda como padre con un hijo
+    nombres = set(corrida_con_hiperparametros["runs"])
+    assert {"p2_busqueda_ini50", "p2_busqueda_ini50_c1"} <= nombres
+    assert "p2_busqueda_ini50_c2" not in nombres
     cliente = corrida_con_hiperparametros["cliente"]
     assert "p2_rejilla_validacion.json" in {
         a.path for a in cliente.list_artifacts(hgb.info.run_id)

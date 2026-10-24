@@ -7,9 +7,11 @@ Ejemplo:
 from __future__ import annotations
 
 import argparse
+from contextlib import nullcontext
 import json
 from pathlib import Path
 import subprocess
+import time
 
 from loguru import logger
 import matplotlib
@@ -55,6 +57,11 @@ RANGO_DATOS = (
     f"{CONFIG.download_data_start_year}-{CONFIG.download_data_start_month:02d}.."
     f"{CONFIG.download_data_end_year}-{CONFIG.download_data_end_month:02d}"
 )
+
+
+def sufijo_nivel(nivel: float) -> str:
+    """Sufijo de los nombres de run y de archivo de un nivel inicial, por ejemplo ini50."""
+    return f"ini{round(nivel * 100)}"
 
 
 def git_commit() -> tuple[str, bool]:
@@ -162,24 +169,53 @@ def ajustar(
 
 
 def afinar(
-    partes: dict, semilla: int, rejilla: tuple[dict, ...] | list[dict] | None = None
+    partes: dict,
+    semilla: int,
+    rejilla: tuple[dict, ...] | list[dict] | None = None,
+    nombre_padre: str | None = None,
+    tags: dict | None = None,
 ) -> tuple[dict, list[dict]]:
     """Elige hiperparametros por macro F1 en validacion, entrenando solo con fit.
 
     Por defecto recorre CONFIG_P2.rejilla; con una rejilla de una sola configuracion solo
     la evalua. Regresa la configuracion elegida y la rejilla con su val_macro_f1.
+    Con nombre_padre registra la busqueda en MLflow como corridas anidadas: un run padre con
+    la mejor combinacion y un hijo por combinacion (parametros, metricas de validacion y
+    fit_seconds). tags son las etiquetas de todos esos runs.
     """
     por_est, por_hora = fp.stats_estacion(partes["fit"])
     fit = fp.unir_stats(partes["fit"], por_est, por_hora)
     val = fp.unir_stats(partes["val"], por_est, por_hora)
     resultados = []
-    for params in CONFIG_P2.rejilla if rejilla is None else rejilla:
-        modelo = ajustar(fit, params, semilla)
-        f1 = macro_f1(val["objetivo"], modelo.predict(val[fp.FEATURES]))
-        resultados.append({**params, "val_macro_f1": float(f1)})
-        logger.info("Rejilla {} -> val_macro_f1 {:.4f}", params, f1)
-    mejor = max(resultados, key=lambda r: r["val_macro_f1"])
-    return {k: v for k, v in mejor.items() if k != "val_macro_f1"}, resultados
+    registrando = nombre_padre is not None
+    with mlflow.start_run(run_name=nombre_padre) if registrando else nullcontext():
+        if registrando:
+            mlflow.set_tags(tags or {})
+        for i, params in enumerate(CONFIG_P2.rejilla if rejilla is None else rejilla, start=1):
+            inicio = time.perf_counter()
+            modelo = ajustar(fit, params, semilla)
+            segundos = time.perf_counter() - inicio
+            clases, proba, pred = predecir(modelo, val)
+            mets = metricas(val["objetivo"], pred, proba, clases, "val")
+            f1 = mets["val_macro_f1"]
+            resultados.append({**params, "val_macro_f1": f1})
+            logger.info("Rejilla {} -> val_macro_f1 {:.4f}", params, f1)
+            if registrando:
+                registrar(
+                    f"{nombre_padre}_c{i}",
+                    tags or {},
+                    {"combinacion": i, "semilla": semilla} | params,
+                    mets | {"fit_seconds": segundos},
+                    [],
+                    anidado=True,
+                )
+        mejor = max(resultados, key=lambda r: r["val_macro_f1"])
+        elegida = {k: v for k, v in mejor.items() if k != "val_macro_f1"}
+        if registrando:
+            mlflow.log_params({f"mejor_{k}": v for k, v in elegida.items()})
+            mlflow.log_metric("val_macro_f1", mejor["val_macro_f1"])
+            mlflow.log_dict(resultados, "p2_rejilla_validacion.json")
+    return elegida, resultados
 
 
 def predecir(
@@ -260,10 +296,18 @@ def etiquetas_modelo(modelo: str, familia: str, etapa: str) -> dict[str, str]:
 
 
 def registrar(
-    nombre: str, tags: dict, params: dict, mets: dict[str, float], artefactos: list[Path]
+    nombre: str,
+    tags: dict,
+    params: dict,
+    mets: dict[str, float],
+    artefactos: list[Path],
+    anidado: bool = False,
 ) -> None:
-    """Crea un run en MLflow con nombre descriptivo, etiquetas, parametros, metricas y artefactos."""
-    with mlflow.start_run(run_name=nombre):
+    """Crea un run en MLflow con nombre descriptivo, etiquetas, parametros, metricas y artefactos.
+
+    Con anidado el run cuelga del run activo (por ejemplo, el padre de una busqueda).
+    """
+    with mlflow.start_run(run_name=nombre, nested=anidado):
         mlflow.set_tags(tags)
         mlflow.log_params(params)
         mlflow.log_metrics(mets)
@@ -319,7 +363,7 @@ def correr_nivel(
     train = fp.unir_stats(partes["train"], por_est, por_hora)
     test = fp.unir_stats(partes["test"], por_est, por_hora)
     nuevas = test["primer_dia"] >= pd.Timestamp(CORTES["test_inicio"])
-    sufijo = f"ini{round(nivel * 100)}"
+    sufijo = sufijo_nivel(nivel)
     figs = Path(args.figuras)
     figs.mkdir(parents=True, exist_ok=True)
     n_nuevas = int(test.loc[nuevas, "estacion"].nunique())
@@ -515,17 +559,30 @@ def main(argv: list[str] | None = None) -> None:
         "git_dirty": str(sucio),
     }
 
+    nombre_busqueda = f"p2_busqueda_{sufijo_nivel(args.niveles[0])}"
+    tags_busqueda = tags_base | etiquetas_modelo(
+        "hist_gradient_boosting_busqueda", FAMILIA_HGB, "search"
+    )
     if hyperparameters:
         # sin busqueda: se evalua en validacion solo esta configuracion, para registrar su
         # val_macro_f1 y dejar la rejilla de un solo elemento
         configuracion = first_grid | hyperparameters
         params_hgb, rejilla = afinar(
-            preparar(args.niveles[0], panel), args.semilla, [configuracion]
+            preparar(args.niveles[0], panel),
+            args.semilla,
+            [configuracion],
+            nombre_padre=nombre_busqueda,
+            tags=tags_busqueda,
         )
     elif args.sin_afinar:
         params_hgb, rejilla = CONFIG_P2.rejilla[0], []
     else:
-        params_hgb, rejilla = afinar(preparar(args.niveles[0], panel), args.semilla)
+        params_hgb, rejilla = afinar(
+            preparar(args.niveles[0], panel),
+            args.semilla,
+            nombre_padre=nombre_busqueda,
+            tags=tags_busqueda,
+        )
     logger.info("Parametros elegidos: {}", params_hgb)
 
     todo = {}
