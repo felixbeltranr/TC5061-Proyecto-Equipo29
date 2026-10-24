@@ -78,10 +78,10 @@ El `MLproject` de la raíz define dos entry points. El entorno usa las dependenc
 mlflow run . -e ingest --env-manager local
 mlflow run . -e train -P question=p1 -P model=hgb_poisson -P hyperparameters=max_iter=300 --env-manager local
 mlflow run . -e train -P question=p2 -P model=hist_gradient_boosting -P hyperparameters=max_iter=300,max_leaf_nodes=63 --env-manager local
-mlflow run . -e train -P question=p3 -P model=kmeans -P hyperparameters=k=5,n_init=30 --env-manager local
+mlflow run . -e train -P question=p3 -P model=seleccion --env-manager local
 ```
 
-Ejecuta `ingest` antes de `train`. El entry point `train` genera las features del problema indicado (`p1`, `p2` o `p3`) y después llama su entrenador configurado. Los modelos disponibles actualmente son P1 `auto`, `poisson` y `hgb_poisson`; P2 `hist_gradient_boosting`; y P3 `kmeans`. `auto` usa la selección configurada para P1. `hyperparameters` acepta pares separados por coma: P1 Poisson admite `alpha`; P1 HGB Poisson y P2 admiten `learning_rate`, `max_leaf_nodes`, `max_iter` y `l2_regularization`; P3 admite `k` y `n_init`. Por ejemplo, Random Forest y `n_estimators` no son compatibles con los modelos actuales.
+Ejecuta `ingest` antes de `train`. El entry point `train` genera las features del problema indicado (`p1`, `p2` o `p3`) y después llama su entrenador configurado. Los modelos disponibles actualmente son P1 `auto`, `poisson` y `hgb_poisson`; P2 `hist_gradient_boosting`; y P3 `kmeans_geo`, `kmeans_uso`, `gmm_uso` y `seleccion` (flujo completo, ver la sección de P3). `auto` usa la selección configurada para P1. `hyperparameters` acepta pares separados por coma: P1 Poisson admite `alpha`; P1 HGB Poisson y P2 admiten `learning_rate`, `max_leaf_nodes`, `max_iter` y `l2_regularization`; P3 admite `k` y `n_init` (`kmeans_geo` y `kmeans_uso`), `n_components`, `covariance_type` y `n_init` (`gmm_uso`), o `buscar=1` para la búsqueda con runs anidados. Por ejemplo, Random Forest y `n_estimators` no son compatibles con los modelos actuales.
 
 Los ejemplos incluyen `--env-manager local` para reutilizar el entorno virtual activo. Si no vas a usar un entorno virtual ya activado y quieres que MLflow gestione el entorno del proyecto, puedes omitir esa opción.
 
@@ -169,21 +169,53 @@ mlflow run . -e train -P question=p2 -P model=hist_gradient_boosting -P hyperpar
 
 ### P3 · grupos de estaciones
 
-P3 agrupa estaciones con perfiles de uso similares y compara los grupos con su ubicación. `features_p3` lee el parquet combinado, construye los perfiles de entrenamiento y evaluación, selecciona variables de uso y los guarda en `data/interim`. `train_p3` entrena el baseline geográfico `KMeans` para k = 4, 5 y 6, calcula métricas de clustering en el espacio de uso y registra un run por cada valor de k.
+P3 agrupa estaciones con perfiles de uso similares y los compara con su ubicación. `features_p3` lee el parquet combinado, construye los perfiles de uso por estación del periodo de entrenamiento (enero 2025 a abril 2026) y del de evaluación (mayo a septiembre 2026) y los guarda en `data/interim`. Todo lo que se elige (variables, hiperparámetros y campeón) usa solo el periodo de entrenamiento; el de evaluación solo se reporta.
 
-```bash
-python -m mibici.features_p3
-python -m mibici.modeling.train_p3
-```
-
-Para ejecutar P3 mediante MLflow Project, después de la ingesta y de generar el manifiesto:
+Reproducir el modelo elegido desde un clon limpio, después de `ingest` y de generar el manifiesto:
 
 ```powershell
-mlflow run . -e train -P question=p3 --env-manager local
-mlflow run . -e train -P question=p3 -P model=kmeans -P hyperparameters=k=5,n_init=30 --env-manager local
+mlflow run . -e train -P question=p3 -P model=seleccion --env-manager local
 ```
 
-Las fechas de entrenamiento y evaluación, franjas horarias, umbrales de limpieza, semilla, valores de k y número de inicializaciones están en `CONFIG_P3` de `mibici/config.py`. También se pueden cambiar los valores de k desde la CLI directa, por ejemplo `python -m mibici.modeling.train_p3 --k 5`.
+Ese comando (unos 2 minutos) corre todo el flujo de `train_p3.seleccionar`:
+
+1. **Baseline** `kmeans_geo`: KMeans sobre la ubicación (k = 5).
+2. **Búsquedas con runs anidados** (un run padre `p3-busqueda-<modelo>` y un hijo por combinación): `kmeans_uso` con k de 3 a 8 y `gmm_uso` con 3 a 8 componentes y cuatro tipos de covarianza.
+3. **Candidatas**: C1 KMeans de uso con k = 5 (referencia de la entrega 1), C2 el mejor KMeans de la búsqueda y C3 la mejor GaussianMixture, reentrenadas con todo el periodo de entrenamiento.
+4. **Selección y registro** del campeón y del retador en el Model Registry.
+
+Los modelos de uso (`mibici/modeling/modelos_p3.py`) son pipelines de scikit-learn que reciben las 12 variables de uso, eligen por VIF las que no son redundantes, las estandarizan y agrupan; el grupo 0 es el de menor uso.
+
+**Validación por estaciones** (`busqueda_p3.py`): 5 particiones reproducibles de las estaciones de entrenamiento; en cada una se entrena con el 80 % y se valida con el 20 % reservado, con la selección por VIF y el escalado aprendidos solo con el 80 %. Las métricas `val_` son el promedio de las particiones (silueta, Davies-Bouldin y Calinski-Harabasz en el espacio de uso) y `val_ari_estabilidad` es el ARI promedio entre las asignaciones de los cinco modelos. Limitación: la validación separa estaciones, no periodos, así que mide si los grupos se sostienen en estaciones no vistas del mismo periodo.
+
+**Selección del campeón** (`seleccion_p3.py`): ranking por mayor silueta de validación; a menos de 0.01 de la mejor decide la estabilidad (ARI), luego Davies-Bouldin y luego la menor complejidad. El campeón es la primera del ranking que cumple los criterios de interpretabilidad fijados antes de correr: cada grupo con al menos 5 % de las estaciones (I1), grupos distinguibles por al menos 0.5 desviaciones estándar (I2), nombrables sin repetir nombre (I3) y al menos un grupo que se vacía y otro que se llena en la mañana (U1). La tabla queda en `data/criterios_interpretabilidad.csv` de cada candidata.
+
+**Artefactos de las candidatas**: `model/` (pipeline con firma y ejemplo de entrada), `data/` (manifiesto, asignación de estaciones, perfil de uso por grupo, bitácora de limpieza y criterios), `plots/` (mapa y perfiles de los grupos) y `config/config_corrida.json`; los perfiles se registran con `log_input`. Solo hay datos por estación, ninguno de las personas usuarias.
+
+#### Campeón de P3 en el Model Registry
+
+El modelo registrado es `mibici-equipo29-p3-grupos`. Usamos **aliases** en lugar de etapas, porque las etapas están en desuso en MLflow y un alias se mueve sin crear estados intermedios: `champion` apunta a la versión en producción y `challenger` a la siguiente candidata que cumple los criterios, lista para reemplazarla. Cada versión lleva su descripción y su linaje en etiquetas: run de origen, `git_commit`, `data_version`, experimento, candidata, posición en el ranking y motivo. Cada corrida de `model=seleccion` crea versiones nuevas y mueve ambos aliases.
+
+```python
+import mlflow
+
+mlflow.set_tracking_uri("sqlite:///mlflow.db")  # el almacén donde se corrió la selección
+modelo = mlflow.pyfunc.load_model("models:/mibici-equipo29-p3-grupos@champion")
+grupos = modelo.predict(perfiles)  # un grupo por estación
+```
+
+`perfiles` es un `DataFrame` con las 12 variables de `CONFIG_P3.prioridad_variables` como `float64` (la firma las lista). El modelo usa clases de `mibici.modeling.modelos_p3`, así que requiere el paquete `mibici` instalado (`requirements.txt` lo instala con `-e .`).
+
+Otros comandos (por separado, con `python -m mibici.modeling.train_p3` o con `mlflow run`):
+
+```powershell
+mlflow run . -e train -P question=p3 --env-manager local                                      # baseline k = 4, 5 y 6
+mlflow run . -e train -P question=p3 -P model=kmeans_uso -P hyperparameters=k=4 --env-manager local
+mlflow run . -e train -P question=p3 -P model=gmm_uso -P hyperparameters=n_components=4,covariance_type=diag --env-manager local
+mlflow run . -e train -P question=p3 -P model=kmeans_uso -P hyperparameters=buscar=1 --env-manager local
+```
+
+Las fechas, franjas horarias, umbrales de limpieza y de VIF, semilla, rejillas de búsqueda, particiones, criterios y nombre del modelo registrado están en `CONFIG_P3` de `mibici/config.py`.
 
 ### Pruebas, lint y formato
 
