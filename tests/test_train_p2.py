@@ -356,6 +356,12 @@ def test_ajustar_usa_pesos_balanceados_semilla_y_sin_parada_temprana():
     assert p["max_iter"] == 20 and p["max_leaf_nodes"] == 7
     # las clases quedan en orden alfabetico, distinto de fp.CLASES
     assert list(modelo.classes_) == ["segura", "sin_anclajes", "sin_bicicletas"]
+    # sin pesos solo cambia class_weight; el resto de la configuracion es la misma
+    sin_pesos = t2.ajustar(fit, REJILLA_CORTA[0], 7, balanceado=False).get_params()
+    assert sin_pesos["class_weight"] is None
+    assert {k: v for k, v in sin_pesos.items() if k != "class_weight"} == {
+        k: v for k, v in p.items() if k != "class_weight"
+    }
 
 
 def test_afinar_elige_por_macro_f1_de_validacion_y_regresa_la_rejilla():
@@ -423,9 +429,9 @@ def test_correr_nivel_regresa_resultados_y_ajusta_el_modelo_final_con_train(tmp_
     vistos = []
     original = t2.ajustar
 
-    def espiar(train, params, semilla):
+    def espiar(train, params, semilla, **pesos):
         vistos.append(train["ts_objetivo"].max())
-        return original(train, params, semilla)
+        return original(train, params, semilla, **pesos)
 
     monkeypatch.setattr(t2, "ajustar", espiar)
     salida = t2.correr_nivel(
@@ -446,10 +452,11 @@ def test_correr_nivel_regresa_resultados_y_ajusta_el_modelo_final_con_train(tmp_
         "hgb",
         "hgb_sin_pesos",
     ]
-    # el HGB final usa train completo (fit + val); el de sin pesos no pasa por ajustar
-    assert len(vistos) == 1
-    assert pd.Timestamp(CORTES_CHICOS["val_inicio"]) <= vistos[0]
-    assert vistos[0] < pd.Timestamp(CORTES_CHICOS["test_inicio"])
+    # los dos HGB finales (con y sin pesos) usan train completo (fit + val)
+    assert len(vistos) == 2
+    for ultimo in vistos:
+        assert pd.Timestamp(CORTES_CHICOS["val_inicio"]) <= ultimo
+        assert ultimo < pd.Timestamp(CORTES_CHICOS["test_inicio"])
     assert "val_macro_f1" not in salida["hgb"]  # sin rejilla no se reporta
     figuras = {p.name for p in (tmp_path / "figuras").iterdir()}
     assert {

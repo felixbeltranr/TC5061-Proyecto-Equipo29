@@ -139,10 +139,15 @@ def preparar(nivel: float, panel: pd.DataFrame) -> dict[str, pd.DataFrame]:
     return particionar(df)
 
 
-def ajustar(train: pd.DataFrame, params: dict, semilla: int) -> HistGradientBoostingClassifier:
-    """Entrena HistGradientBoosting con pesos de clase balanceados."""
+def ajustar(
+    train: pd.DataFrame, params: dict, semilla: int, balanceado: bool = True
+) -> HistGradientBoostingClassifier:
+    """Entrena HistGradientBoosting; con balanceado usa pesos de clase balanceados."""
     modelo = HistGradientBoostingClassifier(
-        class_weight="balanced", random_state=semilla, early_stopping=False, **params
+        class_weight="balanced" if balanceado else None,
+        random_state=semilla,
+        early_stopping=False,
+        **params,
     )
     modelo.fit(train[fp.FEATURES], train["objetivo"])
     return modelo
@@ -163,6 +168,78 @@ def afinar(partes: dict, semilla: int) -> tuple[dict, list[dict]]:
     return {k: v for k, v in mejor.items() if k != "val_macro_f1"}, resultados
 
 
+def predecir(
+    modelo: HistGradientBoostingClassifier, test: pd.DataFrame
+) -> tuple[list[str], np.ndarray, np.ndarray]:
+    """Clases del modelo, probabilidades y clase predicha (la de mayor probabilidad) en test."""
+    clases = list(modelo.classes_)
+    proba = modelo.predict_proba(test[fp.FEATURES])
+    pred = np.array(clases, dtype=object)[proba.argmax(1)]
+    return clases, proba, pred
+
+
+def metricas_test_y_nuevas(
+    test: pd.DataFrame,
+    nuevas: pd.Series,
+    pred: np.ndarray,
+    proba: np.ndarray | None = None,
+    clases: list[str] = fp.CLASES,
+) -> dict[str, float]:
+    """Metricas en todo test (test_*) y solo en las estaciones nuevas (test_nuevas_*).
+
+    nuevas es la mascara de filas de estaciones que empiezan en el periodo de prueba.
+    """
+    mascara = nuevas.to_numpy()
+    m = metricas(test["objetivo"], pred, proba, clases, "test")
+    return m | metricas(
+        test.loc[nuevas, "objetivo"],
+        pred[mascara],
+        None if proba is None else proba[mascara],
+        clases,
+        "test_nuevas",
+    )
+
+
+def guardar_importancia(
+    modelo: HistGradientBoostingClassifier,
+    test: pd.DataFrame,
+    semilla: int,
+    figs: Path,
+    sufijo: str,
+) -> list[Path]:
+    """Importancia por permutacion en una muestra de test; guarda el CSV y la figura."""
+    muestra = test.sample(min(CONFIG_P2.muestra_importancia, len(test)), random_state=semilla)
+    imp = permutation_importance(
+        modelo,
+        muestra[fp.FEATURES],
+        muestra["objetivo"],
+        scoring="f1_macro",
+        n_repeats=CONFIG_P2.repeticiones_importancia,
+        random_state=semilla,
+        n_jobs=1,
+    )
+    imp_df = pd.DataFrame(
+        {
+            "feature": fp.FEATURES,
+            "importancia_media": imp.importances_mean,
+            "importancia_std": imp.importances_std,
+        }
+    ).sort_values("importancia_media", ascending=False)
+    ruta_imp = figs / f"p2_importancia_permutacion_{sufijo}.csv"
+    imp_df.to_csv(ruta_imp, index=False)
+    fig, ax = plt.subplots(figsize=(7, 6))
+    imp_df.iloc[::-1].plot.barh(
+        x="feature", y="importancia_media", xerr="importancia_std", ax=ax, legend=False
+    )
+    ax.set_xlabel("Caida en macro F1 (test, muestra)")
+    ax.set_title(f"Importancia por permutacion (inicio {sufijo})")
+    fig.tight_layout()
+    ruta_fig = figs / f"p2_importancia_permutacion_{sufijo}.png"
+    fig.savefig(ruta_fig, dpi=120)
+    plt.close(fig)
+    return [ruta_imp, ruta_fig]
+
+
 def registrar(
     nombre: str, tags: dict, params: dict, mets: dict[str, float], artefactos: list[Path]
 ) -> None:
@@ -173,6 +250,37 @@ def registrar(
         mlflow.log_metrics(mets)
         for a in artefactos:
             mlflow.log_artifact(str(a))
+
+
+def parametros_comunes(
+    nivel: float,
+    semilla: int,
+    manifiesto: dict,
+    resumen: dict,
+    n_train: int,
+    n_test: int,
+    n_nuevas: int,
+) -> dict:
+    """Parametros que comparten todos los runs de un nivel inicial."""
+    return {
+        "nivel_inicial": nivel,
+        "umbral_bajo": CONFIG_P2.umbral_bajo,
+        "umbral_alto": CONFIG_P2.umbral_alto,
+        "horizonte_horas": CONFIG_P2.horizonte_horas,
+        "horas_objetivo": f"{min(CONFIG_P2.horas_etiqueta)}-{max(CONFIG_P2.horas_etiqueta)}",
+        "hora_inicio_dia_servicio": CONFIG_P2.hora_inicio_servicio,
+        "train_rango": rango_meses(CORTES["train_inicio"], CORTES["test_inicio"]),
+        "val_rango": rango_meses(CORTES["val_inicio"], CORTES["test_inicio"]),
+        "test_rango": rango_meses(CORTES["test_inicio"], CORTES["test_fin"]),
+        "semilla": semilla,
+        "data_version": manifiesto["version"],
+        "n_train": n_train,
+        "n_test": n_test,
+        "estaciones_modeladas": resumen["estaciones_modeladas"],
+        "estaciones_sin_nomenclatura": resumen["estaciones_sin_nomenclatura"],
+        "estaciones_capacidad_cero": resumen["estaciones_capacidad_cero"],
+        "estaciones_nuevas_test": n_nuevas,
+    }
 
 
 def correr_nivel(
@@ -197,25 +305,9 @@ def correr_nivel(
     figs.mkdir(parents=True, exist_ok=True)
     n_nuevas = int(test.loc[nuevas, "estacion"].nunique())
 
-    params_comunes = {
-        "nivel_inicial": nivel,
-        "umbral_bajo": CONFIG_P2.umbral_bajo,
-        "umbral_alto": CONFIG_P2.umbral_alto,
-        "horizonte_horas": CONFIG_P2.horizonte_horas,
-        "horas_objetivo": f"{min(CONFIG_P2.horas_etiqueta)}-{max(CONFIG_P2.horas_etiqueta)}",
-        "hora_inicio_dia_servicio": CONFIG_P2.hora_inicio_servicio,
-        "train_rango": rango_meses(CORTES["train_inicio"], CORTES["test_inicio"]),
-        "val_rango": rango_meses(CORTES["val_inicio"], CORTES["test_inicio"]),
-        "test_rango": rango_meses(CORTES["test_inicio"], CORTES["test_fin"]),
-        "semilla": args.semilla,
-        "data_version": manifiesto["version"],
-        "n_train": len(train),
-        "n_test": len(test),
-        "estaciones_modeladas": resumen["estaciones_modeladas"],
-        "estaciones_sin_nomenclatura": resumen["estaciones_sin_nomenclatura"],
-        "estaciones_capacidad_cero": resumen["estaciones_capacidad_cero"],
-        "estaciones_nuevas_test": n_nuevas,
-    }
+    params_comunes = parametros_comunes(
+        nivel, args.semilla, manifiesto, resumen, len(train), len(test), n_nuevas
+    )
     dist = test["objetivo"].value_counts(normalize=True)
     dist_m = {f"test_prop_{c}": float(dist.get(c, 0)) for c in fp.CLASES}
     salida = {}
@@ -223,10 +315,7 @@ def correr_nivel(
     # baseline 1: clase mayoritaria del train
     mayoritaria = train["objetivo"].mode()[0]
     pred = np.full(len(test), mayoritaria, dtype=object)
-    m = metricas(test["objetivo"], pred, None, fp.CLASES, "test")
-    m |= metricas(
-        test.loc[nuevas, "objetivo"], pred[nuevas.to_numpy()], None, fp.CLASES, "test_nuevas"
-    )
+    m = metricas_test_y_nuevas(test, nuevas, pred)
     registrar(
         f"p2_baseline_mayoritaria_{sufijo}",
         tags_base | {"modelo": "baseline_mayoritaria"},
@@ -238,10 +327,7 @@ def correr_nivel(
 
     # baseline 2: misma clase a la misma hora la semana previa
     pred = test["baseline_semana"].fillna(mayoritaria).to_numpy()
-    m = metricas(test["objetivo"], pred, None, fp.CLASES, "test")
-    m |= metricas(
-        test.loc[nuevas, "objetivo"], pred[nuevas.to_numpy()], None, fp.CLASES, "test_nuevas"
-    )
+    m = metricas_test_y_nuevas(test, nuevas, pred)
     fig = figura_confusion(
         test["objetivo"],
         pred,
@@ -259,10 +345,7 @@ def correr_nivel(
 
     # baseline 3: persistencia, la clase estimada de la hora actual se repite en t+1
     pred = test["clase_actual"].to_numpy()
-    m = metricas(test["objetivo"], pred, None, fp.CLASES, "test")
-    m |= metricas(
-        test.loc[nuevas, "objetivo"], pred[nuevas.to_numpy()], None, fp.CLASES, "test_nuevas"
-    )
+    m = metricas_test_y_nuevas(test, nuevas, pred)
     fig = figura_confusion(
         test["objetivo"],
         pred,
@@ -280,17 +363,8 @@ def correr_nivel(
 
     # candidato: HistGradientBoosting con pesos balanceados
     modelo = ajustar(train, params_hgb, args.semilla)
-    clases = list(modelo.classes_)
-    proba = modelo.predict_proba(test[fp.FEATURES])
-    pred = np.array(clases, dtype=object)[proba.argmax(1)]
-    m = metricas(test["objetivo"], pred, proba, clases, "test")
-    m |= metricas(
-        test.loc[nuevas, "objetivo"],
-        pred[nuevas.to_numpy()],
-        proba[nuevas.to_numpy()],
-        clases,
-        "test_nuevas",
-    )
+    clases, proba, pred = predecir(modelo, test)
+    m = metricas_test_y_nuevas(test, nuevas, pred, proba, clases)
     if rejilla:
         m["val_macro_f1"] = max(r["val_macro_f1"] for r in rejilla)
     artefactos = [
@@ -304,36 +378,7 @@ def correr_nivel(
             figs / f"p2_cm_hgb_nuevas_{sufijo}.png",
         ),
     ]
-    muestra = test.sample(min(CONFIG_P2.muestra_importancia, len(test)), random_state=args.semilla)
-    imp = permutation_importance(
-        modelo,
-        muestra[fp.FEATURES],
-        muestra["objetivo"],
-        scoring="f1_macro",
-        n_repeats=CONFIG_P2.repeticiones_importancia,
-        random_state=args.semilla,
-        n_jobs=1,
-    )
-    imp_df = pd.DataFrame(
-        {
-            "feature": fp.FEATURES,
-            "importancia_media": imp.importances_mean,
-            "importancia_std": imp.importances_std,
-        }
-    ).sort_values("importancia_media", ascending=False)
-    ruta_imp = figs / f"p2_importancia_permutacion_{sufijo}.csv"
-    imp_df.to_csv(ruta_imp, index=False)
-    fig, ax = plt.subplots(figsize=(7, 6))
-    imp_df.iloc[::-1].plot.barh(
-        x="feature", y="importancia_media", xerr="importancia_std", ax=ax, legend=False
-    )
-    ax.set_xlabel("Caida en macro F1 (test, muestra)")
-    ax.set_title(f"Importancia por permutacion (inicio {sufijo})")
-    fig.tight_layout()
-    ruta_fig = figs / f"p2_importancia_permutacion_{sufijo}.png"
-    fig.savefig(ruta_fig, dpi=120)
-    plt.close(fig)
-    artefactos += [ruta_imp, ruta_fig]
+    artefactos += guardar_importancia(modelo, test, args.semilla, figs, sufijo)
     if rejilla:
         ruta_rej = figs / "p2_rejilla_validacion.json"
         ruta_rej.write_text(json.dumps(rejilla, indent=2))
@@ -355,21 +400,9 @@ def correr_nivel(
 
     if sin_pesos:
         # misma configuracion sin pesos de clase, para ver el efecto del balanceo
-        modelo = HistGradientBoostingClassifier(
-            random_state=args.semilla, early_stopping=False, **params_hgb
-        )
-        modelo.fit(train[fp.FEATURES], train["objetivo"])
-        clases = list(modelo.classes_)
-        proba = modelo.predict_proba(test[fp.FEATURES])
-        pred = np.array(clases, dtype=object)[proba.argmax(1)]
-        m = metricas(test["objetivo"], pred, proba, clases, "test")
-        m |= metricas(
-            test.loc[nuevas, "objetivo"],
-            pred[nuevas.to_numpy()],
-            proba[nuevas.to_numpy()],
-            clases,
-            "test_nuevas",
-        )
+        modelo = ajustar(train, params_hgb, args.semilla, balanceado=False)
+        clases, proba, pred = predecir(modelo, test)
+        m = metricas_test_y_nuevas(test, nuevas, pred, proba, clases)
         fig = figura_confusion(
             test["objetivo"],
             pred,
