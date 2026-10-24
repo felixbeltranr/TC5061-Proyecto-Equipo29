@@ -291,7 +291,7 @@ def test_metricas_con_valores_conocidos_y_clase_ausente():
     assert m["t_f1_sin_bicicletas"] == pytest.approx(2 / 3)
     assert m["t_precision_sin_anclajes"] == 0.0 and m["t_recall_sin_anclajes"] == 0.0
     assert m["t_macro_f1"] == pytest.approx((1 / 2 + 2 / 3 + 0) / 3)
-    # discutible: una clase ausente cuenta como 0 en el macro F1 (aqui 1/3 con todo acertado)
+    # una clase ausente cuenta como 0 en el macro F1 (aqui 1/3 con todo acertado)
     solo_segura = np.array(["segura", "segura"], dtype=object)
     assert t2.metricas(solo_segura, solo_segura, None, fp.CLASES, "t")["t_macro_f1"] == (
         pytest.approx(1 / 3)
@@ -381,6 +381,10 @@ def test_afinar_en_empate_se_queda_con_la_primera_configuracion(monkeypatch):
     mejor, rejilla = t2.afinar(partes, 29)
     assert rejilla[0]["val_macro_f1"] == rejilla[1]["val_macro_f1"]
     assert mejor == REJILLA_CORTA[0]
+    # afinar y metricas comparten el macro F1 con las tres clases fijas: si la validacion solo
+    # trae una clase y se acierta, el valor es 1/3 (antes afinar promediaba solo las presentes)
+    solo_segura = {**partes, "val": partes["val"][partes["val"]["objetivo"] == "segura"]}
+    assert t2.afinar(solo_segura, 29)[1][0]["val_macro_f1"] == pytest.approx(1 / 3)
 
 
 def test_afinar_ajusta_solo_con_fit(monkeypatch):

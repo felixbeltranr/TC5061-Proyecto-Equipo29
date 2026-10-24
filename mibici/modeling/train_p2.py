@@ -72,6 +72,14 @@ def git_commit() -> tuple[str, bool]:
         return "desconocido", True
 
 
+def macro_f1(y_true: ArrayLike, y_pred: ArrayLike) -> float:
+    """Macro F1 con las tres clases fijas; una clase sin aciertos ni apariciones aporta 0.
+
+    Es la misma cuenta para elegir hiperparametros en validacion y para las metricas de test.
+    """
+    return float(f1_score(y_true, y_pred, labels=fp.CLASES, average="macro", zero_division=0))
+
+
 def metricas(
     y_true: ArrayLike,
     y_pred: ArrayLike,
@@ -83,11 +91,7 @@ def metricas(
 
     El prefijo indica el conjunto (test, test_nuevas) para nombrar las metricas en MLflow.
     """
-    m = {
-        f"{prefijo}_macro_f1": f1_score(
-            y_true, y_pred, labels=fp.CLASES, average="macro", zero_division=0
-        )
-    }
+    m = {f"{prefijo}_macro_f1": macro_f1(y_true, y_pred)}
     p, r, f, _ = precision_recall_fscore_support(y_true, y_pred, labels=fp.CLASES, zero_division=0)
     for i, c in enumerate(fp.CLASES):
         m[f"{prefijo}_precision_{c}"] = p[i]
@@ -152,7 +156,7 @@ def afinar(partes: dict, semilla: int) -> tuple[dict, list[dict]]:
     resultados = []
     for params in CONFIG_P2.rejilla:
         modelo = ajustar(fit, params, semilla)
-        f1 = f1_score(val["objetivo"], modelo.predict(val[fp.FEATURES]), average="macro")
+        f1 = macro_f1(val["objetivo"], modelo.predict(val[fp.FEATURES]))
         resultados.append({**params, "val_macro_f1": float(f1)})
         logger.info("Rejilla {} -> val_macro_f1 {:.4f}", params, f1)
     mejor = max(resultados, key=lambda r: r["val_macro_f1"])
