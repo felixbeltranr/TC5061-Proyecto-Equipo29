@@ -20,6 +20,10 @@ Uso desde la raíz del repositorio::
     python -m mibici.modeling.train_p3 --no-registrar  #    métricas sin escribir en MLflow
     python -m mibici.modeling.train_p3 --model kmeans_uso --k 5
     python -m mibici.modeling.train_p3 --model gmm_uso --n-components 5 --covariance-type diag
+    python -m mibici.modeling.train_p3 --model kmeans_uso --buscar   # búsqueda con runs anidados
+
+Además de las métricas de entrenamiento y evaluación, cada run lleva las de validación interna
+por estaciones (``val_``) y la estabilidad (``val_ari_estabilidad``); ver ``busqueda_p3.py``.
 
 La interfaz de MLflow se abre con ``mlflow ui --backend-store-uri sqlite:///mlflow.db``.
 """
@@ -45,6 +49,7 @@ import typer
 
 from mibici.config import CONFIG, CONFIG_P3, PROJ_ROOT, P3Config
 from mibici.features_p3 import DatasetP3, a_km, cargar_dataset
+from mibici.modeling.busqueda_p3 import evaluar_validacion, ordenar, rejilla
 from mibici.modeling.modelos_p3 import (
     construir_modelo,
     hiperparametros_efectivos,
@@ -281,6 +286,76 @@ def registrar_candidata(
         return run.info.run_id
 
 
+def _nombre_busqueda(model: str, params: dict | None = None) -> str:
+    """``p3-busqueda-kmeans-uso`` (padre) o ``p3-busqueda-kmeans-uso-k3`` (hija)."""
+    if params is None:
+        return f"p3-busqueda-{model.replace('_', '-')}"
+    return nombre_corrida(model, params).replace("p3-", "p3-busqueda-", 1)
+
+
+def buscar(
+    ds: DatasetP3, model: str, cfg: P3Config = CONFIG_P3, registrar: bool = True
+) -> list[dict]:
+    """Búsqueda de ``model`` sobre su rejilla con validación por estaciones.
+
+    Con ``registrar`` deja un run padre por búsqueda y un run hijo (anidado) por combinación.
+    El padre guarda el ranking completo en ``config/ranking_busqueda.csv`` y la mejor
+    combinación como parámetros ``mejor_*``. Regresa el ranking (ver ``busqueda_p3.ordenar``).
+    """
+    resultados = []
+    contexto = mlflow.start_run(run_name=_nombre_busqueda(model)) if registrar else None
+    try:
+        if registrar:
+            mlflow.set_tags(etiquetas(ds, cfg, familia=model, etapa="search"))
+            mlflow.log_params(
+                {
+                    "modelo": model,
+                    "n_particiones": cfg.n_particiones,
+                    "empate_silueta": cfg.empate_silueta,
+                    "data_version": ds.data_version,
+                    "n_combinaciones": len(rejilla(model, cfg)),
+                }
+            )
+        for params in rejilla(model, cfg):
+            m = evaluar_validacion(ds, model, params, cfg)
+            resultados.append({"model": model, "params": params, **m})
+            logger.info(
+                f"{model} {params}: silueta val {m['val_silhouette_uso']:.3f} | "
+                f"ARI {m['val_ari_estabilidad']:.3f}"
+            )
+            if registrar:
+                with mlflow.start_run(run_name=_nombre_busqueda(model, params), nested=True):
+                    mlflow.set_tags(etiquetas(ds, cfg, familia=model, etapa="search"))
+                    mlflow.log_params(
+                        {"modelo": model, **hiperparametros_efectivos(model, params, cfg)}
+                    )
+                    mlflow.log_metrics(m)
+        ranking = ordenar(resultados, cfg)
+        if registrar:
+            mejor = ranking[0]
+            mlflow.log_params({f"mejor_{k}": v for k, v in mejor["params"].items()})
+            mlflow.log_metrics({k: v for k, v in mejor.items() if k.startswith("val_")})
+            tabla = pd.DataFrame(
+                [
+                    {
+                        "posicion": r["posicion"],
+                        **r["params"],
+                        "empate_silueta": r["empate_silueta"],
+                        **{k: v for k, v in r.items() if k.startswith("val_")},
+                    }
+                    for r in ranking
+                ]
+            )
+            with tempfile.TemporaryDirectory() as tmp:
+                ruta = Path(tmp) / "ranking_busqueda.csv"
+                tabla.round(4).to_csv(ruta, index=False)
+                mlflow.log_artifact(str(ruta), "config")
+    finally:
+        if contexto is not None:
+            mlflow.end_run()
+    return ranking
+
+
 def combinaciones(
     model: str,
     k: list[int] | None,
@@ -315,6 +390,13 @@ def main(
     covariance_type: Annotated[
         str | None, typer.Option(help="Covarianza de gmm_uso: full, tied, diag o spherical.")
     ] = None,
+    buscar_: Annotated[
+        bool,
+        typer.Option(
+            "--buscar",
+            help="Búsqueda de kmeans_uso o gmm_uso con runs anidados (rejilla de config).",
+        ),
+    ] = False,
 ):
     """Entrena el baseline o una candidata de P3 y registra un run de MLflow por combinación."""
     corridas = combinaciones(model, k, n_components, covariance_type, n_init)
@@ -331,11 +413,20 @@ def main(
         if mlflow.get_experiment_by_name(cfg.experimento) is None:
             mlflow.create_experiment(cfg.experimento, artifact_location=cfg.artifact_location)
         mlflow.set_experiment(cfg.experimento)
+    if buscar_:
+        ranking = buscar(ds, model, cfg, registrar)
+        mejor = ranking[0]
+        logger.success(
+            f"Mejor {model}: {mejor['params']} | silueta val {mejor['val_silhouette_uso']:.3f} "
+            f"| ARI {mejor['val_ari_estabilidad']:.3f}"
+        )
+        return
     for params in corridas:
         if model == "kmeans_geo":
             km, m = entrenar_baseline(ds, params["k"], cfg)
         else:
             _, m = entrenar_candidata(ds, model, params, cfg)
+        m |= evaluar_validacion(ds, model, params, cfg)
         resumen = " | ".join(f"{n} {v:.3f}" for n, v in m.items())
         logger.info(f"{model} {params}: {resumen}")
         if not registrar:

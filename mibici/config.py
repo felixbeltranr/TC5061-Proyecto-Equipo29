@@ -102,6 +102,13 @@ class P3Config:
     k_comparacion: tuple[int, ...] = (4, 5, 6)
     n_init: int = 20
     covarianza_gmm: str = "full"
+
+    # Validación interna por estaciones y búsqueda (solo datos anteriores a mayo de 2026)
+    n_particiones: int = 5  # KFold de estaciones: cada partición reserva el 20 % para validar
+    k_busqueda: tuple[int, ...] = (3, 4, 5, 6, 7, 8)  # KMeans de uso
+    componentes_busqueda: tuple[int, ...] = (3, 4, 5, 6, 7, 8)  # GaussianMixture
+    covarianzas_busqueda: tuple[str, ...] = ("full", "tied", "diag", "spherical")
+    empate_silueta: float = 0.01  # diferencia de silueta por debajo de la cual decide el ARI
     lat_ref: float = 20.67  # latitud de Guadalajara para proyectar a km
 
     # MLflow: mismo backend local y esquema de etiquetas que P2. No se usa
