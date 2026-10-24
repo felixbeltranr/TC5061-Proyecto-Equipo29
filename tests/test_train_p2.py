@@ -40,6 +40,15 @@ ETIQUETAS_BASE = {
 }  # fmt: skip
 ETIQUETAS_MODELO = {"modelo", "model_family", "stage_of_work"}
 VERSION = "abc123def456"
+RF_CHICO = {"n_estimators": 10, "max_samples": 500, "min_samples_leaf": 5}
+CONFIG_CHICA = {
+    "rejilla": REJILLA_CORTA,
+    "params_logistica": {"max_iter": 100},
+    "params_random_forest": RF_CHICO,
+    "muestra_importancia": 200,
+    "repeticiones_importancia": 1,
+}
+CANDIDATAS_NUEVAS = ("p2_logistica_balanceada", "p2_random_forest_balanceado")
 BUSQUEDA_INI50 = {"p2_busqueda_ini50", "p2_busqueda_ini50_c1", "p2_busqueda_ini50_c2"}
 RUNS_INI50 = {
     "p2_baseline_mayoritaria_ini50",
@@ -47,6 +56,8 @@ RUNS_INI50 = {
     "p2_baseline_persistencia_ini50",
     "p2_hgb_balanceado_ini50",
     "p2_hgb_sin_pesos_ini50",
+    "p2_logistica_balanceada_ini50",
+    "p2_random_forest_balanceado_ini50",
 }
 
 
@@ -120,9 +131,7 @@ def cortes_y_configuracion_chicos(monkeypatch, tmp_path):
         monkeypatch.setitem(t2.CORTES, clave, valor)
     config = dataclasses.replace(
         CONFIG_P2,
-        rejilla=REJILLA_CORTA,
-        muestra_importancia=200,
-        repeticiones_importancia=1,
+        **CONFIG_CHICA,
         tracking_uri=f"sqlite:///{tmp_path / 'mlflow_auto.db'}",
         artefactos_dir=tmp_path / "mlartifacts_auto",
         corridas_dir=tmp_path / "corridas_auto",
@@ -170,12 +179,7 @@ def correr_con_config_chica(fabrica, nombre: str, extra=None, niveles=("0.5",)) 
     with pytest.MonkeyPatch.context() as mpatch:
         for clave, valor in CORTES_CHICOS.items():
             mpatch.setitem(t2.CORTES, clave, valor)
-        config = dataclasses.replace(
-            CONFIG_P2,
-            rejilla=REJILLA_CORTA,
-            muestra_importancia=200,
-            repeticiones_importancia=1,
-        )
+        config = dataclasses.replace(CONFIG_P2, **CONFIG_CHICA)
         mpatch.setattr(t2, "CONFIG_P2", config)
         uri_previa = mlflow.get_tracking_uri()
         try:
@@ -368,6 +372,34 @@ def test_ajustar_usa_pesos_balanceados_semilla_y_sin_parada_temprana():
     }
 
 
+def test_candidatas_logistica_y_random_forest_se_ajustan_balanceadas_y_se_miden():
+    partes = t2.preparar(0.5, hacer_panel())
+    train = fp.unir_stats(partes["train"], *fp.stats_estacion(partes["train"]))
+    logistica = t2.ajustar_logistica(train, {"max_iter": 100}, 7)
+    assert logistica[-1].get_params()["class_weight"] == "balanced"
+    assert logistica[-1].get_params()["random_state"] == 7
+    bosque = t2.ajustar_random_forest(train, RF_CHICO, 7)
+    rf = bosque[-1]
+    assert rf.get_params()["class_weight"] == "balanced_subsample"
+    assert rf.n_estimators == 10 and rf.max_samples == 500 and rf.min_samples_leaf == 5
+    # max_samples se recorta al tamano de train para no fallar con paneles chicos
+    chico = t2.ajustar_random_forest(train.head(50), RF_CHICO, 7)[-1]
+    assert chico.max_samples == 50
+    for modelo in (logistica, bosque):
+        clases, proba, pred = t2.predecir(modelo, train.head(20))
+        assert clases == ["segura", "sin_anclajes", "sin_bicicletas"]
+        assert proba.shape == (20, 3) and np.allclose(proba.sum(1), 1.0)
+        assert set(pred) <= set(fp.CLASES)
+    # medir_ajuste regresa el modelo, los segundos de ajuste y su tamano en MB (pickle)
+    modelo, segundos, mb = t2.medir_ajuste(lambda df: t2.ajustar_logistica(df, {}, 7), train)
+    assert segundos > 0 and 0 < mb < 5 and hasattr(modelo, "predict_proba")
+    # el bosque con hojas minimas mas grandes pesa menos que uno de hojas de una muestra
+    grande = t2.ajustar_random_forest(train, {**RF_CHICO, "min_samples_leaf": 1}, 7)
+    assert (
+        t2.medir_ajuste(lambda df: grande, train)[2] > t2.medir_ajuste(lambda df: bosque, train)[2]
+    )
+
+
 def test_afinar_elige_por_macro_f1_de_validacion_y_regresa_la_rejilla():
     partes = t2.preparar(0.5, hacer_panel())
     mejor, rejilla = t2.afinar(partes, 29)
@@ -436,7 +468,7 @@ def test_correr_nivel_regresa_resultados_y_ajusta_el_modelo_final_con_train(tmp_
     original = t2.ajustar
 
     def espiar(train, params, semilla, **pesos):
-        vistos.append(train["ts_objetivo"].max())
+        vistos.append((train["ts_objetivo"].min(), train["ts_objetivo"].max()))
         return original(train, params, semilla, **pesos)
 
     monkeypatch.setattr(t2, "ajustar", espiar)
@@ -455,21 +487,29 @@ def test_correr_nivel_regresa_resultados_y_ajusta_el_modelo_final_con_train(tmp_
         "baseline_mayoritaria",
         "baseline_semana_previa",
         "baseline_persistencia",
+        "logistica",
         "hgb",
+        "random_forest",
         "hgb_sin_pesos",
     ]
-    # los dos HGB finales (con y sin pesos) usan train completo (fit + val)
-    assert len(vistos) == 2
-    for ultimo in vistos:
-        assert pd.Timestamp(CORTES_CHICOS["val_inicio"]) <= ultimo
-        assert ultimo < pd.Timestamp(CORTES_CHICOS["test_inicio"])
-    assert "val_macro_f1" not in salida["hgb"]  # sin rejilla no se reporta
+    # cada HGB (con y sin pesos) se ajusta dos veces: con fit para la validacion y con train
+    # completo (fit + val) para la prueba; nunca ve la prueba
+    assert len(vistos) == 4
+    fin_fit = pd.Timestamp(CORTES_CHICOS["val_inicio"])
+    fin_train = pd.Timestamp(CORTES_CHICOS["test_inicio"])
+    for (_, ultimo_fit), (_, ultimo_train) in (vistos[0:2], vistos[2:4]):
+        assert ultimo_fit < fin_fit <= ultimo_train < fin_train
+    assert salida["hgb"]["val_macro_f1"] > 0  # la validacion se registra aunque no haya rejilla
     figuras = {p.name for p in (tmp_path / "figuras").iterdir()}
     assert {
         "p2_cm_baseline_semana_ini50.png",
         "p2_cm_baseline_persistencia_ini50.png",
+        "p2_cm_logistica_ini50.png",
+        "p2_cm_logistica_nuevas_ini50.png",
         "p2_cm_hgb_ini50.png",
         "p2_cm_hgb_nuevas_ini50.png",
+        "p2_cm_random_forest_ini50.png",
+        "p2_cm_random_forest_nuevas_ini50.png",
         "p2_cm_hgb_sin_pesos_ini50.png",
         "p2_importancia_permutacion_ini50.csv",
         "p2_importancia_permutacion_ini50.png",
@@ -488,6 +528,8 @@ def test_main_crea_los_runs_esperados(corrida_completa):
         "p2_baseline_semana_previa_ini30",
         "p2_baseline_persistencia_ini30",
         "p2_hgb_balanceado_ini30",
+        "p2_logistica_balanceada_ini30",
+        "p2_random_forest_balanceado_ini30",
     }
     assert corrida_completa["experimento"].name == "mibici-equipo29"
 
@@ -526,6 +568,13 @@ def test_main_etiqueta_cada_run_con_la_convencion_del_equipo(corrida_completa):
         assert etapas[f"p2_hgb_balanceado_{nivel}"] == "candidate"
     assert familias["p2_hgb_sin_pesos_ini50"] == "hist_gradient_boosting"
     assert etapas["p2_hgb_sin_pesos_ini50"] == "candidate"
+    for nivel in ("ini50", "ini30"):
+        assert familias[f"p2_logistica_balanceada_{nivel}"] == "logistic_regression"
+        assert familias[f"p2_random_forest_balanceado_{nivel}"] == "random_forest"
+        assert etapas[f"p2_logistica_balanceada_{nivel}"] == "candidate"
+        assert etapas[f"p2_random_forest_balanceado_{nivel}"] == "candidate"
+    assert modelos["p2_logistica_balanceada_ini50"] == "regresion_logistica_balanceada"
+    assert modelos["p2_random_forest_balanceado_ini50"] == "random_forest_balanceado"
 
 
 def test_main_registra_metricas_de_test_y_de_estaciones_nuevas(corrida_completa):
@@ -538,7 +587,7 @@ def test_main_registra_metricas_de_test_y_de_estaciones_nuevas(corrida_completa)
             for c in fp.CLASES:
                 assert f"{prefijo}_f1_{c}" in metricas, nombre
         assert sum(metricas[f"test_prop_{c}"] for c in fp.CLASES) == pytest.approx(1.0)
-        con_probas = "hgb" in nombre
+        con_probas = run.data.tags["stage_of_work"] == "candidate"
         assert ("test_pr_auc_sin_bicicletas" in metricas) == con_probas, nombre
         assert ("test_nuevas_pr_auc_sin_anclajes" in metricas) == con_probas, nombre
     # el baseline mayoritario predice una sola clase: la mas frecuente de train
@@ -547,6 +596,37 @@ def test_main_registra_metricas_de_test_y_de_estaciones_nuevas(corrida_completa)
     assert run.data.params["clase"] == mayoritaria
     for c in fp.CLASES:
         assert run.data.metrics[f"test_recall_{c}"] == (1.0 if c == mayoritaria else 0.0)
+
+
+def test_main_registra_validacion_costo_y_mejora_de_cada_candidata(corrida_completa):
+    runs = corrida_completa["runs"]
+    for nivel in ("ini50", "ini30"):
+        baselines = {
+            b: runs[f"p2_baseline_{b}_{nivel}"].data.metrics
+            for b in ("mayoritaria", "semana_previa", "persistencia")
+        }
+        for nombre, m in baselines.items():
+            # las baselines tambien traen validacion, pero no costo (no hay modelo que ajustar)
+            assert "val_macro_f1" in m and "val_recall_sin_bicicletas" in m, nombre
+            assert "val_pr_auc_sin_bicicletas" not in m and "fit_seconds" not in m
+        # la mejor baseline se elige por macro F1 de validacion
+        mejor = max(baselines, key=lambda b: baselines[b]["val_macro_f1"])
+        candidatas = ("hgb_balanceado", "logistica_balanceada", "random_forest_balanceado")
+        for nombre in candidatas:
+            run = runs[f"p2_{nombre}_{nivel}"]
+            m = run.data.metrics
+            assert 0 <= m["val_macro_f1"] <= 1 and 0 <= m["test_macro_f1"] <= 1
+            for c in t2.RIESGO:
+                assert f"val_recall_{c}" in m and f"val_pr_auc_{c}" in m
+            assert m["fit_seconds"] > 0 and m["model_size_mb"] > 0
+            assert m["test_mejora_macro_f1_vs_mejor_baseline"] == pytest.approx(
+                m["test_macro_f1"] - baselines[mejor]["test_macro_f1"]
+            )
+            assert run.data.params["mejor_baseline"] == mejor
+    # el HGB del primer nivel valida con la mejor combinacion de la busqueda (mismo ajuste)
+    elegido = max(corrida_completa["resultados"]["rejilla"], key=lambda r: r["val_macro_f1"])
+    hgb = runs["p2_hgb_balanceado_ini50"].data.metrics
+    assert hgb["val_macro_f1"] == pytest.approx(elegido["val_macro_f1"])
 
 
 def test_main_registra_parametros_comunes(corrida_completa):
@@ -566,6 +646,12 @@ def test_main_registra_parametros_comunes(corrida_completa):
     assert p["modelo"] == "HistGradientBoostingClassifier" and p["class_weight"] == "balanced"
     assert p["features"] == ",".join(fp.FEATURES)
     assert runs["p2_hgb_sin_pesos_ini50"].data.params["class_weight"] == "ninguno"
+    # parametros de las candidatas nuevas: salen de CONFIG_P2 (aqui, la configuracion chica)
+    logistica = runs["p2_logistica_balanceada_ini50"].data.params
+    assert logistica["max_iter"] == "100" and logistica["class_weight"] == "balanced"
+    bosque = runs["p2_random_forest_balanceado_ini50"].data.params
+    assert bosque["n_estimators"] == "10" and bosque["max_samples"] == "500"
+    assert bosque["min_samples_leaf"] == "5" and bosque["class_weight"] == "balanced_subsample"
 
 
 def test_main_afina_solo_con_el_primer_nivel_y_guarda_el_json_de_resultados(corrida_completa):
@@ -577,10 +663,10 @@ def test_main_afina_solo_con_el_primer_nivel_y_guarda_el_json_de_resultados(corr
     assert len(resultados["rejilla"]) == len(REJILLA_CORTA)
     elegido = max(resultados["rejilla"], key=lambda r: r["val_macro_f1"])
     assert resultados["params_hgb"] == {k: v for k, v in elegido.items() if k != "val_macro_f1"}
-    # el run del primer nivel reporta val_macro_f1 (el mejor de la rejilla); el segundo no
+    # el run del primer nivel reporta val_macro_f1 igual al mejor de la rejilla
     hgb50 = runs["p2_hgb_balanceado_ini50"]
     assert hgb50.data.metrics["val_macro_f1"] == pytest.approx(elegido["val_macro_f1"])
-    assert "val_macro_f1" not in runs["p2_hgb_balanceado_ini30"].data.metrics
+    assert 0 <= runs["p2_hgb_balanceado_ini30"].data.metrics["val_macro_f1"] <= 1
     assert hgb50.data.metrics["test_macro_f1"] == pytest.approx(
         resultados["resultados"]["0.5"]["hgb"]["test_macro_f1"]
     )
@@ -635,6 +721,11 @@ def test_main_registra_artefactos_por_run(corrida_completa):
         "p2_cm_baseline_persistencia_ini50.png"
     }
     assert artefactos("p2_hgb_sin_pesos_ini50") == {"p2_cm_hgb_sin_pesos_ini50.png"}
+    for run, clave in (
+        ("p2_logistica_balanceada_ini50", "logistica"),
+        ("p2_random_forest_balanceado_ini50", "random_forest"),
+    ):
+        assert artefactos(run) == {f"p2_cm_{clave}_ini50.png", f"p2_cm_{clave}_nuevas_ini50.png"}
     assert artefactos("p2_hgb_balanceado_ini50") == {
         "p2_cm_hgb_ini50.png",
         "p2_cm_hgb_nuevas_ini50.png",
@@ -661,7 +752,7 @@ def test_main_con_sin_afinar_usa_la_primera_configuracion(corrida_sin_afinar):
     assert r["rejilla"] == []
     assert set(corrida_sin_afinar["runs"]) == RUNS_INI50  # sin busqueda no hay runs anidados
     hgb = corrida_sin_afinar["runs"]["p2_hgb_balanceado_ini50"]
-    assert "val_macro_f1" not in hgb.data.metrics
+    assert "val_macro_f1" in hgb.data.metrics  # la validacion se registra aunque no haya rejilla
     nombres = {a.path for a in corrida_sin_afinar["cliente"].list_artifacts(hgb.info.run_id)}
     assert "p2_rejilla_validacion.json" not in nombres
 

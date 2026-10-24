@@ -8,8 +8,10 @@ from __future__ import annotations
 
 import argparse
 from contextlib import nullcontext
+from dataclasses import dataclass
 import json
 from pathlib import Path
+import pickle
 import subprocess
 import time
 
@@ -22,8 +24,11 @@ import mlflow
 import numpy as np
 from numpy.typing import ArrayLike
 import pandas as pd
-from sklearn.ensemble import HistGradientBoostingClassifier
+from sklearn.compose import ColumnTransformer
+from sklearn.ensemble import HistGradientBoostingClassifier, RandomForestClassifier
+from sklearn.impute import SimpleImputer
 from sklearn.inspection import permutation_importance
+from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import (
     ConfusionMatrixDisplay,
     average_precision_score,
@@ -31,6 +36,8 @@ from sklearn.metrics import (
     f1_score,
     precision_recall_fscore_support,
 )
+from sklearn.pipeline import Pipeline, make_pipeline
+from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
 from mibici import features_p2 as fp
 from mibici.config import CONFIG, CONFIG_P2, PROJ_ROOT
@@ -38,6 +45,9 @@ from mibici.config import CONFIG, CONFIG_P2, PROJ_ROOT
 EXPERIMENTO = CONFIG_P2.experimento
 RIESGO = ["sin_bicicletas", "sin_anclajes"]
 FAMILIA_HGB = "hist_gradient_boosting"
+FAMILIA_LOGISTICA = "logistic_regression"
+FAMILIA_BOSQUE = "random_forest"
+CATEGORICAS = ["hora", "dia_semana"]  # enteros que la logistica codifica uno a uno
 CORTES = {
     "train_inicio": CONFIG_P2.fecha_inicio_entrenamiento,
     "val_inicio": CONFIG_P2.fecha_inicio_validacion,
@@ -168,6 +178,51 @@ def ajustar(
     return modelo
 
 
+def ajustar_logistica(train: pd.DataFrame, params: dict, semilla: int) -> Pipeline:
+    """Regresion logistica balanceada: hora y dia de la semana en one-hot, el resto imputado
+    con la mediana (hay faltantes en los rezagos largos) y escalado."""
+    numericas = [c for c in fp.FEATURES if c not in CATEGORICAS]
+    preproceso = ColumnTransformer(
+        [
+            ("categoricas", OneHotEncoder(handle_unknown="ignore"), CATEGORICAS),
+            (
+                "numericas",
+                make_pipeline(
+                    SimpleImputer(strategy="median", keep_empty_features=True), StandardScaler()
+                ),
+                numericas,
+            ),
+        ]
+    )
+    modelo = make_pipeline(
+        preproceso, LogisticRegression(class_weight="balanced", random_state=semilla, **params)
+    )
+    return modelo.fit(train[fp.FEATURES], train["objetivo"])
+
+
+def ajustar_random_forest(train: pd.DataFrame, params: dict, semilla: int) -> Pipeline:
+    """RandomForest balanceado por arbol; max_samples acota el costo y se recorta a len(train)."""
+    params = {**params, "max_samples": min(params["max_samples"], len(train))}
+    modelo = make_pipeline(
+        SimpleImputer(strategy="median", keep_empty_features=True),
+        RandomForestClassifier(
+            class_weight="balanced_subsample", n_jobs=-1, random_state=semilla, **params
+        ),
+    )
+    return modelo.fit(train[fp.FEATURES], train["objetivo"])
+
+
+def medir_ajuste(ajustador, train: pd.DataFrame) -> tuple[object, float, float]:
+    """Ajusta con ajustador(train) y regresa el modelo, los segundos de ajuste y su tamano en MB.
+
+    El tamano es el del pickle en memoria; sirve para comparar el costo de las candidatas.
+    """
+    inicio = time.perf_counter()
+    modelo = ajustador(train)
+    segundos = time.perf_counter() - inicio
+    return modelo, segundos, len(pickle.dumps(modelo)) / 1e6
+
+
 def afinar(
     partes: dict,
     semilla: int,
@@ -218,9 +273,7 @@ def afinar(
     return elegida, resultados
 
 
-def predecir(
-    modelo: HistGradientBoostingClassifier, test: pd.DataFrame
-) -> tuple[list[str], np.ndarray, np.ndarray]:
+def predecir(modelo, test: pd.DataFrame) -> tuple[list[str], np.ndarray, np.ndarray]:
     """Clases del modelo, probabilidades y clase predicha (la de mayor probabilidad) en test."""
     clases = list(modelo.classes_)
     proba = modelo.predict_proba(test[fp.FEATURES])
@@ -346,6 +399,184 @@ def parametros_comunes(
     }
 
 
+@dataclass
+class ContextoNivel:
+    """Datos de un nivel inicial: particiones con sus estadisticas y lo comun a todos los runs.
+
+    fit y val llevan las estadisticas de fit (validacion de cada candidata); train y test, las
+    de train (modelo final y prueba). nuevas marca las filas de estaciones nuevas en test.
+    """
+
+    sufijo: str
+    figs: Path
+    tags_base: dict
+    params_comunes: dict
+    dist: dict
+    fit: pd.DataFrame
+    val: pd.DataFrame
+    train: pd.DataFrame
+    test: pd.DataFrame
+    nuevas: pd.Series
+
+
+def preparar_nivel(
+    nivel: float,
+    panel: pd.DataFrame,
+    args: argparse.Namespace,
+    manifiesto: dict,
+    resumen: dict,
+    tags_base: dict,
+) -> ContextoNivel:
+    """Etiqueta el panel con el nivel inicial y arma las particiones y los parametros comunes."""
+    partes = preparar(nivel, panel)
+    est_fit, hora_fit = fp.stats_estacion(partes["fit"])
+    est_train, hora_train = fp.stats_estacion(partes["train"])
+    train = fp.unir_stats(partes["train"], est_train, hora_train)
+    test = fp.unir_stats(partes["test"], est_train, hora_train)
+    nuevas = test["primer_dia"] >= pd.Timestamp(CORTES["test_inicio"])
+    figs = Path(args.figuras)
+    figs.mkdir(parents=True, exist_ok=True)
+    dist = test["objetivo"].value_counts(normalize=True)
+    return ContextoNivel(
+        sufijo=sufijo_nivel(nivel),
+        figs=figs,
+        tags_base=tags_base,
+        params_comunes=parametros_comunes(
+            nivel,
+            args.semilla,
+            manifiesto,
+            resumen,
+            len(train),
+            len(test),
+            int(test.loc[nuevas, "estacion"].nunique()),
+        ),
+        dist={f"test_prop_{c}": float(dist.get(c, 0)) for c in fp.CLASES},
+        fit=fp.unir_stats(partes["fit"], est_fit, hora_fit),
+        val=fp.unir_stats(partes["val"], est_fit, hora_fit),
+        train=train,
+        test=test,
+        nuevas=nuevas,
+    )
+
+
+def predicciones_baseline(df: pd.DataFrame, mayoritaria: str) -> dict[str, np.ndarray]:
+    """Clase predicha por cada baseline: mayoritaria, misma hora la semana previa y persistencia."""
+    return {
+        "mayoritaria": np.full(len(df), mayoritaria, dtype=object),
+        "semana_previa": df["baseline_semana"].fillna(mayoritaria).to_numpy(),
+        "persistencia": df["clase_actual"].to_numpy(),
+    }
+
+
+def correr_baselines(ctx: ContextoNivel) -> dict[str, dict[str, float]]:
+    """Registra las tres baselines con metricas de validacion y de prueba."""
+    # la mayoritaria de validacion sale de fit, la de prueba de train
+    mayoritaria_fit = ctx.fit["objetivo"].mode()[0]
+    mayoritaria = ctx.train["objetivo"].mode()[0]
+    pred_val = predicciones_baseline(ctx.val, mayoritaria_fit)
+    pred_test = predicciones_baseline(ctx.test, mayoritaria)
+    # clave: (nombre del run, valor del parametro modelo, titulo y archivo de la figura)
+    detalle = {
+        "mayoritaria": ("mayoritaria", "clase_mayoritaria", None, None),
+        "semana_previa": (
+            "semana_previa",
+            "clase_misma_hora_semana_previa",
+            "Baseline semana previa",
+            f"p2_cm_baseline_semana_{ctx.sufijo}.png",
+        ),
+        "persistencia": (
+            "persistencia",
+            "clase_actual_se_repite",
+            "Baseline persistencia",
+            f"p2_cm_baseline_persistencia_{ctx.sufijo}.png",
+        ),
+    }
+    salida = {}
+    for clave, (nombre, modelo, titulo, archivo) in detalle.items():
+        m = metricas(ctx.val["objetivo"], pred_val[clave], None, fp.CLASES, "val")
+        m |= metricas_test_y_nuevas(ctx.test, ctx.nuevas, pred_test[clave])
+        params = {"modelo": modelo} | ({"clase": mayoritaria} if clave == "mayoritaria" else {})
+        artefactos = []
+        if titulo:
+            artefactos.append(
+                figura_confusion(
+                    ctx.test["objetivo"],
+                    pred_test[clave],
+                    f"{titulo} (inicio {ctx.sufijo})",
+                    ctx.figs / archivo,
+                )
+            )
+        registrar(
+            f"p2_baseline_{nombre}_{ctx.sufijo}",
+            ctx.tags_base
+            | etiquetas_modelo(f"baseline_{nombre}", f"baseline_{nombre}", "baseline"),
+            ctx.params_comunes | params,
+            m | ctx.dist,
+            artefactos,
+        )
+        salida[f"baseline_{nombre}"] = m | ctx.dist
+    return salida
+
+
+def correr_candidata(
+    ctx: ContextoNivel,
+    clave: str,
+    nombre_run: str,
+    etiquetas: dict[str, str],
+    params: dict,
+    ajustador,
+    mejor_baseline: tuple[str, float],
+    con_nuevas: bool = True,
+    extras=None,
+) -> dict[str, float]:
+    """Ajusta una candidata dos veces y registra su run con validacion, prueba y costo.
+
+    Con fit se ajusta para las metricas val_*; con train completo, para las test_* y el costo
+    (fit_seconds y model_size_mb son los de este segundo ajuste). mejor_baseline es el nombre y
+    el macro F1 de prueba de la mejor baseline por validacion, para medir la mejora.
+    extras(modelo) regresa archivos adicionales a registrar como artefactos.
+    """
+    modelo_val, _, _ = medir_ajuste(ajustador, ctx.fit)
+    clases, proba, pred = predecir(modelo_val, ctx.val)
+    m = metricas(ctx.val["objetivo"], pred, proba, clases, "val")
+    modelo, segundos, mb = medir_ajuste(ajustador, ctx.train)
+    clases, proba, pred = predecir(modelo, ctx.test)
+    m |= metricas_test_y_nuevas(ctx.test, ctx.nuevas, pred, proba, clases)
+    m |= {
+        "fit_seconds": segundos,
+        "model_size_mb": mb,
+        "test_mejora_macro_f1_vs_mejor_baseline": m["test_macro_f1"] - mejor_baseline[1],
+    }
+    sufijo = ctx.sufijo
+    artefactos = [
+        figura_confusion(
+            ctx.test["objetivo"],
+            pred,
+            f"{etiquetas['modelo']} test (inicio {sufijo})",
+            ctx.figs / f"p2_cm_{clave}_{sufijo}.png",
+        )
+    ]
+    if con_nuevas:
+        artefactos.append(
+            figura_confusion(
+                ctx.test.loc[ctx.nuevas, "objetivo"],
+                pred[ctx.nuevas.to_numpy()],
+                f"{etiquetas['modelo']} estaciones nuevas (inicio {sufijo})",
+                ctx.figs / f"p2_cm_{clave}_nuevas_{sufijo}.png",
+            )
+        )
+    if extras:
+        artefactos += extras(modelo)
+    registrar(
+        nombre_run,
+        ctx.tags_base | etiquetas,
+        ctx.params_comunes | params | {"mejor_baseline": mejor_baseline[0]},
+        m | ctx.dist,
+        artefactos,
+    )
+    return m | ctx.dist
+
+
 def correr_nivel(
     nivel: float,
     panel: pd.DataFrame,
@@ -357,133 +588,77 @@ def correr_nivel(
     tags_base: dict,
     sin_pesos: bool = False,
 ) -> dict[str, dict[str, float]]:
-    """Corre baselines y HGB para un nivel inicial y registra cada modelo como run."""
-    partes = preparar(nivel, panel)
-    por_est, por_hora = fp.stats_estacion(partes["train"])
-    train = fp.unir_stats(partes["train"], por_est, por_hora)
-    test = fp.unir_stats(partes["test"], por_est, por_hora)
-    nuevas = test["primer_dia"] >= pd.Timestamp(CORTES["test_inicio"])
-    sufijo = sufijo_nivel(nivel)
-    figs = Path(args.figuras)
-    figs.mkdir(parents=True, exist_ok=True)
-    n_nuevas = int(test.loc[nuevas, "estacion"].nunique())
+    """Corre baselines y candidatas para un nivel inicial y registra cada modelo como run.
 
-    params_comunes = parametros_comunes(
-        nivel, args.semilla, manifiesto, resumen, len(train), len(test), n_nuevas
-    )
-    dist = test["objetivo"].value_counts(normalize=True)
-    dist_m = {f"test_prop_{c}": float(dist.get(c, 0)) for c in fp.CLASES}
-    salida = {}
+    Candidatas: C1 regresion logistica balanceada, C2 HGB balanceado con los hiperparametros
+    de la busqueda y C3 RandomForest balanceado. Con sin_pesos se agrega el HGB sin pesos de
+    clase para ver el efecto del balanceo. Los parametros de C1 y C3 salen de CONFIG_P2.
+    """
+    ctx = preparar_nivel(nivel, panel, args, manifiesto, resumen, tags_base)
+    salida = correr_baselines(ctx)
+    # mejor baseline por macro F1 de validacion; su macro F1 de prueba es la referencia de mejora
+    nombre_mejor = max(salida, key=lambda n: salida[n]["val_macro_f1"])
+    mejor = (nombre_mejor.removeprefix("baseline_"), salida[nombre_mejor]["test_macro_f1"])
+    semilla, sufijo = args.semilla, ctx.sufijo
+    common = {"ctx": ctx, "mejor_baseline": mejor}
 
-    # baseline 1: clase mayoritaria del train
-    mayoritaria = train["objetivo"].mode()[0]
-    pred = np.full(len(test), mayoritaria, dtype=object)
-    m = metricas_test_y_nuevas(test, nuevas, pred)
-    registrar(
-        f"p2_baseline_mayoritaria_{sufijo}",
-        tags_base | etiquetas_modelo("baseline_mayoritaria", "baseline_mayoritaria", "baseline"),
-        params_comunes | {"modelo": "clase_mayoritaria", "clase": mayoritaria},
-        m | dist_m,
-        [],
-    )
-    salida["baseline_mayoritaria"] = m | dist_m
-
-    # baseline 2: misma clase a la misma hora la semana previa
-    pred = test["baseline_semana"].fillna(mayoritaria).to_numpy()
-    m = metricas_test_y_nuevas(test, nuevas, pred)
-    fig = figura_confusion(
-        test["objetivo"],
-        pred,
-        f"Baseline semana previa (inicio {sufijo})",
-        figs / f"p2_cm_baseline_semana_{sufijo}.png",
-    )
-    registrar(
-        f"p2_baseline_semana_previa_{sufijo}",
-        tags_base
-        | etiquetas_modelo("baseline_semana_previa", "baseline_semana_previa", "baseline"),
-        params_comunes | {"modelo": "clase_misma_hora_semana_previa"},
-        m | dist_m,
-        [fig],
-    )
-    salida["baseline_semana_previa"] = m | dist_m
-
-    # baseline 3: persistencia, la clase estimada de la hora actual se repite en t+1
-    pred = test["clase_actual"].to_numpy()
-    m = metricas_test_y_nuevas(test, nuevas, pred)
-    fig = figura_confusion(
-        test["objetivo"],
-        pred,
-        f"Baseline persistencia (inicio {sufijo})",
-        figs / f"p2_cm_baseline_persistencia_{sufijo}.png",
-    )
-    registrar(
-        f"p2_baseline_persistencia_{sufijo}",
-        tags_base | etiquetas_modelo("baseline_persistencia", "baseline_persistencia", "baseline"),
-        params_comunes | {"modelo": "clase_actual_se_repite"},
-        m | dist_m,
-        [fig],
-    )
-    salida["baseline_persistencia"] = m | dist_m
-
-    # candidato: HistGradientBoosting con pesos balanceados
-    modelo = ajustar(train, params_hgb, args.semilla)
-    clases, proba, pred = predecir(modelo, test)
-    m = metricas_test_y_nuevas(test, nuevas, pred, proba, clases)
-    if rejilla:
-        m["val_macro_f1"] = max(r["val_macro_f1"] for r in rejilla)
-    artefactos = [
-        figura_confusion(
-            test["objetivo"], pred, f"HGB test (inicio {sufijo})", figs / f"p2_cm_hgb_{sufijo}.png"
+    salida["logistica"] = correr_candidata(
+        **common,
+        clave="logistica",
+        nombre_run=f"p2_logistica_balanceada_{sufijo}",
+        etiquetas=etiquetas_modelo(
+            "regresion_logistica_balanceada", FAMILIA_LOGISTICA, "candidate"
         ),
-        figura_confusion(
-            test.loc[nuevas, "objetivo"],
-            pred[nuevas.to_numpy()],
-            f"HGB estaciones nuevas (inicio {sufijo})",
-            figs / f"p2_cm_hgb_nuevas_{sufijo}.png",
-        ),
-    ]
-    artefactos += guardar_importancia(modelo, test, args.semilla, figs, sufijo)
-    if rejilla:
-        ruta_rej = figs / "p2_rejilla_validacion.json"
-        ruta_rej.write_text(json.dumps(rejilla, indent=2))
-        artefactos.append(ruta_rej)
-    registrar(
-        f"p2_hgb_balanceado_{sufijo}",
-        tags_base | etiquetas_modelo("hist_gradient_boosting", FAMILIA_HGB, "candidate"),
-        params_comunes
-        | {
+        params={"modelo": "LogisticRegression", "class_weight": "balanced"}
+        | CONFIG_P2.params_logistica,
+        ajustador=lambda df: ajustar_logistica(df, CONFIG_P2.params_logistica, semilla),
+    )
+
+    def extras_hgb(modelo) -> list[Path]:
+        archivos = guardar_importancia(modelo, ctx.test, semilla, ctx.figs, sufijo)
+        if rejilla:
+            ruta_rej = ctx.figs / "p2_rejilla_validacion.json"
+            ruta_rej.write_text(json.dumps(rejilla, indent=2))
+            archivos.append(ruta_rej)
+        return archivos + [Path(args.manifiesto), Path(args.panel).with_suffix(".json")]
+
+    salida["hgb"] = correr_candidata(
+        **common,
+        clave="hgb",
+        nombre_run=f"p2_hgb_balanceado_{sufijo}",
+        etiquetas=etiquetas_modelo("hist_gradient_boosting", FAMILIA_HGB, "candidate"),
+        params={
             "modelo": "HistGradientBoostingClassifier",
             "class_weight": "balanced",
             "features": ",".join(fp.FEATURES),
         }
         | params_hgb,
-        m | dist_m,
-        artefactos + [Path(args.manifiesto), Path(args.panel).with_suffix(".json")],
+        ajustador=lambda df: ajustar(df, params_hgb, semilla),
+        extras=extras_hgb,
     )
-    salida["hgb"] = m | dist_m
-
+    salida["random_forest"] = correr_candidata(
+        **common,
+        clave="random_forest",
+        nombre_run=f"p2_random_forest_balanceado_{sufijo}",
+        etiquetas=etiquetas_modelo("random_forest_balanceado", FAMILIA_BOSQUE, "candidate"),
+        params={"modelo": "RandomForestClassifier", "class_weight": "balanced_subsample"}
+        | CONFIG_P2.params_random_forest,
+        ajustador=lambda df: ajustar_random_forest(df, CONFIG_P2.params_random_forest, semilla),
+    )
     if sin_pesos:
         # misma configuracion sin pesos de clase, para ver el efecto del balanceo
-        modelo = ajustar(train, params_hgb, args.semilla, balanceado=False)
-        clases, proba, pred = predecir(modelo, test)
-        m = metricas_test_y_nuevas(test, nuevas, pred, proba, clases)
-        fig = figura_confusion(
-            test["objetivo"],
-            pred,
-            f"HGB sin pesos (inicio {sufijo})",
-            figs / f"p2_cm_hgb_sin_pesos_{sufijo}.png",
-        )
-        registrar(
-            f"p2_hgb_sin_pesos_{sufijo}",
-            tags_base
-            | etiquetas_modelo("hist_gradient_boosting_sin_pesos", FAMILIA_HGB, "candidate"),
-            params_comunes
-            | {"modelo": "HistGradientBoostingClassifier", "class_weight": "ninguno"}
+        salida["hgb_sin_pesos"] = correr_candidata(
+            **common,
+            clave="hgb_sin_pesos",
+            nombre_run=f"p2_hgb_sin_pesos_{sufijo}",
+            etiquetas=etiquetas_modelo(
+                "hist_gradient_boosting_sin_pesos", FAMILIA_HGB, "candidate"
+            ),
+            params={"modelo": "HistGradientBoostingClassifier", "class_weight": "ninguno"}
             | params_hgb,
-            m | dist_m,
-            [fig],
+            ajustador=lambda df: ajustar(df, params_hgb, semilla, balanceado=False),
+            con_nuevas=False,
         )
-        salida["hgb_sin_pesos"] = m | dist_m
     return salida
 
 
@@ -496,7 +671,7 @@ def main(argv: list[str] | None = None) -> None:
         "--hyperparameters",
         default="{}",
         help=(
-            "objeto JSON con hiperparametros del HGB. Se mezcla con la primera configuracion de "
+            "objeto JSON con hiperparametros del HGB (C2). Se mezcla con la primera configuracion de "
             "CONFIG_P2.rejilla (lo no indicado toma ese valor), no hay busqueda en la rejilla y "
             "solo esa configuracion se evalua en validacion. Tiene prioridad sobre --sin-afinar"
         ),

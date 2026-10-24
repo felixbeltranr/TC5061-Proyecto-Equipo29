@@ -129,6 +129,17 @@ def _rejilla_p2() -> tuple[dict[str, float | int], ...]:
     )
 
 
+def _logistica_p2() -> dict[str, float | int]:
+    # Regresion logistica balanceada (C1): iteraciones maximas del optimizador
+    return {"max_iter": 200}
+
+
+def _random_forest_p2() -> dict[str, float | int]:
+    # RandomForest balanceado (C3): max_samples acota el costo de cada arbol y
+    # min_samples_leaf el tamano del modelo (con hojas de 1 muestra pesa cientos de MB)
+    return {"n_estimators": 100, "max_samples": 200_000, "min_samples_leaf": 50}
+
+
 @dataclass(frozen=True)
 class P2Config:
     # Datos
@@ -158,6 +169,8 @@ class P2Config:
     model: str = "hist_gradient_boosting"
     seed: int = 29
     rejilla: tuple[dict[str, float | int], ...] = field(default_factory=_rejilla_p2)
+    params_logistica: dict[str, float | int] = field(default_factory=_logistica_p2)
+    params_random_forest: dict[str, float | int] = field(default_factory=_random_forest_p2)
     muestra_importancia: int = 150_000  # filas de test para la importancia por permutacion
     repeticiones_importancia: int = 3
 
