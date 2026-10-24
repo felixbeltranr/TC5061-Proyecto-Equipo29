@@ -122,15 +122,22 @@ def figura_confusion(y_true: ArrayLike, y_pred: ArrayLike, titulo: str, ruta: Pa
 
 
 def particionar(df: pd.DataFrame) -> dict[str, pd.DataFrame]:
-    """Cortes temporales por fecha objetivo: fit, val (ajuste), train completo y test."""
+    """Cortes temporales por fecha objetivo: fit, val (ajuste), train completo y test.
+
+    Falla si alguna particion queda vacia, igual que train_p1.particionar.
+    """
     t = df["ts_objetivo"]
     c = {k: pd.Timestamp(v) for k, v in CORTES.items()}
-    return {
+    partes = {
         "fit": df[(t >= c["train_inicio"]) & (t < c["val_inicio"])],
         "val": df[(t >= c["val_inicio"]) & (t < c["test_inicio"])],
         "train": df[(t >= c["train_inicio"]) & (t < c["test_inicio"])],
         "test": df[(t >= c["test_inicio"]) & (t < c["test_fin"])],
     }
+    vacias = [k for k, v in partes.items() if v.empty]
+    if vacias:
+        raise ValueError(f"Particiones sin filas elegibles: {vacias}; revisa el rango del panel")
+    return partes
 
 
 def preparar(nivel: float, panel: pd.DataFrame) -> dict[str, pd.DataFrame]:

@@ -259,12 +259,14 @@ def test_particionar_respeta_limites_no_solapa_y_usa_la_fecha_objetivo():
     assert partes["test"]["marca"].tolist() == ["test_inicio", "fin_test"]  # fin excluido
 
 
-def test_particionar_sin_fechas_de_prueba_regresa_test_vacio_sin_error():
-    # discutible: train_p1.particionar si falla en este caso; aqui solo queda un test vacio
-    df = pd.DataFrame({"ts_objetivo": pd.date_range("2026-01-05", "2026-02-10", freq="D")})
-    partes = t2.particionar(df)
-    assert len(partes["test"]) == 0
-    assert len(partes["train"]) == len(df)
+def test_particionar_falla_si_alguna_particion_queda_vacia():
+    # igual que train_p1.particionar: sin fechas de prueba (o de otro corte) no se sigue en silencio
+    sin_test = pd.DataFrame({"ts_objetivo": pd.date_range("2026-01-05", "2026-02-10", freq="D")})
+    with pytest.raises(ValueError, match="test"):
+        t2.particionar(sin_test)
+    sin_val = pd.DataFrame({"ts_objetivo": pd.date_range("2026-02-16", "2026-02-20", freq="D")})
+    with pytest.raises(ValueError, match="fit"):
+        t2.particionar(sin_val)
 
 
 # metricas
