@@ -68,29 +68,31 @@ def _run_p2(model: str, hyperparameters: dict[str, Any]) -> None:
 def _run_p3(model: str, hyperparameters: dict[str, Any]) -> None:
     from mibici import features_p3
     from mibici.modeling import train_p3
+    from mibici.modeling.modelos_p3 import validar_hiperparametros
 
-    if model != CONFIG_P3.model:
-        raise ValueError(f"P3 currently supports only model={CONFIG_P3.model}")
-    unsupported = set(hyperparameters).difference({"k", "n_init"})
-    if unsupported:
-        raise ValueError(f"Unsupported P3 hyperparameters: {sorted(unsupported)}")
-
-    k_value = hyperparameters.get("k")
-    if k_value is not None and (
-        isinstance(k_value, bool) or not isinstance(k_value, int) or k_value < 2
-    ):
-        raise ValueError("P3 hyperparameter k must be an integer greater than or equal to 2")
-    n_init = hyperparameters.get("n_init")
-    if n_init is not None and (
-        isinstance(n_init, bool) or not isinstance(n_init, int) or n_init < 1
-    ):
-        raise ValueError("P3 hyperparameter n_init must be a positive integer")
-
+    hyperparameters = dict(hyperparameters)
+    if model == "seleccion":
+        # flujo completo: baseline, búsquedas, candidatas, campeón y Model Registry
+        if hyperparameters:
+            raise ValueError("model=seleccion no recibe hiperparámetros; se toman de CONFIG_P3")
+        features_p3.main()
+        train_p3.main(model="seleccion")
+        return
+    # buscar=1 lanza la búsqueda de la rejilla de CONFIG_P3 con runs anidados
+    buscar = bool(hyperparameters.pop("buscar", False))
+    validar_hiperparametros(model, hyperparameters)
+    if buscar and (model == "kmeans_geo" or hyperparameters):
+        raise ValueError("buscar=1 solo aplica a kmeans_uso o gmm_uso, sin otros hiperparámetros")
     features_p3.main()
+    k = hyperparameters.get("k")
+    n_components = hyperparameters.get("n_components")
     train_p3.main(
-        k=[k_value] if k_value is not None else None,
+        k=[k] if k is not None else None,
         model=model,
-        n_init=n_init,
+        n_init=hyperparameters.get("n_init"),
+        n_components=[n_components] if n_components is not None else None,
+        covariance_type=hyperparameters.get("covariance_type"),
+        buscar_=buscar,
     )
 
 
