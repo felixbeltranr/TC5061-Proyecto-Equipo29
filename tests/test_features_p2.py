@@ -135,3 +135,14 @@ def test_cargar_viajes_descarta_duplicados_y_menos_de_un_minuto(tmp_path):
     assert tot.duplicados_exactos == 1
     assert tot.duracion_menor_1min == 1
     assert tot.viajes_validos == 2
+
+
+def test_manifiesto_se_escribe_con_fin_de_linea_lf(tmp_path):
+    from mibici import manifiesto_p2
+    from mibici.config import CONFIG_P2
+
+    (tmp_path / "datos_abiertos_2025_01.csv").write_bytes(b"a,b\n1,2\n")
+    (tmp_path / CONFIG_P2.nomenclatura_path.name).write_bytes(b"id,name\n1,x\n")
+    salida = tmp_path / "ref" / "manifiesto.json"
+    manifiesto_p2.main(salida=salida, carpeta=tmp_path)
+    assert b"\r\n" not in salida.read_bytes()
