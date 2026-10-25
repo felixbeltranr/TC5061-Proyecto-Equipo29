@@ -86,7 +86,9 @@ mlflow run . -e train -P question=p3 -P model=seleccion --env-manager local
 
 Ejecuta `ingest` antes de `train`: descarga y combina los datos y después genera el manifiesto común de versión en `references/manifiesto_datos_p2.json`. El entry point `train` genera las features del problema indicado (`p1`, `p2` o `p3`) y después llama su entrenador configurado. Los modelos disponibles actualmente son P1 `auto`, `poisson`, `hgb_poisson` y `hgb_absoluto`; P2 `hist_gradient_boosting`; y P3 `kmeans_geo`, `kmeans_uso`, `gmm_uso` y `seleccion` (flujo completo, ver la sección de P3). `auto` usa la selección configurada para P1. `hyperparameters` acepta pares separados por coma: P1 Poisson admite `alpha`; P1 HGB Poisson, HGB absoluto y P2 admiten `learning_rate`, `max_leaf_nodes`, `max_iter` y `l2_regularization`; P3 admite `k` y `n_init` (`kmeans_geo` y `kmeans_uso`), `n_components`, `covariance_type` y `n_init` (`gmm_uso`), o `buscar=1` para la búsqueda con runs anidados. Por ejemplo, Random Forest y `n_estimators` no son compatibles como opciones individuales del entry point.
 
-Los ejemplos incluyen `--env-manager local` para reutilizar el entorno virtual activo. Si no vas a usar un entorno virtual ya activado y quieres que MLflow gestione el entorno del proyecto, puedes omitir esa opción.
+Los ejemplos incluyen `--env-manager local` para reutilizar el entorno virtual activo. Si no vas a usar un entorno virtual ya activado y quieres que MLflow gestione el entorno del proyecto, puedes omitir esa opción. La corrida de verificación del cierre se hizo con `--env-manager local`, en un entorno existente con Python 3.14.8 y las versiones fijas de `requirements.txt`. Sin esa opción, MLflow crea el entorno de `python_env.yaml` con virtualenv y pyenv; ese camino no se probó.
+
+La sensibilidad de P2 a la ocupación inicial (niveles 0.3 y 0.7, además de 0.5) no está expuesta como parámetro del `MLproject`: `train` con `question=p2` o `question=all` solo corre el nivel 0.5. Esa comparación se corre con `python -m mibici.modeling.train_p2 --niveles 0.5 0.3 0.7`. Si el almacén lo creó el servidor de tracking, agrega `--tracking-uri http://127.0.0.1:5000` con el servidor encendido, porque sus artefactos usan direcciones `mlflow-artifacts:/` que solo resuelve el servidor.
 
 
 El almacén del proyecto se elige con `MIBICI_TRACKING_URI`; si no está definida, se usa una URI SQLite absoluta a `mlflow.db` en la raíz del repositorio. Las rutas SQLite relativas de esa variable se resuelven contra la raíz del repositorio, independientemente del directorio desde el que se invoque. MLflow inyecta `MLFLOW_TRACKING_URI` en sus subprocesos incluso sin una elección explícita del usuario; por ello su presencia no sustituye esta configuración del proyecto.
@@ -285,7 +287,26 @@ La configuración de Ruff en `pyproject.toml` revisa `mibici/`.
 
 ## Seguimiento en MLflow
 
-Todos los runs usan el experimento `mibici-equipo29`, con nombre descriptivo y etiquetas `question` (P1, P2 o P3), `team`, `author`, `data_range`, `seed`, `data_version`, `git_commit` y `git_dirty`. Las métricas indican el conjunto en que se calculan (`val_mae`, `test_mae`, ...). El almacén es local: `mlflow.db` y `mlartifacts/` en la raíz del repositorio, ambos fuera de git. Para abrir la interfaz:
+Todos los runs usan el experimento `mibici-equipo29`, con nombre descriptivo y etiquetas `question` (P1, P2 o P3), `team`, `author`, `data_range`, `seed`, `data_version`, `git_commit` y `git_dirty`. Las métricas indican el conjunto en que se calculan (`val_mae`, `test_mae`, ...). El almacén es local: `mlflow.db` y `mlartifacts/` en la raíz del repositorio, ambos fuera de git.
+
+### Servidor de tracking
+
+El Model Registry necesita un almacén con base de datos. Desde la raíz del repositorio, para que la base sea el mismo `mlflow.db` que usa el proyecto por omisión:
+
+```powershell
+mlflow server --backend-store-uri sqlite:///mlflow.db --port 5000 --workers 1
+```
+
+En Windows, el servidor con varios workers deja de aceptar conexiones en algunos de ellos (`WinError 10022`); `--workers 1` lo evita. En Linux y macOS se puede omitir. En otra terminal, también desde la raíz, apunta ambas variables al servidor y lanza el proyecto:
+
+```powershell
+$env:MIBICI_TRACKING_URI = "http://127.0.0.1:5000"
+$env:MLFLOW_TRACKING_URI = $env:MIBICI_TRACKING_URI
+mlflow run . -e ingest --env-manager local --experiment-name mibici-equipo29
+mlflow run . -e train -P question=all -P 'hyperparameters={}' --env-manager local --experiment-name mibici-equipo29
+```
+
+La interfaz queda en http://127.0.0.1:5000 y los artefactos que sube el servidor en `mlartifacts/`. Las dos corridas de proyecto que crea `mlflow run` (`ingest` y `train`) llevan un nombre automático y no tienen la etiqueta `question`; las corridas de entrenamiento sí. No mezcles en una misma sesión el servidor y una URI `sqlite:///` directa: cada una debe apuntar al mismo `mlflow.db` de la raíz. Sin servidor, la interfaz se abre con:
 
 ```bash
 mlflow ui --backend-store-uri sqlite:///mlflow.db
