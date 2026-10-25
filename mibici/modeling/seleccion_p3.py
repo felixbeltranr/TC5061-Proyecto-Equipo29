@@ -210,7 +210,7 @@ def comprobar_version(
         raise ValueError(
             f"La versión {version} predijo {len(pred)} grupos para {len(entrada)} filas"
         )
-    if np.isnan(pred).any() or (pred < 0).any() or (pred != np.round(pred)).any():
+    if not np.isfinite(pred).all() or (pred < 0).any() or (pred != np.round(pred)).any():
         raise ValueError(f"La versión {version} predijo grupos inválidos: {pred.tolist()}")
     return pred.astype(int)
 

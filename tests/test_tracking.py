@@ -1,10 +1,27 @@
 import json
+import os
 from pathlib import Path
 
+import mlflow
 from mlflow.tracking import MlflowClient
 import pytest
 
 from mibici import tracking
+
+
+@pytest.fixture(autouse=True)
+def restaurar_estado_mlflow():
+    """Cada prueba deja tracking y Registry como estaban al comenzar."""
+    tracking_previo = mlflow.get_tracking_uri()
+    registry_previo = mlflow.get_registry_uri()
+    registry_env_previo = os.environ.get("MLFLOW_REGISTRY_URI")
+    yield
+    mlflow.set_tracking_uri(tracking_previo)
+    if registry_env_previo is None:
+        os.environ.pop("MLFLOW_REGISTRY_URI", None)
+        mlflow.set_registry_uri(None)
+    else:
+        mlflow.set_registry_uri(registry_previo)
 
 
 def test_version_datos_lee_el_manifiesto(tmp_path):
@@ -21,9 +38,22 @@ def test_version_datos_falla_si_no_hay_manifiesto(tmp_path):
 def test_configurar_acepta_carpeta_de_artefactos_relativa(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     uri = f"sqlite:///{tmp_path / 'mlflow.db'}"
-    tracking.configurar(uri, Path("mlartifacts"))
-    experimento = MlflowClient(tracking_uri=uri).get_experiment_by_name(tracking.EXPERIMENTO)
-    assert experimento.artifact_location == (tmp_path / "mlartifacts").resolve().as_uri()
+    tracking_previo = mlflow.get_tracking_uri()
+    registry_previo = mlflow.get_registry_uri()
+    registry_env_previo = os.environ.get("MLFLOW_REGISTRY_URI")
+    try:
+        tracking.configurar(uri, Path("mlartifacts"))
+        experimento = MlflowClient(tracking_uri=uri).get_experiment_by_name(tracking.EXPERIMENTO)
+        assert experimento.artifact_location == (tmp_path / "mlartifacts").resolve().as_uri()
+        assert mlflow.get_tracking_uri() == uri
+        assert mlflow.get_registry_uri() == uri
+    finally:
+        mlflow.set_tracking_uri(tracking_previo)
+        if registry_env_previo is None:
+            os.environ.pop("MLFLOW_REGISTRY_URI", None)
+            mlflow.set_registry_uri(None)
+        else:
+            mlflow.set_registry_uri(registry_previo)
 
 
 def test_etiquetas_base_siguen_la_convencion_del_equipo():

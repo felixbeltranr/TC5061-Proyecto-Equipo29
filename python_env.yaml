@@ -1,4 +1,4 @@
-python: "3.14.7"
+python: "3.14.8"
 
 build_dependencies:
   - pip

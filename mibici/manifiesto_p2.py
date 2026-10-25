@@ -25,7 +25,9 @@ def main(
         carpeta / CONFIG_P2.nomenclatura_path.name
     ]
     manifiesto = manifiesto_datos(archivos)
-    salida.write_text(json.dumps(manifiesto, indent=2) + "\n")
+    salida.parent.mkdir(parents=True, exist_ok=True)
+    # newline="\n": mismos bytes que el manifiesto versionado, también en Windows
+    salida.write_text(json.dumps(manifiesto, indent=2) + "\n", newline="\n")
     logger.info("Manifiesto {} con version {}", salida, manifiesto["version"])
 
 

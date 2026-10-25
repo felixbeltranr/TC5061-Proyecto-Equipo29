@@ -8,6 +8,7 @@ nunca columnas de usuario.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import json
 from pathlib import Path
 import subprocess
@@ -65,6 +66,7 @@ def configurar(
     La carpeta de artefactos puede ser relativa; solo se usa si el experimento aun no existe.
     """
     mlflow.set_tracking_uri(tracking_uri)
+    mlflow.set_registry_uri(tracking_uri)
     if mlflow.get_experiment_by_name(EXPERIMENTO) is None:
         mlflow.create_experiment(
             EXPERIMENTO, artifact_location=carpeta_artefactos.resolve().as_uri()
@@ -91,13 +93,31 @@ def etiquetas_base(
 
 
 def registrar(
-    nombre: str, tags: dict, params: dict, mets: dict[str, float], artefactos: list[Path]
+    nombre: str,
+    tags: dict,
+    params: dict,
+    mets: dict[str, float],
+    artefactos: list[Path | tuple[Path, str]],
+    *,
+    anidado: bool = False,
+    dentro: Callable[[], None] | None = None,
 ) -> str:
-    """Crea un run con nombre descriptivo, etiquetas, parametros, metricas y artefactos."""
-    with mlflow.start_run(run_name=nombre) as run:
+    """Crea un run con etiquetas, metricas, artefactos y contenido opcional.
+
+    Los artefactos pueden ser rutas (se guardan en la raiz del run) o pares
+    ``(ruta, subcarpeta)``. ``anidado`` enlaza el run con el padre activo y ``dentro``
+    permite registrar modelos o datasets mientras el run esta abierto.
+    """
+    with mlflow.start_run(run_name=nombre, nested=anidado) as run:
         mlflow.set_tags(tags)
         mlflow.log_params(params)
         mlflow.log_metrics(mets)
         for a in artefactos:
-            mlflow.log_artifact(str(a))
+            if isinstance(a, tuple):
+                ruta, subcarpeta = a
+                mlflow.log_artifact(str(ruta), subcarpeta)
+            else:
+                mlflow.log_artifact(str(a))
+        if dentro is not None:
+            dentro()
     return run.info.run_id

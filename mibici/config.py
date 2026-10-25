@@ -253,6 +253,8 @@ class P1Config:
     equipo: str = "29"
     tracking_uri: str = f"sqlite:///{PROJ_ROOT / 'mlflow.db'}"
     artefactos_dir: Path = PROJ_ROOT / "mlartifacts"
+    modelo_registrado: str = "mibici-equipo29-p1-demanda"
+    alias_campeon: str = "champion"
 
 
 CONFIG_P1 = P1Config()

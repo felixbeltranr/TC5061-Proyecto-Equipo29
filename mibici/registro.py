@@ -22,6 +22,8 @@ from mlflow.exceptions import MlflowException
 from mlflow.tracking import MlflowClient
 import pandas as pd
 
+from mibici.features_p2 import CLASES
+
 RIESGO = ("sin_bicicletas", "sin_anclajes")
 EMPATE_RECALL = 0.005  # diferencia de recall medio por debajo de la cual se considera empate
 CRITERIO_CAMPEON = (
@@ -79,8 +81,9 @@ def registrar_campeon(
     model_uri: str,
     campeon: dict,
     linaje: dict[str, str],
+    ejemplo: pd.DataFrame,
 ) -> mlflow.entities.model_registry.ModelVersion:
-    """Registra el modelo del run como nueva version de nombre y mueve el alias a ella.
+    """Registra una version y comprueba carga/prediccion antes de mover el alias.
 
     El modelo registrado se crea una sola vez, con descripcion y etiquetas de la pregunta; cada
     version lleva su descripcion y el linaje: run de origen, commit y version de los datos (del
@@ -118,8 +121,23 @@ def registrar_campeon(
             f"Criterio: {CRITERIO_CAMPEON}."
         ),
     )
+    try:
+        comprobar_version(nombre, version.version, ejemplo)
+    except Exception:
+        cliente.set_model_version_tag(nombre, version.version, "comprobacion", "fallida")
+        raise
+    cliente.set_model_version_tag(nombre, version.version, "comprobacion", "ok")
     cliente.set_registered_model_alias(nombre, alias, version.version)
     return cliente.get_model_version(nombre, version.version)
+
+
+def comprobar_version(nombre: str, version: str, ejemplo: pd.DataFrame) -> list[str]:
+    """Carga una version inmutable y exige una clase valida por fila."""
+    modelo = mlflow.pyfunc.load_model(f"models:/{nombre}/{version}")
+    clases = list(modelo.predict(ejemplo))
+    if len(clases) != len(ejemplo) or any(clase not in CLASES for clase in clases):
+        raise ValueError(f"La version {version} produjo clases invalidas o un numero incorrecto")
+    return clases
 
 
 def verificar_campeon(nombre: str, alias: str, ejemplo: pd.DataFrame) -> list[str]:

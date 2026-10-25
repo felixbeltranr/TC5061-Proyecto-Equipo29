@@ -213,15 +213,34 @@ def test_comprobar_version_rechaza_grupos_invalidos(monkeypatch):
         sel.comprobar_version("m", "1", perfiles.head(5), CFG)
 
 
-def test_mlflow_project_seleccion_no_recibe_hiperparametros(monkeypatch):
+@pytest.mark.parametrize("valor", [np.inf, -np.inf, np.nan, -1, 0.5])
+def test_comprobar_version_rechaza_no_finitos_negativos_y_fraccionarios(monkeypatch, valor):
+    class ModeloInvalido:
+        def predict(self, entrada):
+            return np.full(len(entrada), valor)
+    monkeypatch.setattr(mlflow.pyfunc, "load_model", lambda uri: ModeloInvalido())
+    perfiles, _ = _perfiles()
+    with pytest.raises(ValueError, match="inválidos"):
+        sel.comprobar_version("m", "1", perfiles.head(5), CFG)
+
+
+@pytest.mark.parametrize("uri", [None, "sqlite:///evidence/tracking-comun.db"])
+def test_mlflow_project_seleccion_no_recibe_hiperparametros(monkeypatch, uri):
     from mibici import features_p3, mlflow_project
     from mibici.modeling import train_p3
 
     llamadas = {}
+    monkeypatch.delenv("MIBICI_TRACKING_URI", raising=False)
+    monkeypatch.delenv("MLFLOW_RUN_ID", raising=False)
+    if uri is not None:
+        monkeypatch.setenv("MIBICI_TRACKING_URI", uri)
     monkeypatch.setattr(features_p3, "main", lambda: None)
     monkeypatch.setattr(train_p3, "main", lambda **kw: llamadas.update(kw))
     mlflow_project.run_train("p3", "seleccion", {})
-    assert llamadas == {"model": "seleccion"}
+    assert llamadas == {
+        "model": "seleccion",
+        "tracking_uri": mlflow_project._project_tracking_uri(),
+    }
     with pytest.raises(ValueError, match="seleccion"):
         mlflow_project.run_train("p3", "seleccion", {"k": 3})
 
