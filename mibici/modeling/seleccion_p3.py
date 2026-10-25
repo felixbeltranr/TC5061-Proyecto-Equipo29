@@ -195,13 +195,44 @@ def tabla_seleccion(ranking: list[dict]) -> pd.DataFrame:
     )
 
 
-def registrar_en_registry(
-    ranking: list[dict], run_ids: dict[str, str], experimento: str, cfg: P3Config = CONFIG_P3
-) -> dict[str, str]:
-    """Registra campeón y retador como versiones nuevas y les asigna sus aliases.
+def comprobar_version(
+    nombre: str, version: str, ejemplo: pd.DataFrame, cfg: P3Config = CONFIG_P3
+) -> np.ndarray:
+    """Carga una versión por ``models:/<nombre>/<versión>`` y comprueba su predicción.
 
-    Cada versión lleva descripción y linaje: run de origen, commit, versión de datos,
-    experimento, candidata, posición en el ranking y criterio. Regresa {alias: versión}.
+    La predicción debe tener un grupo por fila, sin faltantes, y grupos enteros no negativos.
+    Lanza ValueError si no se cumple (o el error de MLflow si no carga).
+    """
+    modelo = mlflow.pyfunc.load_model(f"models:/{nombre}/{version}")
+    entrada = ejemplo[list(cfg.prioridad_variables)].astype("float64")
+    pred = np.asarray(modelo.predict(entrada), dtype=float).ravel()
+    if len(pred) != len(entrada):
+        raise ValueError(
+            f"La versión {version} predijo {len(pred)} grupos para {len(entrada)} filas"
+        )
+    if np.isnan(pred).any() or (pred < 0).any() or (pred != np.round(pred)).any():
+        raise ValueError(f"La versión {version} predijo grupos inválidos: {pred.tolist()}")
+    return pred.astype(int)
+
+
+def registrar_en_registry(
+    ranking: list[dict],
+    run_ids: dict[str, str],
+    experimento: str,
+    ejemplo: pd.DataFrame,
+    cfg: P3Config = CONFIG_P3,
+) -> dict[str, str]:
+    """Registra campeón y retador como versiones nuevas y solo después mueve sus aliases.
+
+    1. Registra cada versión con su descripción y su linaje: run de origen, commit, versión de
+       datos, experimento, candidata, posición en el ranking y motivo.
+    2. Carga cada versión nueva por ``models:/<nombre>/<versión>`` y comprueba su predicción
+       con ``ejemplo`` (``comprobar_version``).
+    3. Solo si todas pasan, mueve los aliases. Si alguna falla, marca las versiones nuevas con
+       ``comprobacion = fallida``, no toca los aliases (siguen en las versiones anteriores) y
+       lanza el error.
+
+    Regresa {alias: versión}.
     """
     cliente = MlflowClient()
     nombre = cfg.modelo_registrado
@@ -217,7 +248,7 @@ def registrar_en_registry(
                 f"{CRITERIO}"
             ),
         )
-    versiones = {}
+    nuevas = {}  # alias -> versión registrada, todavía sin alias
     for r in ranking:
         if not r["papel"]:
             continue
@@ -247,9 +278,18 @@ def registrar_en_registry(
                 f"{r['motivo']}."
             ),
         )
-        cliente.set_registered_model_alias(nombre, r["papel"], version.version)
-        versiones[r["papel"]] = version.version
-    return versiones
+        nuevas[r["papel"]] = version.version
+    try:
+        for version in nuevas.values():
+            comprobar_version(nombre, version, ejemplo, cfg)
+    except Exception:
+        for version in nuevas.values():
+            cliente.set_model_version_tag(nombre, version, "comprobacion", "fallida")
+        raise
+    for alias, version in nuevas.items():
+        cliente.set_model_version_tag(nombre, version, "comprobacion", "ok")
+        cliente.set_registered_model_alias(nombre, alias, version)
+    return nuevas
 
 
 def verificar_alias(ejemplo: pd.DataFrame, alias: str, cfg: P3Config = CONFIG_P3) -> np.ndarray:

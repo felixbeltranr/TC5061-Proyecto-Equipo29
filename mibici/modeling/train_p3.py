@@ -408,8 +408,9 @@ def seleccionar(ds: DatasetP3, cfg: P3Config = CONFIG_P3, registrar: bool = True
     3. Candidatas C1, C2 y C3 reentrenadas con todo el periodo de entrenamiento, con sus criterios
        de interpretabilidad.
     4. Ranking, campeón y retador; un run por candidata con ``data/criterios_interpretabilidad.csv``.
-    5. Registro del campeón (alias ``champion``) y del retador (``challenger``) en el Model
-       Registry, y prueba de carga por nombre y alias.
+    5. Registro del campeón y del retador en el Model Registry: se registran las versiones, se
+       carga y se prueba cada una, y solo entonces se mueven los aliases ``champion`` y
+       ``challenger``; al final, prueba de carga por nombre y alias.
     """
     k = cfg.k_baseline
     km, m = entrenar_baseline(ds, k, cfg)
@@ -454,8 +455,9 @@ def seleccionar(ds: DatasetP3, cfg: P3Config = CONFIG_P3, registrar: bool = True
                 "grupos_interpretabilidad.csv": r["grupos"],
             },
         )
-    versiones = sel.registrar_en_registry(ranking, run_ids, cfg.experimento, cfg)
-    grupos = sel.verificar_alias(ds.entrenamiento.head(5), cfg.alias_campeon, cfg)
+    ejemplo = ds.entrenamiento.head(5)
+    versiones = sel.registrar_en_registry(ranking, run_ids, cfg.experimento, ejemplo, cfg)
+    grupos = sel.verificar_alias(ejemplo, cfg.alias_campeon, cfg)  # verificación final por alias
     logger.success(
         f"{cfg.modelo_registrado}: versiones {versiones}; carga por "
         f"models:/{cfg.modelo_registrado}@{cfg.alias_campeon} OK (grupos {grupos.tolist()})"
