@@ -49,6 +49,7 @@ from sklearn.metrics import (
 from sklearn.preprocessing import StandardScaler
 import typer
 
+from mibici import features_pipeline
 from mibici.config import CONFIG, CONFIG_P3, PROJ_ROOT, P3Config
 from mibici.features_p3 import DatasetP3, a_km, cargar_dataset
 from mibici.modeling import artefactos_p3 as art

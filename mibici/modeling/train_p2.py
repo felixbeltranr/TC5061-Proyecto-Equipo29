@@ -39,7 +39,6 @@ import mlflow.sklearn
 import numpy as np
 from numpy.typing import ArrayLike
 import pandas as pd
-from sklearn.compose import ColumnTransformer
 from sklearn.ensemble import HistGradientBoostingClassifier, RandomForestClassifier
 from sklearn.impute import SimpleImputer
 from sklearn.inspection import permutation_importance
@@ -57,7 +56,7 @@ from sklearn.preprocessing import OneHotEncoder, StandardScaler
 import skops.io as sio
 
 from mibici import features_p2 as fp
-from mibici import registro
+from mibici import features_pipeline, registro
 from mibici.config import CONFIG, CONFIG_P2, PROJ_ROOT
 
 EXPERIMENTO = CONFIG_P2.experimento
@@ -231,20 +230,15 @@ def ajustar_logistica(train: pd.DataFrame, params: dict, semilla: int) -> Pipeli
     """Regresion logistica balanceada: hora y dia de la semana en one-hot, el resto imputado
     con la mediana (hay faltantes en los rezagos largos) y escalado."""
     numericas = [c for c in fp.FEATURES if c not in CATEGORICAS]
-    preproceso = ColumnTransformer(
-        [
-            ("categoricas", OneHotEncoder(handle_unknown="ignore"), CATEGORICAS),
-            (
-                "numericas",
-                make_pipeline(
-                    SimpleImputer(strategy="median", keep_empty_features=True), StandardScaler()
-                ),
-                numericas,
-            ),
-        ]
+    numericas_pipeline = make_pipeline(
+        SimpleImputer(strategy="median", keep_empty_features=True), StandardScaler()
     )
-    modelo = make_pipeline(
-        preproceso, LogisticRegression(class_weight="balanced", random_state=semilla, **params)
+    modelo = features_pipeline.make_tabular_pipeline(
+        LogisticRegression(class_weight="balanced", random_state=semilla, **params),
+        numerical_features=numericas,
+        categorical_features=CATEGORICAS,
+        numerical_transformer=numericas_pipeline,
+        categorical_transformer=OneHotEncoder(handle_unknown="ignore"),
     )
     return modelo.fit(train[fp.FEATURES], train["objetivo"])
 
@@ -252,11 +246,12 @@ def ajustar_logistica(train: pd.DataFrame, params: dict, semilla: int) -> Pipeli
 def ajustar_random_forest(train: pd.DataFrame, params: dict, semilla: int) -> Pipeline:
     """RandomForest balanceado por arbol; max_samples acota el costo y se recorta a len(train)."""
     params = {**params, "max_samples": min(params["max_samples"], len(train))}
-    modelo = make_pipeline(
-        SimpleImputer(strategy="median", keep_empty_features=True),
+    modelo = features_pipeline.make_tabular_pipeline(
         RandomForestClassifier(
             class_weight="balanced_subsample", n_jobs=-1, random_state=semilla, **params
         ),
+        numerical_features=fp.FEATURES,
+        numerical_transformer=SimpleImputer(strategy="median", keep_empty_features=True),
     )
     return modelo.fit(train[fp.FEATURES], train["objetivo"])
 
