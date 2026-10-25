@@ -129,7 +129,8 @@ def _dataset() -> DatasetP3:
     )
 
 
-def test_registro_con_aliases_y_carga_por_nombre(tmp_path):
+def _registrar_dos_candidatas(tmp_path):
+    """Dos runs candidatos en un MLflow temporal; regresa (ds, run_ids, ranking)."""
     mlflow.set_tracking_uri(f"sqlite:///{(tmp_path / 'mlflow.db').as_posix()}")
     mlflow.set_experiment("p3-prueba")
     ds = _dataset()
@@ -139,7 +140,13 @@ def test_registro_con_aliases_y_carga_por_nombre(tmp_path):
         run_ids[clave] = registrar_candidata(ds, "kmeans_uso", {"k": k}, modelo, m, CFG)
         filas.append({**_r(k, 0.3 - k / 100, True), "candidata": clave})
     ranking = sel.elegir_campeon({f["candidata"]: f for f in filas}, CFG)
-    versiones = sel.registrar_en_registry(ranking, run_ids, "p3-prueba", CFG)
+    return ds, run_ids, ranking
+
+
+def test_registro_con_aliases_y_carga_por_nombre(tmp_path):
+    ds, run_ids, ranking = _registrar_dos_candidatas(tmp_path)
+    ejemplo = ds.entrenamiento.head(5)
+    versiones = sel.registrar_en_registry(ranking, run_ids, "p3-prueba", ejemplo, CFG)
     assert set(versiones) == {"champion", "challenger"}
 
     cliente = mlflow.MlflowClient()
@@ -149,9 +156,61 @@ def test_registro_con_aliases_y_carga_por_nombre(tmp_path):
         campeon.tags
     )
     assert campeon.tags["data_version"] == "prueba" and campeon.description
+    assert campeon.tags["comprobacion"] == "ok"
     assert cliente.get_registered_model(CFG.modelo_registrado).description
-    grupos = sel.verificar_alias(ds.entrenamiento.head(5), "champion", CFG)
+    grupos = sel.verificar_alias(ejemplo, "champion", CFG)
     assert len(grupos) == 5
+
+
+class _ModeloRoto:
+    """Modelo que carga pero predice mal (un faltante y menos filas de las pedidas)."""
+
+    def predict(self, X):
+        return np.array([np.nan] * (len(X) - 1))
+
+
+@pytest.mark.parametrize("falla", ["carga", "prediccion"])
+def test_si_la_comprobacion_falla_se_conservan_los_aliases_anteriores(
+    tmp_path, monkeypatch, falla
+):
+    ds, run_ids, ranking = _registrar_dos_candidatas(tmp_path)
+    ejemplo = ds.entrenamiento.head(5)
+    anteriores = sel.registrar_en_registry(ranking, run_ids, "p3-prueba", ejemplo, CFG)
+
+    cargar_original = mlflow.pyfunc.load_model
+
+    def cargar_con_falla(uri, *args, **kwargs):
+        es_version_nueva = uri.startswith(f"models:/{CFG.modelo_registrado}/") and int(
+            uri.rsplit("/", 1)[1]
+        ) > max(int(v) for v in anteriores.values())
+        if not es_version_nueva:
+            return cargar_original(uri, *args, **kwargs)
+        if falla == "carga":
+            raise OSError("no se pudo cargar el modelo")
+        return _ModeloRoto()
+
+    monkeypatch.setattr(mlflow.pyfunc, "load_model", cargar_con_falla)
+    with pytest.raises((OSError, ValueError)):
+        sel.registrar_en_registry(ranking, run_ids, "p3-prueba", ejemplo, CFG)
+
+    cliente = mlflow.MlflowClient()
+    for alias, version in anteriores.items():  # los aliases siguen en las versiones anteriores
+        assert cliente.get_model_version_by_alias(CFG.modelo_registrado, alias).version == version
+    nuevas = [
+        v
+        for v in cliente.search_model_versions(f"name='{CFG.modelo_registrado}'")
+        if v.version not in anteriores.values()
+    ]
+    assert len(nuevas) == 2 and all(v.tags.get("comprobacion") == "fallida" for v in nuevas)
+    monkeypatch.setattr(mlflow.pyfunc, "load_model", cargar_original)
+    assert len(sel.verificar_alias(ejemplo, "champion", CFG)) == 5  # producción sigue sirviendo
+
+
+def test_comprobar_version_rechaza_grupos_invalidos(monkeypatch):
+    monkeypatch.setattr(mlflow.pyfunc, "load_model", lambda uri: _ModeloRoto())
+    perfiles, _ = _perfiles()
+    with pytest.raises(ValueError, match="predijo"):
+        sel.comprobar_version("m", "1", perfiles.head(5), CFG)
 
 
 def test_mlflow_project_seleccion_no_recibe_hiperparametros(monkeypatch):
