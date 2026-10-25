@@ -14,6 +14,10 @@ from mibici.modeling import train_p2 as t2
 NOMBRE = "mibici-equipo29-p2-riesgo"
 
 
+def ejemplo_prueba():
+    return pd.DataFrame(np.zeros((3, len(fp.FEATURES))), columns=fp.FEATURES)
+
+
 def val(macro_f1, rec_sb, rec_sa, pr_sb, pr_sa, conjunto="val"):
     """Metricas de una candidata con los nombres que registra train_p2."""
     return {
@@ -128,7 +132,8 @@ def test_registra_el_campeon_con_alias_descripciones_y_linaje(tracking):
     run_id, uri = entrenar_y_loguear()
     campeon = registro.seleccionar_campeon(NIVEL_050, BALANCEADAS)
     version = registro.registrar_campeon(
-        NOMBRE, "champion", run_id, uri, campeon, {"nivel_inicial": "0.5", "experimento": "x"}
+        NOMBRE, "champion", run_id, uri, campeon, {"nivel_inicial": "0.5", "experimento": "x"},
+        ejemplo_prueba(),
     )
     assert version.version == 1 and version.name == NOMBRE
     modelo = tracking.get_registered_model(NOMBRE)
@@ -152,7 +157,8 @@ def test_registra_el_campeon_con_alias_descripciones_y_linaje(tracking):
 def test_carga_el_campeon_por_alias_y_predice_un_ejemplo(tracking):
     run_id, uri = entrenar_y_loguear()
     registro.registrar_campeon(
-        NOMBRE, "champion", run_id, uri, registro.seleccionar_campeon(NIVEL_050, BALANCEADAS), {}
+        NOMBRE, "champion", run_id, uri, registro.seleccionar_campeon(NIVEL_050, BALANCEADAS), {},
+        ejemplo_prueba(),
     )
     ejemplo = pd.DataFrame(np.zeros((3, len(fp.FEATURES))), columns=fp.FEATURES)
     clases = registro.verificar_campeon(NOMBRE, "champion", ejemplo)
@@ -164,11 +170,42 @@ def test_carga_el_campeon_por_alias_y_predice_un_ejemplo(tracking):
 def test_una_nueva_version_mueve_el_alias_sin_crear_otro_modelo(tracking):
     campeon = registro.seleccionar_campeon(NIVEL_050, BALANCEADAS)
     primero, uri1 = entrenar_y_loguear(1)
-    registro.registrar_campeon(NOMBRE, "champion", primero, uri1, campeon, {})
+    registro.registrar_campeon(NOMBRE, "champion", primero, uri1, campeon, {}, ejemplo_prueba())
     segundo, uri2 = entrenar_y_loguear(2)
-    version = registro.registrar_campeon(NOMBRE, "champion", segundo, uri2, campeon, {})
+    version = registro.registrar_campeon(NOMBRE, "champion", segundo, uri2, campeon, {}, ejemplo_prueba())
     assert version.version == 2
     assert tracking.get_registered_model(NOMBRE).aliases == {"champion": 2}
     assert tracking.get_model_version_by_alias(NOMBRE, "champion").run_id == segundo
     assert len(tracking.search_registered_models()) == 1
     assert len(tracking.search_model_versions(f"name='{NOMBRE}'")) == 2
+
+
+@pytest.mark.parametrize("fallo", ["carga", "prediccion"])
+def test_promocion_fallida_conserva_alias_anterior(tracking, monkeypatch, fallo):
+    campeon = registro.seleccionar_campeon(NIVEL_050, BALANCEADAS)
+    run_id, uri = entrenar_y_loguear()
+    anterior = registro.registrar_campeon(
+        NOMBRE, "champion", run_id, uri, campeon, {}, ejemplo_prueba()
+    )
+    cargar = mlflow.pyfunc.load_model
+
+    def cargar_roto(model_uri, *args, **kwargs):
+        if model_uri.startswith(f"models:/{NOMBRE}/"):
+            if fallo == "carga":
+                raise OSError("carga fallida")
+            class ModeloRoto:
+                def predict(self, entrada):
+                    return ["clase_desconocida"] * len(entrada)
+            return ModeloRoto()
+        return cargar(model_uri, *args, **kwargs)
+
+    monkeypatch.setattr(mlflow.pyfunc, "load_model", cargar_roto)
+    with pytest.raises((OSError, ValueError)):
+        registro.registrar_campeon(
+            NOMBRE, "champion", run_id, uri, campeon, {}, ejemplo_prueba()
+        )
+    actual = tracking.get_model_version_by_alias(NOMBRE, "champion")
+    assert str(actual.version) == str(anterior.version)
+    nueva = tracking.get_model_version(NOMBRE, str(int(anterior.version) + 1))
+    assert nueva.tags["comprobacion"] == "fallida"
+    assert len(registro.verificar_campeon(NOMBRE, "champion", ejemplo_prueba())) == 3

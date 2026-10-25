@@ -838,6 +838,7 @@ def registrar_ganadora(args: argparse.Namespace, todo: dict, run_ids: dict) -> d
     nivel = str(args.niveles[0])
     campeon = registro.seleccionar_campeon(todo[nivel], CONFIG_P2.candidatas_campeon)
     origen = run_ids[nivel][campeon["clave"]]
+    ejemplo = pd.DataFrame([dict.fromkeys(fp.FEATURES, 0.0)])
     version = registro.registrar_campeon(
         CONFIG_P2.modelo_registrado,
         CONFIG_P2.alias_campeon,
@@ -845,9 +846,9 @@ def registrar_ganadora(args: argparse.Namespace, todo: dict, run_ids: dict) -> d
         origen["model_uri"],
         campeon,
         {"experimento": CONFIG_P2.experimento, "nivel_inicial": nivel},
+        ejemplo,
     )
     # prueba de humo: carga por alias y predice con una fila de ejemplo de cada clase de entrada
-    ejemplo = pd.DataFrame([dict.fromkeys(fp.FEATURES, 0.0)])
     clases = registro.verificar_campeon(
         CONFIG_P2.modelo_registrado, CONFIG_P2.alias_campeon, ejemplo
     )
