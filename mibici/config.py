@@ -94,12 +94,28 @@ class P3Config:
     )  # orden en que se conservan las variables al quitar redundancia
     umbral_vif: float = 5.0
 
-    # Modelo
-    model: str = "kmeans"
+    # Modelo: kmeans_geo (baseline geográfico), kmeans_uso o gmm_uso (candidatas de uso, en
+    # mibici/modeling/modelos_p3.py). Los valores de abajo son los de omisión de cada uno.
+    model: str = "kmeans_geo"
     seed: int = 42
     k_baseline: int = 5
     k_comparacion: tuple[int, ...] = (4, 5, 6)
     n_init: int = 20
+    covarianza_gmm: str = "full"
+
+    # Validación interna por estaciones y búsqueda (solo datos anteriores a mayo de 2026)
+    n_particiones: int = 5  # KFold de estaciones: cada partición reserva el 20 % para validar
+    k_busqueda: tuple[int, ...] = (3, 4, 5, 6, 7, 8)  # KMeans de uso
+    componentes_busqueda: tuple[int, ...] = (3, 4, 5, 6, 7, 8)  # GaussianMixture
+    covarianzas_busqueda: tuple[str, ...] = ("full", "tied", "diag", "spherical")
+    empate_silueta: float = 0.01  # diferencia de silueta por debajo de la cual decide el ARI
+
+    # Selección del campeón (criterios de interpretabilidad, fijados antes de correr) y registro
+    tamano_minimo_grupo: float = 0.05  # I1: cada grupo con al menos 5 % de las estaciones
+    umbral_z: float = 0.5  # I2 e I3: diferencia mínima en desviaciones estándar
+    modelo_registrado: str = "mibici-equipo29-p3-grupos"
+    alias_campeon: str = "champion"
+    alias_retador: str = "challenger"
     lat_ref: float = 20.67  # latitud de Guadalajara para proyectar a km
 
     # MLflow: mismo backend local y esquema de etiquetas que P2. No se usa
