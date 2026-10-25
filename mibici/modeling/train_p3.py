@@ -96,8 +96,9 @@ def espacio_uso(ds: DatasetP3) -> tuple[np.ndarray, np.ndarray]:
     El escalado se aprende solo con el periodo de entrenamiento.
     """
     en, ev, vars_ = ds.entrenamiento, ds.evaluacion, ds.variables
-    escalador = StandardScaler().fit(en[vars_])
-    return escalador.transform(en[vars_]), escalador.transform(ev[vars_])
+    return features_pipeline.fit_transform_train_and_holdouts(
+        StandardScaler(), en[vars_], ev[vars_]
+    )
 
 
 def entrenar_baseline(

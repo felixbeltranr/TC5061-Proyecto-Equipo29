@@ -25,6 +25,7 @@ def main(
         carpeta / CONFIG_P2.nomenclatura_path.name
     ]
     manifiesto = manifiesto_datos(archivos)
+    salida.parent.mkdir(parents=True, exist_ok=True)
     salida.write_text(json.dumps(manifiesto, indent=2) + "\n")
     logger.info("Manifiesto {} con version {}", salida, manifiesto["version"])
 

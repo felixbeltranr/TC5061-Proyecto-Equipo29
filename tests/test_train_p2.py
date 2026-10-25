@@ -1003,16 +1003,28 @@ def espias_p2(monkeypatch):
     return llamadas
 
 
-def test_despachador_p2_prepara_features_y_llama_a_train_con_model_e_hiperparametros(espias_p2):
+@pytest.mark.parametrize("uri", [None, "sqlite:///evidence/tracking-comun.db"])
+def test_despachador_p2_prepara_features_y_llama_a_train_con_model_e_hiperparametros(
+    espias_p2, monkeypatch, uri
+):
+    monkeypatch.delenv("MIBICI_TRACKING_URI", raising=False)
+    monkeypatch.delenv("MLFLOW_RUN_ID", raising=False)
+    if uri is not None:
+        monkeypatch.setenv("MIBICI_TRACKING_URI", uri)
+    expected_uri = mp._project_tracking_uri()
     mp.run_train("p2", hyperparameters={"max_iter": 10, "learning_rate": 0.05})
     assert [c[0] for c in espias_p2] == ["features_p2", "train_p2"]  # primero las features
     # los hiperparametros viajan como JSON compacto y el modelo por defecto sale de la config
     assert espias_p2[1][1] == [
         "--model", CONFIG_P2.model, "--hyperparameters", '{"max_iter":10,"learning_rate":0.05}',
+        "--tracking-uri", expected_uri,
     ]  # fmt: skip
     espias_p2.clear()
     mp.main(["train", "--question", "p2"])  # sin hiperparametros viaja un objeto vacio
-    assert espias_p2[1][1] == ["--model", "hist_gradient_boosting", "--hyperparameters", "{}"]
+    assert espias_p2[1][1] == [
+        "--model", "hist_gradient_boosting", "--hyperparameters", "{}",
+        "--tracking-uri", expected_uri,
+    ]
     espias_p2.clear()
     mp.main(["train", "--question", "p2", "--hyperparameters", "max_iter=10,max_leaf_nodes=7"])
     assert json.loads(espias_p2[1][1][3]) == {"max_iter": 10, "max_leaf_nodes": 7}
@@ -1035,6 +1047,8 @@ def test_despachador_quita_mlflow_run_id_durante_el_entrenamiento_y_lo_restaura(
 ):
     # con mlflow run el proyecto ya abre un run; train_p2 debe crear los suyos sin anidarse
     monkeypatch.setenv("MLFLOW_RUN_ID", "run_del_proyecto")
+    monkeypatch.setenv("MIBICI_TRACKING_URI", "http://localhost:5000")
+    monkeypatch.setenv("MLFLOW_TRACKING_URI", "http://localhost:5000")
     visto = []
     monkeypatch.setattr(
         t2, "main", lambda argv=None: visto.append(os.environ.get("MLFLOW_RUN_ID"))
