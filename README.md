@@ -75,18 +75,32 @@ El rango incluye los meses inicial y final. Si omites las opciones, se usa el ra
 El `MLproject` de la raíz define dos entry points. El entorno usa las dependencias de `requirements.txt`; los defaults de rutas, fechas, semillas y parámetros del modelo se leen desde `mibici/config.py`:
 
 ```powershell
+$raiz = (Resolve-Path .).Path.Replace('\', '/')
+$env:MIBICI_TRACKING_URI = "sqlite:///$raiz/mlflow.db"
+$env:MLFLOW_TRACKING_URI = $env:MIBICI_TRACKING_URI
 mlflow run . -e ingest --env-manager local
-mlflow run . -e train -P question=p1 -P model=hgb_poisson -P hyperparameters=max_iter=300 --env-manager local
+mlflow run . -e train -P question=p1 -P model=auto -P 'hyperparameters={}' --env-manager local
 mlflow run . -e train -P question=p2 -P model=hist_gradient_boosting -P hyperparameters=max_iter=300,max_leaf_nodes=63 --env-manager local
 mlflow run . -e train -P question=p3 -P model=seleccion --env-manager local
 ```
 
-Ejecuta `ingest` antes de `train`. El entry point `train` genera las features del problema indicado (`p1`, `p2` o `p3`) y después llama su entrenador configurado. Los modelos disponibles actualmente son P1 `auto`, `poisson` y `hgb_poisson`; P2 `hist_gradient_boosting`; y P3 `kmeans_geo`, `kmeans_uso`, `gmm_uso` y `seleccion` (flujo completo, ver la sección de P3). `auto` usa la selección configurada para P1. `hyperparameters` acepta pares separados por coma: P1 Poisson admite `alpha`; P1 HGB Poisson y P2 admiten `learning_rate`, `max_leaf_nodes`, `max_iter` y `l2_regularization`; P3 admite `k` y `n_init` (`kmeans_geo` y `kmeans_uso`), `n_components`, `covariance_type` y `n_init` (`gmm_uso`), o `buscar=1` para la búsqueda con runs anidados. Por ejemplo, Random Forest y `n_estimators` no son compatibles con los modelos actuales.
+Ejecuta `ingest` antes de `train`: descarga y combina los datos y después genera el manifiesto común de versión en `references/manifiesto_datos_p2.json`. El entry point `train` genera las features del problema indicado (`p1`, `p2` o `p3`) y después llama su entrenador configurado. Los modelos disponibles actualmente son P1 `auto`, `poisson`, `hgb_poisson` y `hgb_absoluto`; P2 `hist_gradient_boosting`; y P3 `kmeans_geo`, `kmeans_uso`, `gmm_uso` y `seleccion` (flujo completo, ver la sección de P3). `auto` usa la selección configurada para P1. `hyperparameters` acepta pares separados por coma: P1 Poisson admite `alpha`; P1 HGB Poisson, HGB absoluto y P2 admiten `learning_rate`, `max_leaf_nodes`, `max_iter` y `l2_regularization`; P3 admite `k` y `n_init` (`kmeans_geo` y `kmeans_uso`), `n_components`, `covariance_type` y `n_init` (`gmm_uso`), o `buscar=1` para la búsqueda con runs anidados. Por ejemplo, Random Forest y `n_estimators` no son compatibles como opciones individuales del entry point.
 
 Los ejemplos incluyen `--env-manager local` para reutilizar el entorno virtual activo. Si no vas a usar un entorno virtual ya activado y quieres que MLflow gestione el entorno del proyecto, puedes omitir esa opción.
 
 
-MLflow hereda las variables del proceso que lo ejecuta. Una variable sólo tendrá efecto si MLflow o el código del entry point la consulta; agregarla al entorno no crea automáticamente un parámetro de MLflow. Para parámetros definidos por el entry point, usa `-P nombre=valor`. En este proyecto, `mibici.config` carga un archivo `.env`, pero las rutas, fechas, semillas y URI de seguimiento se toman actualmente de `CONFIG`, `CONFIG_P1`, `CONFIG_P2` y `CONFIG_P3`; definir `MLFLOW_TRACKING_URI` por sí solo no reemplaza esos valores. La opción `--env-manager local` es un argumento de MLflow, no una variable de entorno; úsala para ejecutar con el entorno virtual activo y evitar que MLflow intente instalar Python con `pyenv`.
+El almacén del proyecto se elige con `MIBICI_TRACKING_URI`; si no está definida, se usa una URI SQLite absoluta a `mlflow.db` en la raíz del repositorio. Las rutas SQLite relativas de esa variable se resuelven contra la raíz del repositorio, independientemente del directorio desde el que se invoque. MLflow inyecta `MLFLOW_TRACKING_URI` en sus subprocesos incluso sin una elección explícita del usuario; por ello su presencia no sustituye esta configuración del proyecto.
+
+Antes de `mlflow run`, desde la raíz del repositorio, configura ambas variables con la misma URI absoluta para que el run exterior y los entrenamientos usen el mismo almacén:
+
+```powershell
+$raiz = (Resolve-Path .).Path.Replace('\', '/')
+$env:MIBICI_TRACKING_URI = "sqlite:///$raiz/mlflow.db"
+$env:MLFLOW_TRACKING_URI = $env:MIBICI_TRACKING_URI
+mlflow run . -e train -P question=all -P 'hyperparameters={}' --env-manager local
+```
+
+`question=all` ejecuta P1 con `auto`, P2 con su modelo configurado y P3 con `seleccion`; no acepta un modelo ni hiperparámetros compartidos. El entry point comprueba la URI inyectada del run exterior antes de entrenar: si difiere del almacén elegido o sigue siendo una ruta SQLite relativa ambigua, detiene la ejecución y pide configurar ambas variables antes de relanzar. Cambiar el almacén dentro del subproceso no puede trasladar un run exterior ya creado. En una invocación directa sin run exterior, el almacén del proyecto prevalece sobre un `MLFLOW_TRACKING_URI` incidental. Al terminar, el despachador restaura el entorno previo.
 
 `combined_dataset.parquet` es la entrada común de las tres preguntas: conserva todos los viajes y sus identificadores (`Viaje_Id`, `Origen_Id`, `Destino_Id`). Cada pregunta aplica después sus propios filtros.
 
@@ -109,7 +123,7 @@ Se quedan en su módulo las constantes internas que forman parte de la definici�
 
 - P1 usa el constructor compartido para la regresión de Poisson: aplica `log1p` y escalado a los conteos, codifica el día de la semana y deja pasar las variables binarias. HistGradientBoosting recibe sus features directamente, pues maneja el día como categórico y no necesita esa transformación.
 - P2 lo usa para la regresión logística (imputación y escalado numérico, one-hot para hora y día) y Random Forest (imputación). HistGradientBoosting continúa recibiendo las variables originales, ya que no requiere escalado y maneja valores faltantes.
-- P3 usa el helper de ajuste train-only para escalar el espacio de uso que alimenta las métricas. El clustering continúa usando coordenadas geográficas en kilómetros; escalar cada coordenada por separado cambiaría la distancia geográfica que representa el modelo.
+- P3 usa el helper de ajuste train-only para escalar el espacio de uso que alimenta las métricas. El baseline geográfico usa coordenadas en kilómetros; los modelos de uso conservan sus pipelines de selección por VIF, escalado y clustering sobre variables de uso.
 
 Al añadir un modelo, elige transformaciones según el algoritmo y el significado de sus features. Ajusta imputadores, escaladores y codificadores solo con `fit`/`fit_transform` sobre train; usa luego `transform` en validación, prueba y producción. Mantén juntas las transformaciones y el estimador en un `Pipeline` cuando formen parte de la predicción, para evitar diferencias entre entrenamiento e inferencia. No escales por defecto modelos de árboles ni apliques transformaciones pensadas para otro problema.
 
@@ -117,33 +131,63 @@ Al añadir un modelo, elige transformaciones según el algoritmo y el significad
 
 ### P1 · demanda diaria por estación
 
-```bash
-python -m mibici.dataset
-python -m mibici.features
-python -m mibici.modeling.train_p1 --autor "Nombre Apellido"
+```powershell
+mlflow run . -e ingest --env-manager local
+mlflow run . -e train -P question=p1 -P model=auto -P 'hyperparameters={}' --env-manager local
 ```
 
 1. `mibici.dataset` descarga los 21 meses y la nomenclatura y guarda `data/processed/combined_dataset.parquet`.
 2. `mibici.features` construye el panel estación-día de salidas en `data/interim/p1_panel_diario.parquet` y su resumen `p1_panel_diario.json`.
-3. `mibici.modeling.train_p1` entrena los baselines (semana previa y persistencia), la regresión de Poisson regularizada y HistGradientBoosting con pérdida de Poisson; registra cuatro runs en MLflow y guarda sus figuras y `p1_resultados.json` en `reports/figures/`.
+3. `mibici.modeling.train_p1` entrena los baselines (semana previa y persistencia) y tres candidatas: la regresión de Poisson regularizada (`poisson`), HistGradientBoosting con pérdida de Poisson (`hgb_poisson`) y HistGradientBoosting con pérdida absoluta (`hgb_absoluto`). Las dos de HistGradientBoosting recorren la misma rejilla, así que entre ellas sólo cambia la pérdida: la de Poisson estima la media de un conteo y la absoluta la mediana, que es lo que minimiza el MAE con el que se elige. La búsqueda registra un run padre por candidata y un hijo anidado por cada combinación de hiperparámetros; después registra las candidatas finales y sus artefactos. Con `mlflow run`, `-P model=` también acepta `hgb_absoluto`, con los mismos hiperparámetros que `hgb_poisson`.
 
 Partición por fecha objetivo: FIT hasta 2026-02-27, VAL de 2026-03-01 a 2026-04-29, entrenamiento final con las filas elegibles hasta 2026-04-29 y TEST de 2026-05-01 a 2026-09-30. Las variables usan información hasta D-2 porque el día D-1 aún no cierra al emitir el pronóstico. Los cortes, la semilla (29), las rejillas de hiperparámetros y las rutas de P1 están en `CONFIG_P1` de `mibici/config.py`.
+
+Cada hiperparámetro se elige por menor `val_mae`, sin consultar prueba. La selección parte de la baseline de semana previa y sólo la reemplaza una candidata que también cumpla la política de dominio descrita abajo; si dos empatan, se queda la primera en el orden `poisson`, `hgb_poisson`, `hgb_absoluto`. Persistencia se mide y se registra como baseline, pero no es elegible para sustituir a semana previa bajo la política vigente. Cambiar esa elegibilidad requiere una decisión del equipo, no sólo una diferencia numérica observada en prueba.
+
+#### Politica de dominio para esta iteracion
+
+Antes de comparar MAE, una candidata solo es elegible si todas sus predicciones de validacion son numericas, finitas y mayores o iguales a cero, como corresponde a una demanda de viajes. La seleccion conserva la regla de menor `val_mae` y no consulta prueba. La candidata que no cumpla el dominio conserva su run, metricas y artefactos; no se recorta su salida ni se ajusta de nuevo.
+
+Esta regla se introdujo despues de la auditoria local en la que ya se habian observado resultados de prueba. Por tanto, esta iteracion no se presenta como una evaluacion con prueba intacta. La regla se aplica exclusivamente con validacion y no autoriza a retocar modelos o hiperparametros usando prueba.
+
+Cada candidata registra `val_pred_min` cuando existe al menos una prediccion finita, los conteos de negativos y no finitos y `val_domain_eligible`, ademas de etiquetas con el motivo de elegibilidad. Las tres candidatas siguen visibles y comparables aunque alguna sea inelegible. El humo de la version inmutable exige una prediccion numerica, finita y no negativa antes de mover el alias.
+
+El Registry solo puede mover `champion` en una ejecucion `model=auto`, despues de comparar las candidatas. Una ejecucion individual registra evidencia pero no promueve. Si no hay candidatas elegibles, no se promueve ninguna y se conserva el campeon previo.
+
+#### Tracking avanzado y Registry de P1
+
+- Los runs llevan `question`, `team`, `author`, `data_range`, `seed`, `data_version`, `git_commit`, `git_dirty`, `model_family` y `stage_of_work`; esta última distingue `baseline`, `search` y `candidate`.
+- Con `model=auto`, las rejillas configuradas producen cinco hijos de búsqueda para Poisson y tres para cada HistGradientBoosting (once en total), y tres runs `candidate` con artefactos completos, uno por candidata.
+- Cada candidato final guarda el modelo en formato skops mediante `log_model`, con firma y ejemplo de entrada. También registra muestras acotadas de entrenamiento, validación y prueba mediante `log_input`; se guardan esquema, perfil, digest, versión y número total de filas, no las tablas completas.
+- Los artefactos se organizan en `plots/` (real contra pronóstico y, en cada candidata, residuales de prueba), `data/` (manifiesto, resumen y, cuando aplica, coeficientes) y `config/` (configuración y rejilla). `p1_resultados.json` conserva la comparación de baselines y candidatos.
+- Diagnóstico de prueba del modelo ya elegido, sin intervenir en la selección ni en los hiperparámetros: cada run final registra `test_mae_AAAA_MM` de mayo a septiembre de 2026 y `test_mae_mensual_desv` (desviación del MAE entre meses), y cada candidata guarda `plots/p1_residuales_<candidata>.png` con los residuales (pronóstico menos real) contra el pronóstico y su distribución con el sesgo medio.
+- El ganador elegible se registra como `mibici-equipo29-p1-demanda`. La versión incluye linaje al experimento, run de origen, commit, estado `git_dirty`, versión de datos y diagnóstico de dominio. Primero se carga la URI inmutable `models:/mibici-equipo29-p1-demanda/<version>` y se exige una predicción numérica, finita y no negativa; sólo entonces se mueve el alias `champion`. Si la carga o la predicción falla, la versión queda disponible para diagnóstico y el alias previo se conserva.
+- El Registry sólo promueve el modelo elegido en una comparación `model=auto`. Si la política vigente seleccionara semana previa o no hubiera candidatas elegibles, el flujo no promueve silenciosamente otra candidata y conserva el alias previo.
+
+Para cargar el campeón validado:
+
+```python
+import mlflow
+import os
+
+mlflow.set_tracking_uri(os.environ["MLFLOW_TRACKING_URI"])
+modelo = mlflow.pyfunc.load_model("models:/mibici-equipo29-p1-demanda@champion")
+demanda = modelo.predict(entrada)  # una predicción numérica por fila estación-día
+```
 
 ### P2 · riesgo de estación
 
 P2 clasifica el riesgo horario de que una estación se quede sin bicicletas o sin anclajes. La ocupación se estima a partir del flujo neto acumulado de viajes y la capacidad de la estación; no proviene de mediciones directas de inventario. El entrenamiento compara baselines con `HistGradientBoostingClassifier` balanceado y evalúa macro F1, métricas por clase y estaciones nuevas.
 
-```bash
-python -m mibici.manifiesto_p2
-python -m mibici.features_p2
-python -m mibici.modeling.train_p2
+```powershell
+mlflow run . -e train -P question=p2 -P 'hyperparameters={}' --env-manager local
 ```
 
 `features_p2` genera `data/interim/p2_panel_horario.parquet` y su resumen JSON. `train_p2` busca los hiperparámetros del HGB en la rejilla de `CONFIG_P2` como corridas anidadas (un run padre `p2_busqueda_<nivel>` y un hijo por combinación), entrena tres baselines y tres candidatas (regresión logística balanceada, HGB balanceado con la mejor combinación y RandomForest balanceado, con los parámetros de `CONFIG_P2`), registra los runs con las etiquetas `model_family` y `stage_of_work`, métricas de validación y de prueba, `fit_seconds` y `model_size_mb` y guarda matrices de confusión, importancia por permutación y `p2_resultados.json` en `reports/runs_p2/` (ignorada por git, configurable con `--figuras`; `reports/figures/` conserva las figuras del reporte). Los artefactos de MLflow van a `mlartifacts/` o a la carpeta de `--artefactos` si el experimento aún no existe. Los cortes temporales, umbrales de riesgo, nivel inicial de ocupación, semilla y rejilla están en `CONFIG_P2` de `mibici/config.py`.
 
 #### Campeón de P2 en el Model Registry
 
-Al terminar, `train_p2` registra **solo al campeón** en el modelo `mibici-equipo29-p2-riesgo` (una pregunta, un modelo registrado) y mueve el alias `champion` a esa versión. Cada versión nueva lleva su descripción y las etiquetas de linaje `run_id`, `git_commit`, `data_version`, `experimento`, `nivel_inicial`, `criterio_seleccion` y `candidata`. La opción `--no-registrar` omite el registro; por omisión está activa. `mibici/mlflow_project.py` solo pasa `--model` y `--hyperparameters`, así que con `mlflow run` siempre se registra.
+Al terminar, `train_p2` registra **solo al campeón** en el modelo `mibici-equipo29-p2-riesgo` (una pregunta, un modelo registrado). Antes de mover `champion`, carga la nueva versión por su URI inmutable y exige una clase válida por fila; si falla, la versión queda marcada y el alias anterior se conserva. Después mantiene la comprobación final por alias. Cada versión nueva lleva su descripción y las etiquetas de linaje `run_id`, `git_commit`, `data_version`, `experimento`, `nivel_inicial`, `criterio_seleccion` y `candidata`. La opción `--no-registrar` omite el registro; por omisión está activo. El entry point propaga modelo, hiperparámetros y URI común; con `mlflow run` el registro está activo.
 
 El campeón se elige con una regla explícita (`mibici/registro.py`, `seleccionar_campeon`): entre las candidatas balanceadas (`CONFIG_P2.candidatas_campeon`), la de mayor recall medio de `sin_bicicletas` y `sin_anclajes` en **validación** al primer nivel inicial de la corrida; si dos candidatas difieren en menos de 0.005 de ese recall se consideran empatadas y decide el PR AUC medio de las mismas clases. No se usa la prueba para elegir y tampoco el macro F1. En la corrida real con nivel inicial 0.5 el campeón es HistGradientBoosting balanceado (recall medio de validación 0.952 contra 0.950 de la regresión logística y 0.942 del RandomForest, con mayor PR AUC).
 
@@ -158,7 +202,8 @@ Cómo cargarlo y qué necesita quien lo use:
 ```python
 import mlflow
 
-mlflow.set_tracking_uri("sqlite:///mlflow.db")  # el almacén donde se corrió train_p2
+import os
+mlflow.set_tracking_uri(os.environ["MLFLOW_TRACKING_URI"])
 modelo = mlflow.pyfunc.load_model("models:/mibici-equipo29-p2-riesgo@champion")
 clases = modelo.predict(entrada)  # una clase por fila: segura, sin_bicicletas o sin_anclajes
 ```
@@ -187,13 +232,7 @@ Reproducir el modelo elegido desde un clon limpio, después de `ingest` y de gen
 mlflow run . -e train -P question=p3 -P model=seleccion --env-manager local
 ```
 
-En Windows con PowerShell agrega `-P 'hyperparameters={}'` (con comillas simples) a los comandos de P3 que no pasan hiperparámetros: si el parámetro se omite, MLflow envía unas comillas vacías que el punto de entrada no interpreta.
-
-```powershell
-mlflow run . -e train -P question=p3 -P model=seleccion -P 'hyperparameters={}' --env-manager local
-```
-
-Ese comando (unos 3 minutos) corre todo el flujo de `train_p3.seleccionar`:
+Ese comando corre todo el flujo de `train_p3.seleccionar`:
 
 1. **Baseline** `kmeans_geo`: KMeans sobre la ubicación (k = 5).
 2. **Búsquedas con runs anidados** (un run padre `p3-busqueda-<modelo>` y un hijo por combinación): `kmeans_uso` con k de 3 a 8 y `gmm_uso` con 3 a 8 componentes y cuatro tipos de covarianza.
@@ -215,7 +254,8 @@ El modelo registrado es `mibici-equipo29-p3-grupos`. Usamos **aliases** en lugar
 ```python
 import mlflow
 
-mlflow.set_tracking_uri("sqlite:///mlflow.db")  # el almacén donde se corrió la selección
+import os
+mlflow.set_tracking_uri(os.environ["MLFLOW_TRACKING_URI"])
 modelo = mlflow.pyfunc.load_model("models:/mibici-equipo29-p3-grupos@champion")
 grupos = modelo.predict(perfiles)  # un grupo por estación
 ```
