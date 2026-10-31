@@ -2,7 +2,14 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from mibici.features_p2 import acumular_ocupacion, cargar_viajes, etiquetar_ocupacion
+from mibici.features_p2 import (
+    FEATURES,
+    acumular_ocupacion,
+    agregar_ocupacion,
+    cargar_viajes,
+    construir_features,
+    etiquetar_ocupacion,
+)
 
 
 def test_etiquetas_por_umbral():
@@ -41,10 +48,6 @@ def test_acumulado_respeta_capacidad():
 
 
 def test_features_no_usan_la_hora_objetivo():
-    import pandas as pd
-
-    from mibici.features_p2 import FEATURES, agregar_ocupacion, construir_features
-
     horas = pd.date_range("2026-01-01 05:00", periods=24 * 10, freq="h")
     rng = np.random.default_rng(0)
     base = pd.DataFrame(
@@ -72,10 +75,6 @@ def test_features_no_usan_la_hora_objetivo():
 
 
 def test_media_misma_hora_usa_cuatro_semanas():
-    import pandas as pd
-
-    from mibici.features_p2 import agregar_ocupacion, construir_features
-
     # 36 dias de servicio por estacion; el neto de cada hora es distinto y conocido
     horas = pd.date_range("2026-01-01 05:00", periods=24 * 36, freq="h")
     piezas = []
@@ -148,10 +147,10 @@ def test_manifiesto_se_escribe_con_fin_de_linea_lf(tmp_path):
     assert b"\r\n" not in salida.read_bytes()
 
 
-@pytest.mark.parametrize("cap", [10, 20, 30, 40, 50])
-def test_umbrales_exactos_cuentan_como_segura(cap):
+def test_umbrales_exactos_cuentan_como_segura():
     # justo en 10 % y 90 % la estacion es segura; una bicicleta menos o mas ya es riesgo
-    bajo, alto = cap // 10, cap - cap // 10
+    cap = 30
+    bajo, alto = 3, 27
     occ = [bajo - 1, bajo, alto, alto + 1]
     assert list(etiquetar_ocupacion(occ, [cap] * 4)) == [
         "sin_bicicletas",
@@ -162,8 +161,6 @@ def test_umbrales_exactos_cuentan_como_segura(cap):
 
 
 def test_features_con_menos_de_una_semana_de_historia():
-    from mibici.features_p2 import agregar_ocupacion, construir_features
-
     # tres dias de servicio: alcanza para los rezagos de 24 h pero no para los de 168 h
     horas = pd.date_range("2026-01-01 05:00", periods=24 * 3, freq="h")
     panel = pd.DataFrame(

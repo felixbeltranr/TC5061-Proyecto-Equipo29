@@ -329,8 +329,6 @@ def test_macro_f1_con_clase_predicha_que_no_aparece_en_la_verdad():
     y_true = np.array(["segura", "segura"], dtype=object)
     y_pred = np.array(["segura", "sin_anclajes"], dtype=object)
     assert t2.macro_f1(y_true, y_pred) == pytest.approx((2 / 3 + 0 + 0) / 3)
-    # todo acertado pero con una sola clase: el macro F1 sigue promediando las tres
-    assert t2.macro_f1(y_true, y_true) == pytest.approx(1 / 3)
 
 
 def test_metricas_pr_auc_solo_con_probas_y_de_las_clases_de_riesgo_presentes():

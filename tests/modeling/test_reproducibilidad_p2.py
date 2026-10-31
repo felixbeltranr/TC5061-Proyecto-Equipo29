@@ -13,7 +13,7 @@ from mibici import features_p2 as fp
 from mibici.config import CONFIG_P2
 from mibici.modeling import train_p2 as t2
 
-SEMILLA = CONFIG_P2.seed  # 29
+SEMILLA = CONFIG_P2.seed
 CORTES_CHICOS = {
     "train_inicio": "2026-01-05",
     "val_inicio": "2026-02-02",
