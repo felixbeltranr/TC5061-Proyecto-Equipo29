@@ -243,3 +243,25 @@ def test_horizonte_uno_es_identico_al_calculo_entregado():
     panel = panel_dos_estaciones()
     pd.testing.assert_frame_equal(construir_features(panel), features_una_hora_congeladas(panel))
 
+
+@pytest.mark.parametrize("h", [1, 2, 3, 4])
+def test_horizonte_desplaza_objetivo_y_reancla_los_rezagos(h):
+    panel = panel_dos_estaciones()
+    df = construir_features(panel, horizonte=h)
+    serie = panel.set_index(["estacion", "ts"])
+    obj = list(zip(df["estacion"], df["ts_objetivo"]))
+    assert (df["ts_objetivo"] - df["ts"] == pd.Timedelta(hours=h)).all()
+    assert df["objetivo"].tolist() == serie.loc[obj, "clase_actual"].tolist()
+    con_dia = df[df["neto_lag24"].notna()]
+    hace_un_dia = list(zip(con_dia["estacion"], con_dia["ts_objetivo"] - pd.Timedelta(days=1)))
+    assert con_dia["neto_lag24"].tolist() == serie.loc[hace_un_dia, "neto"].tolist()
+    assert (df["ts"].dt.hour >= 5).all()
+    assert set(df["hora"]) == set(range(5 + h, 24))
+
+
+def test_horizonte_con_horas_objetivo_fijas_y_horizonte_invalido():
+    panel = panel_dos_estaciones(3)
+    df = construir_features(panel, horizonte=4, horas_objetivo=range(9, 24))
+    assert set(df["hora"]) == set(range(9, 24))
+    with pytest.raises(ValueError):
+        construir_features(panel, horizonte=0)
