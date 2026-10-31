@@ -210,7 +210,7 @@ modelo = mlflow.pyfunc.load_model("models:/mibici-equipo29-p2-riesgo@champion")
 clases = modelo.predict(entrada)  # una clase por fila: segura, sin_bicicletas o sin_anclajes
 ```
 
-- `entrada` es un `DataFrame` con las columnas de `features_p2.FEATURES`, en ese orden y como `float64` (la firma del modelo y `config/config_p2.json` del run las listan). `hora`, `dia_semana` y `fin_semana` son del instante que se pronostica, una hora después del corte.
+- `entrada` es un `DataFrame` con las columnas de `features_p2.FEATURES`, en ese orden y como `float64` (la firma del modelo y `config/config_p2.json` del run las listan). `hora`, `dia_semana` y `fin_semana` son del instante que se pronostica, una hora después del corte: el modelo publicado es de horizonte h=1.
 - Las tres últimas (`est_tasa_sin_bicis`, `est_tasa_sin_anclajes` y `est_neto_medio_hora`) son estadísticas de entrenamiento por estación y por estación y hora. Se guardan en `data/stats_estacion.csv` y `data/stats_estacion_hora.csv` del mismo run y se unen al panel con `features_p2.unir_stats`. Una estación que no estaba en entrenamiento queda con esas columnas vacías, y los modelos las aceptan como valores faltantes.
 - Para obtener probabilidades, `mlflow.sklearn.load_model` sobre el mismo URI y `predict_proba`; las columnas siguen el orden de `classes_` (alfabético).
 - El modelo se guarda en formato skops, que solo carga tipos de scikit-learn y NumPy declarados como confiables al registrarlo.
@@ -223,6 +223,31 @@ Con MLflow Project, después de la ingesta y de generar el manifiesto, se pueden
 mlflow run . -e train -P question=p2 --env-manager local
 mlflow run . -e train -P question=p2 -P model=hist_gradient_boosting -P hyperparameters=max_iter=300,max_leaf_nodes=63 --env-manager local
 ```
+
+#### Heatmap de error y horizontes de 2 a 4 horas
+
+Con nivel inicial 0.5, el run del HGB balanceado guarda `plots/p2_heatmap_error_ini50.png` y `data/p2_heatmap_error_ini50.csv`: la tasa de error en prueba por estación y hora objetivo. La figura muestra las 30 estaciones con más salidas y llegadas en entrenamiento, ordenadas por error medio; el CSV trae la matriz de todas las estaciones. Las copias del reporte están en `reports/figures/`.
+
+![Heatmap de error de P2](reports/figures/p2_heatmap_error_ini50.png)
+
+`construir_features` recibe el horizonte `h`: el objetivo es la clase al cierre de t+h y los rezagos del mismo instante del objetivo se desplazan 24-h, 168-h y 168k-h filas desde t, así que solo usan información hasta t. Solo se conservan orígenes desde las 5:00, porque antes la ocupación todavía es la del día de servicio anterior. Con h=1 las features son idénticas a las de la corrida entregada; una prueba lo comprueba.
+
+```powershell
+python -m mibici.modeling.horizontes_p2 --horizontes 1 2 3 4
+```
+
+El análisis entrena el HGB con y sin pesos de clase con los hiperparámetros de `p2_resultados.json` (sin búsqueda) y los compara con las baselines en filas pareadas: horas objetivo de 9 a 23 para todos los horizontes. Registra un run padre `p2_horizontes_ini50` con un hijo `p2_h<h>_ini50` por horizonte, no registra modelos y no toca el alias `champion`. La fila h=1 es un control pareado y por eso difiere de las cifras entregadas, que usan horas objetivo de 6 a 23. Macro F1 en prueba (`reports/figures/p2_horizontes.csv`):
+
+| h | Mayoritaria | Semana previa | Persistencia | HGB balanceado | HGB sin pesos |
+|---|---|---|---|---|---|
+| 1 | 0.313 | 0.563 | 0.813 | 0.751 | 0.825 |
+| 2 | 0.313 | 0.563 | 0.718 | 0.676 | 0.755 |
+| 3 | 0.313 | 0.563 | 0.638 | 0.629 | 0.705 |
+| 4 | 0.313 | 0.563 | 0.569 | 0.599 | 0.669 |
+
+La persistencia cae rápido con el horizonte y la ventaja del HGB sin pesos sobre ella crece de 0.012 a 0.100. El HGB balanceado solo supera a la persistencia en macro F1 a 4 horas, pero conserva el recall de `sin_bicicletas` (de 0.938 a 0.873) mientras el de la persistencia cae de 0.724 a 0.357.
+
+![Macro F1 contra horizonte](reports/figures/p2_horizontes_macro_f1.png)
 
 ### P3 · grupos de estaciones
 
