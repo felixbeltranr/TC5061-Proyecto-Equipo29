@@ -8,6 +8,7 @@ Se construye sobre el dataset combinado de mibici.dataset, con la limpieza de P3
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 import hashlib
 import json
 from pathlib import Path
@@ -190,50 +191,60 @@ def agregar_ocupacion(panel: pd.DataFrame, nivel_inicial: float) -> pd.DataFrame
     return panel
 
 
-def construir_features(panel: pd.DataFrame) -> pd.DataFrame:
-    """Features con informacion hasta el cierre de la hora t; objetivo = clase al cierre de t+1.
+def construir_features(
+    panel: pd.DataFrame, horizonte: int = 1, horas_objetivo: Iterable[int] | None = None
+) -> pd.DataFrame:
+    """Features con informacion hasta el cierre de la hora t; objetivo = clase al cierre de t+h.
 
     Variables y por que sirven para anticipar el riesgo:
     - hora, dia_semana, fin_semana: del instante objetivo (conocido de antemano); capturan
       los picos de entrada y salida laborales.
     - capacidad: con pocos anclajes la estacion pasa mas rapido a vacia o llena.
     - ocupacion_actual: ocupacion estimada al cierre de t entre capacidad; punto de partida
-      del estado en t+1.
+      del estado en t+h.
     - neto_lag1, salidas_lag1, llegadas_lag1: movimiento de la ultima hora (tendencia).
     - neto_lag24, neto_lag168: flujo neto en el mismo instante del objetivo hace un dia y
-      una semana (shift de 23 y 167 filas desde t).
+      una semana (shift de 24-h y 168-h filas desde t).
     - neto_media3, neto_media24: medias moviles hasta t, suavizan el ruido horario.
     - neto_media168_misma_hora: media del flujo neto en el mismo instante del objetivo hace
-      1, 2, 3 y 4 semanas (shift de 167, 335, 503 y 671 filas desde t).
+      1, 2, 3 y 4 semanas (shift de 168k-h filas desde t).
     - ocupacion_lag24, ocupacion_lag168: estado estimado en ese instante hace un dia y una semana.
     - baseline_semana: clase en ese instante una semana antes (solo para el baseline).
+    Solo quedan origenes desde el inicio del dia de servicio, porque antes la ocupacion es la
+    del dia anterior, y horas objetivo en horas_objetivo (por omision, de inicio + h a 23).
     Las estadisticas por estacion se agregan aparte con stats_estacion (solo train).
     """
+    if horizonte < 1:
+        raise ValueError("El horizonte debe ser de al menos una hora")
+    inicio = CONFIG_P2.hora_inicio_servicio
+    if horas_objetivo is None:
+        horas_objetivo = range(inicio + horizonte, 24)
     df = panel.sort_values(["estacion", "ts"]).reset_index(drop=True)
     g = df.groupby("estacion", sort=False)
-    df["objetivo"] = g["clase_actual"].shift(-1)
-    df["ts_objetivo"] = df["ts"] + pd.Timedelta(hours=1)
+    df["objetivo"] = g["clase_actual"].shift(-horizonte)
+    df["ts_objetivo"] = df["ts"] + pd.Timedelta(hours=horizonte)
     df["hora"] = df["ts_objetivo"].dt.hour.astype("int8")
     df["dia_semana"] = df["ts_objetivo"].dt.dayofweek.astype("int8")
     df["fin_semana"] = (df["dia_semana"] >= 5).astype("int8")
     df["ocupacion_actual"] = (df["ocupacion"] / df["capacidad"]).astype("float32")
     df["neto_lag1"] = df["neto"]
-    # mismo instante del objetivo hace 24 h y 168 h
-    df["neto_lag24"] = g["neto"].shift(23)
-    df["neto_lag168"] = g["neto"].shift(167)
+    df["neto_lag24"] = g["neto"].shift(24 - horizonte)
+    df["neto_lag168"] = g["neto"].shift(168 - horizonte)
     df["salidas_lag1"] = df["salidas"]
     df["llegadas_lag1"] = df["llegadas"]
     df["neto_media3"] = g["neto"].transform(lambda s: s.rolling(3, min_periods=1).mean())
     df["neto_media24"] = g["neto"].transform(lambda s: s.rolling(24, min_periods=1).mean())
-    # mismo instante del objetivo hace k semanas (k = 1..4); k = 1 coincide con neto_lag168
-    sem = [g["neto"].shift(168 * k - 1) for k in range(1, 5)]
+    sem = [g["neto"].shift(168 * k - horizonte) for k in range(1, 5)]
     df["neto_media168_misma_hora"] = pd.concat(sem, axis=1).mean(axis=1)
     razon = df["ocupacion"] / df["capacidad"]
-    df["ocupacion_lag24"] = razon.groupby(df["estacion"]).shift(23)
-    df["ocupacion_lag168"] = razon.groupby(df["estacion"]).shift(167)
-    # baseline: clase del mismo instante una semana antes
-    df["baseline_semana"] = g["clase_actual"].shift(167)
-    df = df[df["objetivo"].notna() & df["hora"].isin(list(CONFIG_P2.horas_etiqueta))]
+    df["ocupacion_lag24"] = razon.groupby(df["estacion"]).shift(24 - horizonte)
+    df["ocupacion_lag168"] = razon.groupby(df["estacion"]).shift(168 - horizonte)
+    df["baseline_semana"] = g["clase_actual"].shift(168 - horizonte)
+    df = df[
+        df["objetivo"].notna()
+        & (df["ts"].dt.hour >= inicio)
+        & df["hora"].isin(list(horas_objetivo))
+    ]
     return df.reset_index(drop=True)
 
 

@@ -189,3 +189,57 @@ def test_features_con_menos_de_una_semana_de_historia():
     assert con_dia["neto_lag24"].tolist() == esperado
     # las medias moviles usan lo que haya desde la primera hora
     assert df["neto_media24"].notna().all()
+
+
+def panel_dos_estaciones(dias: int = 17) -> pd.DataFrame:
+    horas = pd.date_range("2026-01-01 05:00", periods=24 * dias, freq="h")
+    rng = np.random.default_rng(29)
+    piezas = [
+        pd.DataFrame(
+            {
+                "ts": horas,
+                "estacion": est,
+                "capacidad": np.float32(12),
+                "salidas": rng.integers(0, 6, len(horas)).astype("float32"),
+                "llegadas": rng.integers(0, 6, len(horas)).astype("float32"),
+            }
+        )
+        for est in (1, 2)
+    ]
+    panel = pd.concat(piezas, ignore_index=True)
+    panel["neto"] = panel["llegadas"] - panel["salidas"]
+    panel["primer_dia"] = horas[0]
+    return agregar_ocupacion(panel, 0.5)
+
+
+def features_una_hora_congeladas(panel: pd.DataFrame) -> pd.DataFrame:
+    """Calculo de construir_features antes de parametrizar el horizonte."""
+    df = panel.sort_values(["estacion", "ts"]).reset_index(drop=True)
+    g = df.groupby("estacion", sort=False)
+    df["objetivo"] = g["clase_actual"].shift(-1)
+    df["ts_objetivo"] = df["ts"] + pd.Timedelta(hours=1)
+    df["hora"] = df["ts_objetivo"].dt.hour.astype("int8")
+    df["dia_semana"] = df["ts_objetivo"].dt.dayofweek.astype("int8")
+    df["fin_semana"] = (df["dia_semana"] >= 5).astype("int8")
+    df["ocupacion_actual"] = (df["ocupacion"] / df["capacidad"]).astype("float32")
+    df["neto_lag1"] = df["neto"]
+    df["neto_lag24"] = g["neto"].shift(23)
+    df["neto_lag168"] = g["neto"].shift(167)
+    df["salidas_lag1"] = df["salidas"]
+    df["llegadas_lag1"] = df["llegadas"]
+    df["neto_media3"] = g["neto"].transform(lambda s: s.rolling(3, min_periods=1).mean())
+    df["neto_media24"] = g["neto"].transform(lambda s: s.rolling(24, min_periods=1).mean())
+    sem = [g["neto"].shift(168 * k - 1) for k in range(1, 5)]
+    df["neto_media168_misma_hora"] = pd.concat(sem, axis=1).mean(axis=1)
+    razon = df["ocupacion"] / df["capacidad"]
+    df["ocupacion_lag24"] = razon.groupby(df["estacion"]).shift(23)
+    df["ocupacion_lag168"] = razon.groupby(df["estacion"]).shift(167)
+    df["baseline_semana"] = g["clase_actual"].shift(167)
+    df = df[df["objetivo"].notna() & df["hora"].isin(list(range(6, 24)))]
+    return df.reset_index(drop=True)
+
+
+def test_horizonte_uno_es_identico_al_calculo_entregado():
+    panel = panel_dos_estaciones()
+    pd.testing.assert_frame_equal(construir_features(panel), features_una_hora_congeladas(panel))
+
