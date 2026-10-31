@@ -67,6 +67,9 @@ def ruta_combinado(request, tmp_path):
     return ruta
 
 
+# --- leer_viajes: lectura mínima, sin datos personales -------------------------------------------
+
+
 def test_leer_viajes_no_carga_datos_personales(ruta_combinado):
     v = leer_viajes(ruta_combinado)
     assert list(v.columns) == COLUMNAS
@@ -76,6 +79,9 @@ def test_leer_viajes_no_carga_datos_personales(ruta_combinado):
 def test_leer_viajes_indica_como_generar_el_dataset(tmp_path):
     with pytest.raises(FileNotFoundError, match="mibici.dataset"):
         leer_viajes(tmp_path / "combined_dataset.parquet")
+
+
+# --- limpiar_viajes: limpieza mínima y bitácora --------------------------------------------------
 
 
 def test_limpiar_viajes_limpieza_minima(ruta_combinado):
@@ -95,6 +101,47 @@ def test_limpiar_viajes_bitacora_por_mes(ruta_combinado):
     assert por_mes == {"2025_03": 2, "2025_04": 1, "sin_fecha": 0}
 
 
+# casos límite
+
+
+def _viaje(viaje_id, inicio, fin, origen=1, destino=2):
+    return (viaje_id, inicio, fin, origen, destino)
+
+
+@pytest.mark.parametrize(
+    "fin,valido",
+    [
+        pytest.param("2025-03-03 08:00:59", False, id="59s-se-quita"),
+        pytest.param("2025-03-03 08:01:00", True, id="60s-se-conserva"),
+        pytest.param("2025-03-03 08:01:01", True, id="61s-se-conserva"),
+    ],
+)
+def test_limpiar_viajes_frontera_de_un_minuto(fin, valido):
+    v = pd.DataFrame([_viaje(1, "2025-03-03 08:00:00", fin)], columns=COLUMNAS)
+    validos, bit = limpiar_viajes(v, duracion_min_seg=60)
+    assert len(validos) == int(valido)
+    assert bit.duracion_menor_1min.sum() == int(not valido)
+
+
+def test_limpiar_viajes_casos_invalidos_y_de_ida_y_vuelta():
+    v = pd.DataFrame(
+        [
+            _viaje(1, "2025-03-03 08:10:00", "2025-03-03 08:00:00"),  # termina antes de empezar
+            _viaje(2, "2025-03-03 08:00:00", "2025-03-03 08:20:00", origen="abc"),  # id inválido
+            _viaje(3, "2025-03-03 08:00:00", "2025-03-03 08:20:00", origen=5, destino=5),
+        ],
+        columns=COLUMNAS,
+    )
+    validos, bit = limpiar_viajes(v)
+    tot = bit.drop(columns="mes").sum()
+    assert tot.duracion_negativa == 1 and tot.fechas_o_ids_invalidos == 1
+    assert list(validos["Viaje_Id"]) == [3]  # ida y vuelta a la misma estación se conserva
+    assert tot.mismo_origen_destino == 1  # ... y se cuenta en la bitácora
+
+
+# --- flujos_horarios -----------------------------------------------------------------------------
+
+
 def test_flujos_horarios_cuenta_salidas_y_llegadas(ruta_combinado):
     fl = flujos_horarios(limpiar_viajes(leer_viajes(ruta_combinado))[0])
     assert fl.salidas.sum() == fl.llegadas.sum() == 3
@@ -102,10 +149,16 @@ def test_flujos_horarios_cuenta_salidas_y_llegadas(ruta_combinado):
     assert fila.salidas.item() == 1 and fila.llegadas.item() == 0
 
 
+# --- nomenclatura_mas_reciente -------------------------------------------------------------------
+
+
 def test_nomenclatura_mas_reciente(tmp_path):
     for nombre in ["nomenclatura_2025_12.csv", "nomenclatura_2026_09.csv", "otro.csv"]:
         (tmp_path / nombre).write_text("id,name\n")
     assert nomenclatura_mas_reciente(tmp_path).name == "nomenclatura_2026_09.csv"
+
+
+# --- filtrar_periodo: periodos sin traslape ------------------------------------------------------
 
 
 def test_filtrar_periodo_incluye_el_ultimo_dia():
@@ -120,6 +173,9 @@ def test_filtrar_periodo_incluye_el_ultimo_dia():
     en = filtrar_periodo(fl, "2025-01-01", "2026-04-30")
     ev = filtrar_periodo(fl, "2026-05-01", "2026-09-30")
     assert len(en) == 2 and len(ev) == 1  # sin traslape entre periodos
+
+
+# --- perfil_estaciones y elegibles ---------------------------------------------------------------
 
 
 def _flujos_sinteticos(dias=70):
@@ -150,11 +206,31 @@ def test_elegibles_exige_ubicacion_y_dias():
     assert elegibles(p, ids_con_ubicacion=[1, 2], min_dias=71).empty
 
 
+# casos límite
+
+
+def test_elegibles_conserva_el_minimo_exacto_de_dias():
+    p = perfil_estaciones(_flujos_sinteticos(dias=70))
+    assert list(elegibles(p, ids_con_ubicacion=[1, 2], min_dias=70).index) == [1, 2]
+
+
+def test_elegibles_descarta_estaciones_con_variables_faltantes():
+    p = perfil_estaciones(_flujos_sinteticos(dias=70))
+    p.loc[2, "weekend_share"] = np.nan
+    assert list(elegibles(p, ids_con_ubicacion=[1, 2], min_dias=60).index) == [1]
+
+
+# --- seleccionar_variables: VIF ------------------------------------------------------------------
+
+
 def test_seleccionar_variables_quita_la_redundante_de_menor_prioridad():
     rng = np.random.default_rng(0)
     a, b = rng.normal(size=200), rng.normal(size=200)
     df = pd.DataFrame({"a": a, "b": b, "c": a + b + rng.normal(scale=0.01, size=200)})
     assert seleccionar_variables(df, prioridad=["a", "b", "c"], umbral=5) == ["a", "b"]
+
+
+# --- version_manifiesto, guardar_dataset y cargar_dataset ----------------------------------------
 
 
 def test_version_manifiesto_avisa_si_los_datos_no_coinciden(tmp_path):
@@ -210,6 +286,9 @@ def test_guardar_y_cargar_dataset_conserva_los_perfiles(tmp_path):
 def test_cargar_dataset_indica_como_generar_los_perfiles(tmp_path):
     with pytest.raises(FileNotFoundError, match="mibici.features_p3"):
         cargar_dataset(tmp_path)
+
+
+# --- Renumerado (baseline geográfico) ------------------------------------------------------------
 
 
 def test_renumerado_ordena_zonas_de_poniente_a_oriente():
