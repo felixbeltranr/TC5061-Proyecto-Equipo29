@@ -187,6 +187,39 @@ def figura_pr(
     return ruta
 
 
+def heatmap_error(
+    test: pd.DataFrame, y_pred: ArrayLike, volumen: pd.Series, ruta: Path, top_n: int
+) -> tuple[Path, pd.DataFrame]:
+    """Tasa de error por estacion y hora objetivo en prueba.
+
+    Guarda en ruta la figura de las top_n estaciones con mas volumen (salidas mas llegadas),
+    ordenadas por error medio, y junto a ella el CSV con la matriz de todas las estaciones.
+    """
+    errores = test[["estacion", "hora"]].assign(error=np.asarray(y_pred) != test["objetivo"])
+    matriz = errores.pivot_table(index="estacion", columns="hora", values="error", aggfunc="mean")
+    matriz.to_csv(ruta.with_suffix(".csv"))
+    top = volumen[volumen.index.isin(matriz.index)].nlargest(top_n).index
+    vista = matriz.loc[top]
+    vista = vista.loc[vista.mean(axis=1).sort_values(ascending=False).index]
+    fig, ax = plt.subplots(figsize=(10, 9))
+    im = ax.imshow(vista.to_numpy(), aspect="auto", cmap="Reds", vmin=0, vmax=1)
+    ax.set_xticks(range(vista.shape[1]), vista.columns)
+    ax.set_yticks(range(vista.shape[0]), vista.index)
+    ax.set_xlabel("Hora objetivo")
+    ax.set_ylabel("Estacion")
+    ax.set_title(f"Tasa de error en prueba, top {len(vista)} estaciones por volumen")
+    fig.colorbar(im, ax=ax, label="Tasa de error")
+    fig.tight_layout()
+    fig.savefig(ruta, dpi=120)
+    plt.close(fig)
+    return ruta, vista
+
+
+def volumen_estacion(df: pd.DataFrame) -> pd.Series:
+    """Salidas mas llegadas por estacion."""
+    return (df["salidas"] + df["llegadas"]).groupby(df["estacion"]).sum()
+
+
 def particionar(df: pd.DataFrame) -> dict[str, pd.DataFrame]:
     """Cortes temporales por fecha objetivo: fit, val (ajuste), train completo y test.
 
@@ -788,6 +821,16 @@ def correr_nivel(
             ruta_rej = ctx.figs / "p2_rejilla_validacion.json"
             ruta_rej.write_text(json.dumps(rejilla, indent=2))
             archivos.append((ruta_rej, "config"))
+        if nivel == CONFIG_P2.nivel_inicial:
+            _, _, pred = predecir(modelo, ctx.test)
+            ruta_heat, _ = heatmap_error(
+                ctx.test,
+                pred,
+                volumen_estacion(ctx.train),
+                ctx.figs / f"p2_heatmap_error_{sufijo}.png",
+                CONFIG_P2.heatmap_top_estaciones,
+            )
+            archivos += [(ruta_heat, "plots"), (ruta_heat.with_suffix(".csv"), "data")]
         return archivos
 
     salida["hgb"] = correr_candidata(

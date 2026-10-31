@@ -377,6 +377,23 @@ def test_figura_pr_dibuja_las_dos_clases_de_riesgo_y_omite_las_ausentes(tmp_path
     assert t2.figura_pr(solo, proba[y != "sin_anclajes"], clases, "PR", tmp_path / "pr2.png")
 
 
+def test_heatmap_error_toma_las_estaciones_de_mas_volumen_y_guarda_la_matriz(tmp_path):
+    test = pd.DataFrame(
+        {
+            "estacion": [1, 1, 2, 2, 3, 3],
+            "hora": [8, 9, 8, 9, 8, 9],
+            "objetivo": ["segura"] * 6,
+        }
+    )
+    pred = ["segura", "sin_anclajes", "sin_anclajes", "sin_anclajes", "segura", "segura"]
+    volumen = pd.Series({1: 50.0, 2: 10.0, 3: 30.0, 9: 99.0})
+    ruta, vista = t2.heatmap_error(test, pred, volumen, tmp_path / "heat.png", top_n=2)
+    assert ruta.exists()
+    assert list(vista.index) == [1, 3]  # top 2 por volumen, ordenadas por error medio
+    assert vista.loc[1].tolist() == [0.0, 1.0]
+    assert pd.read_csv(tmp_path / "heat.csv", index_col=0).shape == (3, 2)
+
+
 def test_tipos_confiables_solo_acepta_tipos_de_sklearn_y_numpy():
     partes = t2.preparar(0.5, hacer_panel())
     train = fp.unir_stats(partes["train"], *fp.stats_estacion(partes["train"]))
@@ -562,6 +579,8 @@ def test_correr_nivel_regresa_resultados_y_ajusta_el_modelo_final_con_train(tmp_
         "p2_cm_hgb_sin_pesos_ini50.png",
         "p2_importancia_permutacion_ini50.csv",
         "p2_importancia_permutacion_ini50.png",
+        "p2_heatmap_error_ini50.png",
+        "p2_heatmap_error_ini50.csv",
     } <= figuras
     assert "p2_rejilla_validacion.json" not in figuras
 
@@ -791,8 +810,10 @@ def test_main_ordena_los_artefactos_en_plots_data_y_config(corrida_completa):
         "plots/p2_cm_hgb_sin_pesos_ini50.png",
         "plots/p2_pr_hgb_sin_pesos_ini50.png",
     }
-    # el HGB suma la importancia por permutacion y la rejilla de la busqueda
+    # el HGB suma la importancia por permutacion, el heatmap de error y la rejilla de la busqueda
     assert artefactos("p2_hgb_balanceado_ini50") == comunes | {
+        "plots/p2_heatmap_error_ini50.png",
+        "data/p2_heatmap_error_ini50.csv",
         "plots/p2_cm_hgb_ini50.png",
         "plots/p2_cm_hgb_nuevas_ini50.png",
         "plots/p2_pr_hgb_ini50.png",
