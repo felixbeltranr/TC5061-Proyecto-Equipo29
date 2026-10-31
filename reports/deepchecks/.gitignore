@@ -1,0 +1,3 @@
+# Reportes HTML de DeepChecks: se generan localmente y no se versionan.
+*
+!.gitignore
