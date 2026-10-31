@@ -239,9 +239,14 @@ def particionar(df: pd.DataFrame) -> dict[str, pd.DataFrame]:
     return partes
 
 
-def preparar(nivel: float, panel: pd.DataFrame) -> dict[str, pd.DataFrame]:
-    """Etiqueta el panel con el nivel inicial dado, arma features y particiona."""
-    df = fp.construir_features(fp.agregar_ocupacion(panel, nivel))
+def preparar(
+    nivel: float,
+    panel: pd.DataFrame,
+    horizonte: int = 1,
+    horas_objetivo: tuple[int, ...] | None = None,
+) -> dict[str, pd.DataFrame]:
+    """Etiqueta el panel con el nivel inicial dado, arma features a horizonte h y particiona."""
+    df = fp.construir_features(fp.agregar_ocupacion(panel, nivel), horizonte, horas_objetivo)
     return particionar(df)
 
 
@@ -628,7 +633,10 @@ def preparar_nivel(
 
 
 def predicciones_baseline(df: pd.DataFrame, mayoritaria: str) -> dict[str, np.ndarray]:
-    """Clase predicha por cada baseline: mayoritaria, misma hora la semana previa y persistencia."""
+    """Clase predicha por cada baseline: mayoritaria, misma hora la semana previa y persistencia.
+
+    La persistencia repite la clase al cierre del origen t, asi que vale para cualquier horizonte.
+    """
     return {
         "mayoritaria": np.full(len(df), mayoritaria, dtype=object),
         "semana_previa": df["baseline_semana"].fillna(mayoritaria).to_numpy(),
