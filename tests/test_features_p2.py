@@ -146,3 +146,49 @@ def test_manifiesto_se_escribe_con_fin_de_linea_lf(tmp_path):
     salida = tmp_path / "ref" / "manifiesto.json"
     manifiesto_p2.main(salida=salida, carpeta=tmp_path)
     assert b"\r\n" not in salida.read_bytes()
+
+
+@pytest.mark.parametrize("cap", [10, 20, 30, 40, 50])
+def test_umbrales_exactos_cuentan_como_segura(cap):
+    # justo en 10 % y 90 % la estacion es segura; una bicicleta menos o mas ya es riesgo
+    bajo, alto = cap // 10, cap - cap // 10
+    occ = [bajo - 1, bajo, alto, alto + 1]
+    assert list(etiquetar_ocupacion(occ, [cap] * 4)) == [
+        "sin_bicicletas",
+        "segura",
+        "segura",
+        "sin_anclajes",
+    ]
+
+
+def test_features_con_menos_de_una_semana_de_historia():
+    from mibici.features_p2 import agregar_ocupacion, construir_features
+
+    # tres dias de servicio: alcanza para los rezagos de 24 h pero no para los de 168 h
+    horas = pd.date_range("2026-01-01 05:00", periods=24 * 3, freq="h")
+    panel = pd.DataFrame(
+        {
+            "ts": horas,
+            "estacion": 1,
+            "capacidad": np.float32(20),
+            "salidas": np.float32(1),
+            "llegadas": np.arange(len(horas), dtype="float32") % 3,
+        }
+    )
+    panel["neto"] = panel["llegadas"] - panel["salidas"]
+    panel["primer_dia"] = horas[0]
+    df = construir_features(agregar_ocupacion(panel, 0.5))
+    # las filas no se descartan por falta de historia: los modelos manejan los faltantes
+    assert len(df) > 0 and df["objetivo"].notna().all()
+    for col in ("neto_lag168", "ocupacion_lag168", "neto_media168_misma_hora", "baseline_semana"):
+        assert df[col].isna().all(), col
+    # el rezago de 24 h existe desde que hay 23 horas previas en la estacion
+    neto = panel.set_index("ts")["neto"]
+    con_dia = df[df["ts_objetivo"] - pd.Timedelta(hours=24) >= horas[0]]
+    sin_dia = df[df["ts_objetivo"] - pd.Timedelta(hours=24) < horas[0]]
+    assert len(con_dia) > 0 and len(sin_dia) > 0
+    assert sin_dia["neto_lag24"].isna().all()
+    esperado = [neto[t - pd.Timedelta(hours=24)] for t in con_dia["ts_objetivo"]]
+    assert con_dia["neto_lag24"].tolist() == esperado
+    # las medias moviles usan lo que haya desde la primera hora
+    assert df["neto_media24"].notna().all()
