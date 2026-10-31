@@ -848,7 +848,7 @@ def registrar_ganadora(args: argparse.Namespace, todo: dict, run_ids: dict) -> d
         {"experimento": CONFIG_P2.experimento, "nivel_inicial": nivel},
         ejemplo,
     )
-    # prueba de humo: carga por alias y predice con una fila de ejemplo de cada clase de entrada
+    # prueba de humo: carga por alias y predice una fila de ejemplo
     clases = registro.verificar_campeon(
         CONFIG_P2.modelo_registrado, CONFIG_P2.alias_campeon, ejemplo
     )
