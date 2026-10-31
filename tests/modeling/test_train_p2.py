@@ -324,6 +324,15 @@ def test_metricas_con_valores_conocidos_y_clase_ausente():
     )
 
 
+def test_macro_f1_con_clase_predicha_que_no_aparece_en_la_verdad():
+    # predecir una clase que no existe en y_true no se ignora: esa clase aporta F1 de 0
+    y_true = np.array(["segura", "segura"], dtype=object)
+    y_pred = np.array(["segura", "sin_anclajes"], dtype=object)
+    assert t2.macro_f1(y_true, y_pred) == pytest.approx((2 / 3 + 0 + 0) / 3)
+    # todo acertado pero con una sola clase: el macro F1 sigue promediando las tres
+    assert t2.macro_f1(y_true, y_true) == pytest.approx(1 / 3)
+
+
 def test_metricas_pr_auc_solo_con_probas_y_de_las_clases_de_riesgo_presentes():
     y = np.array(["segura", "sin_bicicletas", "sin_anclajes", "sin_bicicletas"], dtype=object)
     # el orden de columnas de proba es el de clases (el de classes_ de sklearn, alfabetico)
@@ -1022,8 +1031,12 @@ def test_despachador_p2_prepara_features_y_llama_a_train_con_model_e_hiperparame
     espias_p2.clear()
     mp.main(["train", "--question", "p2"])  # sin hiperparametros viaja un objeto vacio
     assert espias_p2[1][1] == [
-        "--model", "hist_gradient_boosting", "--hyperparameters", "{}",
-        "--tracking-uri", expected_uri,
+        "--model",
+        "hist_gradient_boosting",
+        "--hyperparameters",
+        "{}",
+        "--tracking-uri",
+        expected_uri,
     ]
     espias_p2.clear()
     mp.main(["train", "--question", "p2", "--hyperparameters", "max_iter=10,max_leaf_nodes=7"])
