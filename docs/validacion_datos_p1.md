@@ -2,8 +2,8 @@
 
 ## Dependencia y separación de entornos
 
-Estos auxiliares usan el entorno de `requirements-deepchecks.txt`, que agrega el PR #13
-(head `2438e1b207564fc1283a6cf98920c3499c90c8ed`). No se duplica ni se cambia esa
+Estos auxiliares usan el entorno de `requirements-deepchecks.txt`, que agregó el PR #13
+(head `2438e1b207564fc1283a6cf98920c3499c90c8ed`, ya en main). No se duplica ni se cambia esa
 infraestructura, ni `requirements.txt` o el entorno principal.
 
 - DeepChecks: Python 3.11; deepchecks 0.19.1, numpy 1.26.4, pandas 2.3.3,
@@ -122,6 +122,10 @@ en el entorno principal Python 3.14.8. Checkout: main `d2bec05` con el PR #13
   370 estaciones comunes, 101 sólo test, una sólo train.
 - La exportación `isolated-source` en Python 3.11 del mismo panel produjo las mismas
   tablas (comparadas con `DataFrame.equals`) y las mismas 22 puntuaciones de drift.
+- Tras integrar main `f164de8` (#13 y #14 fusionados): QA sintética **40 passed**; las
+  6 omitidas son de P2 y P3, porque no están sus tablas en `data/interim`. La huella de
+  `P1Config` y `CONFIG_P1` y los hashes de `features.py` y `train_p1.py` no cambian, así
+  que la corrida con el panel real de arriba sigue vigente y no se repitió.
 
 El panel fue generado el 18 de octubre, no regenerado con main actual.
 Los JSON y logs registran el alcance; no se versionan Parquets ni HTML con datos.
