@@ -1,4 +1,4 @@
-"""Drift de P2 entre train y test con DeepChecks: por variable, de la etiqueta y multivariado.
+"""Integridad y drift de P2 con DeepChecks: tipos, faltantes y duplicados, y drift entre train y test.
 
 Revisa las tablas que deja ``python -m mibici.modeling.exportar_p2`` en ``data/interim``.
 Corre en el entorno aparte de DeepChecks (Python 3.11, ``requirements-deepchecks.txt``); en el
@@ -19,7 +19,14 @@ import pytest
 pytest.importorskip("deepchecks", reason="requiere el entorno de DeepChecks (ver README)")
 
 from deepchecks.tabular import Dataset, Suite
-from deepchecks.tabular.checks import FeatureDrift, LabelDrift, MultivariateDrift
+from deepchecks.tabular.checks import (
+    DataDuplicates,
+    FeatureDrift,
+    LabelDrift,
+    MixedDataTypes,
+    MultivariateDrift,
+    PercentOfNulls,
+)
 
 RAIZ = Path(__file__).resolve().parents[2]
 INTERIM = RAIZ / "data" / "interim"
@@ -32,6 +39,18 @@ CATEGORICAS = ["hora", "dia_semana", "fin_semana"]
 MAX_DRIFT_VARIABLE = 0.2
 MAX_DRIFT_ETIQUETA = 0.2
 MAX_AUC_DOMINIO = 0.75
+CLASES = {"segura", "sin_bicicletas", "sin_anclajes"}
+# Faltantes esperados: lags sin historia suficiente y, en test, estaciones que no estan en train
+CON_FALTANTES_ESPERADOS = {
+    "neto_lag24",
+    "neto_lag168",
+    "neto_media168_misma_hora",
+    "ocupacion_lag24",
+    "ocupacion_lag168",
+    "est_tasa_sin_bicis",
+    "est_tasa_sin_anclajes",
+    "est_neto_medio_hora",
+}
 
 
 @pytest.fixture(scope="module")
@@ -44,7 +63,41 @@ def particiones() -> dict[str, pd.DataFrame]:
             f"No existen {faltantes} en data/interim. Generalos con "
             "'python -m mibici.modeling.exportar_p2' en el entorno del proyecto."
         )
-    return {p: pd.read_parquet(r).sample(MUESTRA, random_state=SEMILLA) for p, r in rutas.items()}
+    tablas = {p: pd.read_parquet(r) for p, r in rutas.items()}
+    return {p: df.sample(min(MUESTRA, len(df)), random_state=SEMILLA) for p, df in tablas.items()}
+
+
+def guardar_reporte(resultado, nombre: str) -> None:
+    """Guarda el HTML de una corrida de DeepChecks en reports/deepchecks."""
+    REPORTES.mkdir(parents=True, exist_ok=True)
+    ruta = REPORTES / nombre
+    ruta.unlink(missing_ok=True)  # deepchecks no reemplaza el archivo
+    resultado.save_as_html(str(ruta), as_widget=False)
+
+
+def test_integridad_de_particiones(particiones):
+    """Tipos, faltantes y duplicados de cada particion; el reporte queda en p2_integridad.html."""
+    for nombre, df in particiones.items():
+        features = df.drop(columns="objetivo")
+        assert all(pd.api.types.is_numeric_dtype(t) for t in features.dtypes), nombre
+        assert set(df["objetivo"]) == CLASES, nombre
+        con_faltantes = set(df.columns[df.isna().any()])
+        assert con_faltantes <= CON_FALTANTES_ESPERADOS, (nombre, con_faltantes)
+
+    datasets = [
+        Dataset(particiones[p], label="objetivo", cat_features=CATEGORICAS) for p in PARTICIONES
+    ]
+    suite = Suite("Integridad P2", MixedDataTypes(), PercentOfNulls(), DataDuplicates())
+    guardar_reporte(suite.run(*datasets), "p2_integridad.html")
+
+
+def test_panel_sin_duplicados():
+    """Cada estacion tiene una sola fila por hora en el panel del que salen las particiones."""
+    ruta = INTERIM / "p2_panel_horario.parquet"
+    if not ruta.exists():
+        pytest.skip("No existe p2_panel_horario.parquet en data/interim.")
+    panel = pd.read_parquet(ruta, columns=["estacion", "ts"])
+    assert not panel.duplicated().any()
 
 
 def test_drift_entre_train_y_test(particiones):
@@ -54,10 +107,7 @@ def test_drift_entre_train_y_test(particiones):
     ]
     suite = Suite("Drift P2", FeatureDrift(), LabelDrift(), MultivariateDrift())
     resultado = suite.run(*datasets)
-    REPORTES.mkdir(parents=True, exist_ok=True)
-    ruta = REPORTES / "p2_drift.html"
-    ruta.unlink(missing_ok=True)  # deepchecks no reemplaza el archivo
-    resultado.save_as_html(str(ruta), as_widget=False)
+    guardar_reporte(resultado, "p2_drift.html")
 
     por_check = {r.get_header(): r.value for r in resultado.results if hasattr(r, "value")}
     assert {"Feature Drift", "Label Drift", "Multivariate Drift"} <= por_check.keys()
@@ -66,7 +116,7 @@ def test_drift_entre_train_y_test(particiones):
     multi = por_check["Multivariate Drift"]
     importancia = multi["domain_classifier_feature_importance"]
     resumen = {
-        "filas_por_particion": MUESTRA,
+        "filas_por_particion": {p: len(df) for p, df in particiones.items()},
         "drift_por_variable": {
             v: round(s, 4) for v, s in sorted(por_variable.items(), key=lambda kv: -kv[1])
         },
