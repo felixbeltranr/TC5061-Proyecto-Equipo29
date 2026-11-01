@@ -147,6 +147,7 @@ celerybeat.pid
 # Environments
 .env
 .venv
+.venv-deepchecks/
 env/
 venv/
 ENV/
