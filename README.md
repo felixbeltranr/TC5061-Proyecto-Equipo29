@@ -195,6 +195,8 @@ Las corridas de pytest son del 1 de noviembre de 2026 sobre esta rama. Las de lo
 
 Las pruebas con datos sintéticos o fabricados comprueban el código, no la calidad del panel real; ésta se revisa con `test_panel_real_p1.py` y con los scripts. El drift se mide y se reporta sin umbral de aprobación. Quedan sin prueba automática la exportación `native` (en el entorno del proyecto se omite `tests/datos`; la cubre la corrida con el panel real) y la búsqueda completa de hiperparámetros: la prueba de repetibilidad usa hiperparámetros pequeños fijos, y con la configuración de P1 los candidatos son deterministas, así que muestra repetibilidad y que la semilla llega al modelo, no que la semilla cambie el resultado.
 
+`test_panel_real_p1.py` revisa el panel real `data/interim/p1_panel_diario.parquet` cuando existe y se salta si falta; sus reportes van a la carpeta temporal de pytest, no a `reports/deepchecks/`. Los scripts de validación, exportación y drift de P1 están en el repositorio, en `scripts/p1/`; lo que generan (reportes HTML, resúmenes JSON y tablas exportadas) se guarda en la carpeta nueva que se indica con `--output`, que debe estar fuera del repositorio. Las pruebas que exportan variables registran el commit con git, así que requieren git y un checkout con su propio `.git` (si no, se saltan).
+
 Las capturas de pytest reproducen la salida de las corridas de esta rama; las de DeepChecks son los reportes HTML del panel real.
 
 ![Prueba de repetibilidad de P1](reports/figures/p1_pruebas_repetibilidad.png)
@@ -368,8 +370,6 @@ Hallazgos de P2 con los datos reales:
 - Drift por variable bajo: el máximo es `neto_media24` con 0.071, seguido de las ocupaciones (0.054 a 0.055); `hora` tiene 0.
 - Drift de la etiqueta: Cramér's V de 0.074.
 - Multivariado: AUC de 0.600 (drift de 0.200). Toda la importancia del clasificador de dominio está en `est_tasa_sin_bicis`: el 13.8 % de las filas de prueba son de estaciones nuevas sin estadísticas de train y esa columna queda vacía, mientras que en train nunca falta. Es esperado por la partición temporal y coincide con el bloque de estaciones nuevas que se evalúa aparte (`test_nuevas_*`).
-
-En P1, `test_panel_real_p1.py` revisa el panel real `data/interim/p1_panel_diario.parquet` cuando existe (contrato, `PercentOfNulls` y `DataDuplicates` sobre todas las filas) y se salta si falta; sus reportes van a la carpeta temporal de pytest, no a `reports/deepchecks/`. Los scripts de validación, exportación y drift de P1 están en el repositorio, en `scripts/p1/`; lo que generan (reportes HTML, resúmenes JSON y tablas exportadas) se guarda en la carpeta nueva que se indica con `--output`, que debe estar fuera del repositorio. Las pruebas que exportan variables registran el commit con git, así que requieren git y un checkout con su propio `.git` (si no, se saltan).
 
 ### Chequeos de seguridad de P2
 
