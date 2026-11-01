@@ -347,7 +347,7 @@ Las pruebas de `tests/datos/` revisan con DeepChecks las tablas reales que gener
 Primero se generan las tablas en el entorno del proyecto (`mlflow run . -e ingest --env-manager local` y `mlflow run . -e train --env-manager local`). Después, desde la raíz del repositorio:
 
 ```bash
-<python 3.11> -m venv .venv-deepchecks      # Windows: py -3.11 o la ruta de python.exe; Linux o macOS: python3.11
+<python 3.11> -m venv .venv-deepchecks      # Windows: py -3.11 o ruta de python.exe; Linux/macOS: python3.11
 .venv-deepchecks\Scripts\activate           # Windows; en Linux o macOS: source .venv-deepchecks/bin/activate
 pip install -r requirements-deepchecks.txt
 python -m pytest tests/datos -v
@@ -355,11 +355,13 @@ python -m pytest tests/datos -v
 
 Si faltan las tablas, las pruebas se saltan con un mensaje que indica cómo generarlas. Los reportes HTML y los resúmenes JSON quedan en `reports/deepchecks/` y no se versionan.
 
-| Pregunta | Tablas | Qué se valida |
+| Área | Datos | Qué se valida |
 |---|---|---|
+| Features | Datos sintéticos en `tests/test_features_pipeline.py` | Casos normales y límite del pipeline compartido, ajuste train-only y predicciones reproducibles con la misma semilla. No hay un dataset de features compartido con semántica train/test para un drift común. |
+| EDA | `data/interim/features_eda.parquet`, generado desde `data/processed/combined_dataset.parquet` por `python -m mibici.features_eda`; exporta solo las columnas usadas por EDA y conserva los grupos Parquet | Muestra reproducible y estratificada por grupo Parquet. DeepChecks `MixedDataTypes` y `PercentOfNulls` sobre entradas; ejecuta el transformador EDA real y exige salida numérica finita y sin nulos. Los nulos de entrada se reportan porque los imputadores forman parte de la transformación. |
+| P1 | `data/interim/p1_panel_diario.parquet` y las 11 variables de entrenamiento y prueba que salen de él | `test_integridad_p1.py` y `test_drift_p1.py` usan paneles fabricados, así que no dependen de que existan las tablas: revisan el contrato del panel (tipos, conteos enteros no negativos, fechas diarias consecutivas, claves estación-fecha únicas), los checks `PercentOfNulls` y `DataDuplicates`, la exportación de las variables y el cálculo del drift, con controles negativos. El panel real se valida con `scripts/p1/validar_panel_p1.py`, `exportar_features_p1.py` y `medir_drift_p1.py`, que escriben fuera del repositorio; los comandos y resultados están en `docs/validacion_datos_p1.md`. El drift se mide para todas las estaciones y para las presentes en ambos periodos, sin umbral de aprobación. |
 | P2 | `data/interim/p2_train.parquet` y `p2_test.parquet`, que genera `python -m mibici.modeling.exportar_p2` (18 features y objetivo, nivel inicial 0.5, estadísticas por estación solo de train) | Sobre una muestra de hasta 100 000 filas de cada tabla (semilla 29). Integridad: features numéricas, objetivo con sus tres clases, faltantes solo en las columnas donde se esperan (lags sin historia y estadísticas de estaciones nuevas en prueba), una sola fila por estación y hora en el panel, y reporte de MixedDataTypes, PercentOfNulls y DataDuplicates. Drift entre train y prueba: Feature Drift, Label Drift y Multivariate Drift; falla si el drift de alguna variable o de la etiqueta pasa de 0.2, o si el AUC del clasificador de dominio pasa de 0.75. |
 | P3 | `data/interim/p3_perfiles_entrenamiento.parquet` y `p3_perfiles_evaluacion.parquet` | Integridad de cada periodo sobre las 12 variables candidatas (faltantes, duplicados, tipos mezclados, columnas constantes y variables muy correlacionadas) y drift entre entrenamiento (enero 2025–abril 2026) y evaluación (mayo–septiembre 2026). La integridad falla si alguna condición no se cumple; el drift se mide y se reporta sin fallar, porque describe cómo cambió el uso de las estaciones y no un error en los datos. |
-| P1 | `data/interim/p1_panel_diario.parquet` y las 11 variables de entrenamiento y prueba que salen de él | `test_integridad_p1.py` y `test_drift_p1.py` usan paneles fabricados, así que no dependen de que existan las tablas: revisan el contrato del panel (tipos, conteos enteros no negativos, fechas diarias consecutivas, claves estación-fecha únicas), los checks `PercentOfNulls` y `DataDuplicates`, la exportación de las variables y el cálculo del drift, con controles negativos. El panel real se valida con `scripts/p1/validar_panel_p1.py`, `exportar_features_p1.py` y `medir_drift_p1.py`, que escriben fuera del repositorio; los comandos y resultados están en `docs/validacion_datos_p1.md`. El drift se mide para todas las estaciones y para las presentes en ambos periodos, sin umbral de aprobación. |
 
 Hallazgos de P2 con los datos reales:
 
