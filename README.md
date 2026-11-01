@@ -177,6 +177,36 @@ modelo = mlflow.pyfunc.load_model("models:/mibici-equipo29-p1-demanda@champion")
 demanda = modelo.predict(entrada)  # una predicción numérica por fila estación-día
 ```
 
+#### Pruebas, validación de datos y seguridad de P1
+
+Comandos, decisiones y límites en `docs/repetibilidad_p1.md`, `docs/validacion_datos_p1.md` y `docs/seguridad_p1.md`. Resultados del 31 de octubre de 2026 sobre esta rama, en Windows:
+
+| Prueba | Entorno | Datos | Resultado |
+|---|---|---|---|
+| `tests/modeling/test_reproducibilidad_p1.py`: dos ajustes de cada candidata con la semilla de `CONFIG_P1` dan las mismas predicciones y el mismo MAE, sin modificar los datos de entrada y con el embargo D-2 | proyecto (Python 3.14) | panel sintético | 3 passed |
+| `python -m pytest` (suite completa) | proyecto (Python 3.14) | sintéticos | 239 passed, 4 skipped: los cuatro módulos de `tests/datos` (los dos de P1 porque no es Python 3.11; los de P2 y P3 porque falta deepchecks) |
+| `tests/datos/test_integridad_p1.py` y `test_drift_p1.py`: contrato del panel, `PercentOfNulls` y `DataDuplicates`, exportación de variables y drift, con controles negativos | DeepChecks (Python 3.11) | paneles fabricados | 40 passed (`python -m pytest tests/datos -v` también salta las 3 de P2 y las 3 de P3 si faltan sus tablas) |
+| Integridad del panel real: contrato y los dos checks de DeepChecks (`scripts/p1/validar_panel_p1.py`) | DeepChecks (Python 3.11) | `p1_panel_diario.parquet` del 18 de octubre: 245,185 filas, 472 estaciones | PASS |
+| Exportación y drift reales (`exportar_features_p1.py` en el entorno del proyecto, `medir_drift_p1.py` en el de DeepChecks) | ambos | el mismo panel | 167,177 filas de entrenamiento y 62,426 de prueba, 2 días de separación; drift sobre una muestra determinista de 100,000 filas de entrenamiento (semilla 29) y la prueba completa: KS máximo `lag_28` = 0.073 con todas las estaciones y `media_28d` = 0.037 con las 370 presentes en ambos periodos; Cramér V máximo `festivo` = 0.053 y 0.054 |
+
+Las pruebas se corrieron después de integrar main con #13 y #14. La corrida con el panel real es del commit `3f12723`, anterior a esa integración. Lo que verifica el exportador no cambió (la huella de `P1Config` y `CONFIG_P1` dentro de `config.py`, donde main sólo agregó campos a `P2Config`, y los hashes de `features.py` y `train_p1.py`), así que no se repitió.
+
+Las pruebas con datos sintéticos o fabricados comprueban el código, no la calidad del panel real; ésta se revisa con los scripts. El drift se mide y se reporta sin umbral de aprobación. Quedan sin prueba automática la exportación `native` (en el entorno del proyecto se omite `tests/datos`; la cubre la corrida con el panel real) y la búsqueda completa de hiperparámetros: la prueba de repetibilidad usa hiperparámetros pequeños fijos, y con la configuración de P1 los candidatos son deterministas, así que muestra repetibilidad y que la semilla llega al modelo, no que la semilla cambie el resultado.
+
+Las capturas de pytest reproducen la salida de las corridas de esta rama; las de DeepChecks son los reportes HTML del panel real.
+
+![Prueba de repetibilidad de P1](reports/figures/p1_pruebas_repetibilidad.png)
+
+![Suite completa en el entorno del proyecto](reports/figures/p1_pruebas_suite.png)
+
+![Pruebas de datos de P1 en el entorno de DeepChecks](reports/figures/p1_pruebas_datos_deepchecks.png)
+
+![Integridad del panel P1 en DeepChecks](reports/figures/p1_deepchecks_integridad_panel.png)
+
+![Drift de P1 con todas las estaciones en DeepChecks](reports/figures/p1_deepchecks_drift_todas.png)
+
+Seguridad (`docs/seguridad_p1.md`): `bandit` sobre los módulos de P1 y los scripts de validación da 12 hallazgos, 11 de severidad baja y 1 media, ninguno alta (importación de `subprocess` y llamadas fijas a `git` en `tracking.py` y el exportador, el `exec` de funciones elegidas por AST del exportador y un falso positivo por la clave `quality_pass`), cada uno con su decisión. `pip-audit` encuentra tres avisos en `mlflow` 3.16.1 que corrige la 3.17.2; P1 no usa el backend afectado ni CrewAI y el servidor escucha sólo en `127.0.0.1`, y subir la versión queda como decisión del equipo porque `requirements.txt` es común. En `requirements-deepchecks.txt`, `setuptools` 80.10.2 tiene dos avisos que corrigen la 83.0.0 y la 84.1.0, pero sigue fijado porque deepchecks 0.19.1 importa `pkg_resources`, que esas versiones ya no traen. `.gitignore` cubre `.env`, `mlflow.db`, `mlartifacts/`, `data/` y los entornos, y no hay secretos versionados.
+
 ### P2 · riesgo de estación
 
 P2 clasifica el riesgo horario de que una estación se quede sin bicicletas o sin anclajes. La ocupación se estima a partir del flujo neto acumulado de viajes y la capacidad de la estación; no proviene de mediciones directas de inventario. El entrenamiento compara baselines con `HistGradientBoostingClassifier` balanceado y evalúa macro F1, métricas por clase y estaciones nuevas.
@@ -329,12 +359,15 @@ Si faltan las tablas, las pruebas se saltan con un mensaje que indica cómo gene
 |---|---|---|
 | P2 | `data/interim/p2_train.parquet` y `p2_test.parquet`, que genera `python -m mibici.modeling.exportar_p2` (18 features y objetivo, nivel inicial 0.5, estadísticas por estación solo de train) | Sobre una muestra de hasta 100 000 filas de cada tabla (semilla 29). Integridad: features numéricas, objetivo con sus tres clases, faltantes solo en las columnas donde se esperan (lags sin historia y estadísticas de estaciones nuevas en prueba), una sola fila por estación y hora en el panel, y reporte de MixedDataTypes, PercentOfNulls y DataDuplicates. Drift entre train y prueba: Feature Drift, Label Drift y Multivariate Drift; falla si el drift de alguna variable o de la etiqueta pasa de 0.2, o si el AUC del clasificador de dominio pasa de 0.75. |
 | P3 | `data/interim/p3_perfiles_entrenamiento.parquet` y `p3_perfiles_evaluacion.parquet` | Integridad de cada periodo sobre las 12 variables candidatas (faltantes, duplicados, tipos mezclados, columnas constantes y variables muy correlacionadas) y drift entre entrenamiento (enero 2025–abril 2026) y evaluación (mayo–septiembre 2026). La integridad falla si alguna condición no se cumple; el drift se mide y se reporta sin fallar, porque describe cómo cambió el uso de las estaciones y no un error en los datos. |
+| P1 | `data/interim/p1_panel_diario.parquet` y las 11 variables de entrenamiento y prueba que salen de él | `test_integridad_p1.py` y `test_drift_p1.py` usan paneles fabricados, así que no dependen de que existan las tablas: revisan el contrato del panel (tipos, conteos enteros no negativos, fechas diarias consecutivas, claves estación-fecha únicas), los checks `PercentOfNulls` y `DataDuplicates`, la exportación de las variables y el cálculo del drift, con controles negativos. El panel real se valida con `scripts/p1/validar_panel_p1.py`, `exportar_features_p1.py` y `medir_drift_p1.py`, que escriben fuera del repositorio; los comandos y resultados están en `docs/validacion_datos_p1.md`. El drift se mide para todas las estaciones y para las presentes en ambos periodos, sin umbral de aprobación. |
 
 Hallazgos de P2 con los datos reales:
 
 - Drift por variable bajo: el máximo es `neto_media24` con 0.071, seguido de las ocupaciones (0.054 a 0.055); `hora` tiene 0.
 - Drift de la etiqueta: Cramér's V de 0.074.
 - Multivariado: AUC de 0.600 (drift de 0.200). Toda la importancia del clasificador de dominio está en `est_tasa_sin_bicis`: el 13.8 % de las filas de prueba son de estaciones nuevas sin estadísticas de train y esa columna queda vacía, mientras que en train nunca falta. Es esperado por la partición temporal y coincide con el bloque de estaciones nuevas que se evalúa aparte (`test_nuevas_*`).
+
+En P1, las pruebas de `tests/datos/` no revisan las tablas reales ni dejan reportes en `reports/deepchecks/`: eso lo hacen los scripts de `scripts/p1/`, en una carpeta nueva fuera del repositorio. Las pruebas que exportan variables registran el commit con git, así que requieren git y un checkout con su propio `.git` (si no, se saltan).
 
 ### Chequeos de seguridad de P2
 
