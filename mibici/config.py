@@ -174,6 +174,9 @@ class P2Config:
     hora_inicio_servicio: int = 5  # el sistema opera aprox. de 5:00 a 24:00
     horas_etiqueta: tuple[int, ...] = tuple(range(6, 24))  # horas objetivo que se evaluan
     horizonte_horas: int = 1
+    heatmap_top_estaciones: int = 30
+    horizontes_analisis: tuple[int, ...] = (1, 2, 3, 4)
+    horas_objetivo_horizontes: tuple[int, ...] = tuple(range(9, 24))  # pareadas hasta h=4
 
     # Particion temporal por fecha objetivo (inicio incluido, fin excluido)
     fecha_inicio_entrenamiento: str = "2025-01-01"
