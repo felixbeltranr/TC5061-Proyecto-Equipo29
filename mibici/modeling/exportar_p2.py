@@ -34,6 +34,7 @@ def exportar_particiones(panel: pd.DataFrame, nivel: float, destino: Path) -> di
 
 
 def main(argv: list[str] | None = None) -> None:
+    """Punto de entrada: python -m mibici.modeling.exportar_p2."""
     ap = argparse.ArgumentParser(description="Exporta train y test de P2 para DeepChecks")
     ap.add_argument("--panel", default=str(CONFIG_P2.panel_path))
     ap.add_argument("--nivel", type=float, default=CONFIG_P2.nivel_inicial)

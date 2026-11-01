@@ -28,7 +28,7 @@ PARTICIONES = ("train", "test")
 MUESTRA = 100_000  # filas por particion; el panel completo tiene millones
 SEMILLA = 29
 CATEGORICAS = ["hora", "dia_semana", "fin_semana"]
-# Umbrales de alarma: por encima el cambio entre periodos ya no se explica por la temporada
+# Umbrales de alarma: el drift medido con los datos reales queda muy por debajo (ver README)
 MAX_DRIFT_VARIABLE = 0.2
 MAX_DRIFT_ETIQUETA = 0.2
 MAX_AUC_DOMINIO = 0.75
