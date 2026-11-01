@@ -5,7 +5,7 @@ import json
 import mlflow
 from mlflow.tracking import MlflowClient
 import pandas as pd
-from tests.modeling.test_train_p2 import CORTES_CHICOS, hacer_panel
+from tests.modeling.test_train_p2 import CORTES_CHICOS, ETIQUETAS_BASE, VERSION, hacer_panel
 
 from mibici.config import CONFIG_P2
 from mibici.modeling import horizontes_p2 as hp
@@ -19,6 +19,7 @@ def test_main_crea_un_run_padre_con_hijos_por_horizonte_sin_registrar_modelos(
         monkeypatch.setitem(t2.CORTES, clave, valor)
     hacer_panel().to_parquet(tmp_path / "panel.parquet", index=False)
     params = {"learning_rate": 0.1, "max_leaf_nodes": 7, "max_iter": 10, "l2_regularization": 0.0}
+    (tmp_path / "manifiesto.json").write_text(json.dumps({"version": VERSION}))
     (tmp_path / "resultados.json").write_text(json.dumps({"params_hgb": params}))
     uri = f"sqlite:///{tmp_path / 'mlflow.db'}"
     uri_previa = mlflow.get_tracking_uri()
@@ -31,6 +32,7 @@ def test_main_crea_un_run_padre_con_hijos_por_horizonte_sin_registrar_modelos(
                 *("--artefactos", str(tmp_path / "mlartifacts")),
                 *("--figuras", str(tmp_path / "figuras")),
                 *("--resultados", str(tmp_path / "resultados.json")),
+                *("--manifiesto", str(tmp_path / "manifiesto.json")),
             ]
         )
         cliente = MlflowClient(uri)
@@ -45,6 +47,7 @@ def test_main_crea_un_run_padre_con_hijos_por_horizonte_sin_registrar_modelos(
         hijo = runs[f"p2_h{h}_ini50"].data
         assert hijo.tags["mlflow.parentRunId"] == padre
         assert hijo.tags["horizonte_horas"] == str(h)
+        assert ETIQUETAS_BASE <= set(hijo.tags) and hijo.tags["data_version"] == VERSION
         assert {"hgb_test_macro_f1", "persistencia_test_macro_f1"} <= set(hijo.metrics)
     assert modelos == []
     tabla = pd.read_csv(tmp_path / "figuras" / "p2_horizontes.csv", index_col=0)

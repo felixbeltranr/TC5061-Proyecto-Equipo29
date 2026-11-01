@@ -86,6 +86,7 @@ def figura_horizontes(tabla: pd.DataFrame, ruta: Path) -> Path:
 
 
 def main(argv: list[str] | None = None) -> None:
+    """Punto de entrada: python -m mibici.modeling.horizontes_p2 --horizontes 1 2 3 4."""
     ap = argparse.ArgumentParser(description="Analisis de horizontes de P2 en MLflow")
     ap.add_argument("--panel", default=str(CONFIG_P2.panel_path))
     ap.add_argument(
@@ -96,6 +97,7 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--tracking-uri", default=CONFIG_P2.tracking_uri)
     ap.add_argument("--artefactos", default=str(CONFIG_P2.artefactos_dir))
     ap.add_argument("--figuras", default=str(CONFIG_P2.figuras_dir))
+    ap.add_argument("--manifiesto", default=str(CONFIG_P2.manifiesto_path))
     ap.add_argument(
         "--resultados",
         default=str(CONFIG_P2.figuras_dir / "p2_resultados.json"),
@@ -114,13 +116,16 @@ def main(argv: list[str] | None = None) -> None:
         )
     mlflow.set_experiment(CONFIG_P2.experimento)
     panel = pd.read_parquet(args.panel)
+    manifiesto = json.loads(Path(args.manifiesto).read_text())
     sha, sucio = t2.git_commit()
     sufijo = t2.sufijo_nivel(args.nivel)
     tags = {
         "question": CONFIG_P2.question,
         "team": CONFIG_P2.team,
         "author": CONFIG_P2.author,
+        "data_range": t2.RANGO_DATOS,
         "seed": str(args.semilla),
+        "data_version": manifiesto["version"],
         "analisis": "horizontes",
         "horas_objetivo": f"{min(horas)}-{max(horas)}",
         "mlflow.source.git.commit": sha,
