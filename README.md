@@ -320,6 +320,25 @@ ruff format --check .
 
 La configuración de Ruff en `pyproject.toml` revisa `mibici/`.
 
+### Validación de datos con DeepChecks
+
+Las pruebas de `tests/datos/` revisan con DeepChecks las tablas reales que genera cada pregunta: la integridad de cada tabla y el drift entre los periodos de entrenamiento y evaluación. deepchecks 0.19.1, la versión más reciente, no funciona con las versiones de este proyecto (Python 3.14, NumPy 2, pandas 3 y scikit-learn 1.9), así que corre en un entorno aparte que requiere **Python 3.11**. En el entorno del proyecto, `python -m pytest` las marca como saltadas.
+
+Primero se generan las tablas en el entorno del proyecto (`mlflow run . -e ingest --env-manager local` y `mlflow run . -e train --env-manager local`). Después, desde la raíz del repositorio:
+
+```bash
+<python 3.11> -m venv .venv-deepchecks      # Windows: py -3.11 o la ruta de python.exe; Linux o macOS: python3.11
+.venv-deepchecks\Scripts\activate           # Windows; en Linux o macOS: source .venv-deepchecks/bin/activate
+pip install -r requirements-deepchecks.txt
+python -m pytest tests/datos -v
+```
+
+Si faltan las tablas, las pruebas se saltan con un mensaje que indica cómo generarlas. Los reportes HTML y los resúmenes JSON quedan en `reports/deepchecks/` y no se versionan.
+
+| Pregunta | Tablas | Qué se valida |
+|---|---|---|
+| P3 | `data/interim/p3_perfiles_entrenamiento.parquet` y `p3_perfiles_evaluacion.parquet` | Integridad de cada periodo sobre las 12 variables candidatas (faltantes, duplicados, tipos mezclados, columnas constantes y variables muy correlacionadas) y drift entre entrenamiento (enero 2025–abril 2026) y evaluación (mayo–septiembre 2026). La integridad falla si alguna condición no se cumple; el drift se mide y se reporta sin fallar, porque describe cómo cambió el uso de las estaciones y no un error en los datos. |
+
 ## Seguimiento en MLflow
 
 Todos los runs usan el experimento `mibici-equipo29`, con nombre descriptivo y etiquetas `question` (P1, P2 o P3), `team`, `author`, `data_range`, `seed`, `data_version`, `git_commit` y `git_dirty`. Las métricas indican el conjunto en que se calculan (`val_mae`, `test_mae`, ...). El almacén es local: `mlflow.db` y `mlartifacts/` en la raíz del repositorio, ambos fuera de git.
