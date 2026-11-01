@@ -324,6 +324,13 @@ def test_metricas_con_valores_conocidos_y_clase_ausente():
     )
 
 
+def test_macro_f1_con_clase_predicha_que_no_aparece_en_la_verdad():
+    # predecir una clase que no existe en y_true no se ignora: esa clase aporta F1 de 0
+    y_true = np.array(["segura", "segura"], dtype=object)
+    y_pred = np.array(["segura", "sin_anclajes"], dtype=object)
+    assert t2.macro_f1(y_true, y_pred) == pytest.approx((2 / 3 + 0 + 0) / 3)
+
+
 def test_metricas_pr_auc_solo_con_probas_y_de_las_clases_de_riesgo_presentes():
     y = np.array(["segura", "sin_bicicletas", "sin_anclajes", "sin_bicicletas"], dtype=object)
     # el orden de columnas de proba es el de clases (el de classes_ de sklearn, alfabetico)
@@ -368,6 +375,23 @@ def test_figura_pr_dibuja_las_dos_clases_de_riesgo_y_omite_las_ausentes(tmp_path
     # sin sin_anclajes en y_true solo queda una curva y no falla
     solo = y[y != "sin_anclajes"]
     assert t2.figura_pr(solo, proba[y != "sin_anclajes"], clases, "PR", tmp_path / "pr2.png")
+
+
+def test_heatmap_error_toma_las_estaciones_de_mas_volumen_y_guarda_la_matriz(tmp_path):
+    test = pd.DataFrame(
+        {
+            "estacion": [1, 1, 2, 2, 3, 3],
+            "hora": [8, 9, 8, 9, 8, 9],
+            "objetivo": ["segura"] * 6,
+        }
+    )
+    pred = ["segura", "sin_anclajes", "sin_anclajes", "sin_anclajes", "segura", "segura"]
+    volumen = pd.Series({1: 50.0, 2: 10.0, 3: 30.0, 9: 99.0})
+    ruta, vista = t2.heatmap_error(test, pred, volumen, tmp_path / "heat.png", top_n=2)
+    assert ruta.exists()
+    assert list(vista.index) == [1, 3]  # top 2 por volumen, ordenadas por error medio
+    assert vista.loc[1].tolist() == [0.0, 1.0]
+    assert pd.read_csv(tmp_path / "heat.csv", index_col=0).shape == (3, 2)
 
 
 def test_tipos_confiables_solo_acepta_tipos_de_sklearn_y_numpy():
@@ -555,6 +579,8 @@ def test_correr_nivel_regresa_resultados_y_ajusta_el_modelo_final_con_train(tmp_
         "p2_cm_hgb_sin_pesos_ini50.png",
         "p2_importancia_permutacion_ini50.csv",
         "p2_importancia_permutacion_ini50.png",
+        "p2_heatmap_error_ini50.png",
+        "p2_heatmap_error_ini50.csv",
     } <= figuras
     assert "p2_rejilla_validacion.json" not in figuras
 
@@ -784,8 +810,10 @@ def test_main_ordena_los_artefactos_en_plots_data_y_config(corrida_completa):
         "plots/p2_cm_hgb_sin_pesos_ini50.png",
         "plots/p2_pr_hgb_sin_pesos_ini50.png",
     }
-    # el HGB suma la importancia por permutacion y la rejilla de la busqueda
+    # el HGB suma la importancia por permutacion, el heatmap de error y la rejilla de la busqueda
     assert artefactos("p2_hgb_balanceado_ini50") == comunes | {
+        "plots/p2_heatmap_error_ini50.png",
+        "data/p2_heatmap_error_ini50.csv",
         "plots/p2_cm_hgb_ini50.png",
         "plots/p2_cm_hgb_nuevas_ini50.png",
         "plots/p2_pr_hgb_ini50.png",
@@ -1022,8 +1050,12 @@ def test_despachador_p2_prepara_features_y_llama_a_train_con_model_e_hiperparame
     espias_p2.clear()
     mp.main(["train", "--question", "p2"])  # sin hiperparametros viaja un objeto vacio
     assert espias_p2[1][1] == [
-        "--model", "hist_gradient_boosting", "--hyperparameters", "{}",
-        "--tracking-uri", expected_uri,
+        "--model",
+        "hist_gradient_boosting",
+        "--hyperparameters",
+        "{}",
+        "--tracking-uri",
+        expected_uri,
     ]
     espias_p2.clear()
     mp.main(["train", "--question", "p2", "--hyperparameters", "max_iter=10,max_leaf_nodes=7"])

@@ -193,7 +193,7 @@ Al terminar, `train_p2` registra **solo al campeón** en el modelo `mibici-equip
 
 El campeón se elige con una regla explícita (`mibici/registro.py`, `seleccionar_campeon`): entre las candidatas balanceadas (`CONFIG_P2.candidatas_campeon`), la de mayor recall medio de `sin_bicicletas` y `sin_anclajes` en **validación** al primer nivel inicial de la corrida; si dos candidatas difieren en menos de 0.005 de ese recall se consideran empatadas y decide el PR AUC medio de las mismas clases. No se usa la prueba para elegir y tampoco el macro F1. En la corrida real con nivel inicial 0.5 el campeón es HistGradientBoosting balanceado (recall medio de validación 0.952 contra 0.950 de la regresión logística y 0.942 del RandomForest, con mayor PR AUC).
 
-Lectura honesta de la elección:
+Limitaciones de la elección:
 
 - Es un **supuesto operativo**: quedarse sin aviso cuando una estación se vacía o se llena cuesta más que una falsa alarma, por eso se prioriza el recall de las clases de riesgo. Si el supuesto cambia, la regla y el campeón pueden cambiar.
 - Por **macro F1 de prueba la baseline de persistencia es mejor** que las tres candidatas en los tres niveles iniciales (con nivel 0.5, 0.804 contra 0.741 del HGB balanceado). Las candidatas balanceadas ganan en recall de riesgo (alrededor de 0.94 y 0.96 contra cerca de 0.70 de la persistencia) pero quedan por debajo en macro F1.
@@ -210,7 +210,7 @@ modelo = mlflow.pyfunc.load_model("models:/mibici-equipo29-p2-riesgo@champion")
 clases = modelo.predict(entrada)  # una clase por fila: segura, sin_bicicletas o sin_anclajes
 ```
 
-- `entrada` es un `DataFrame` con las columnas de `features_p2.FEATURES`, en ese orden y como `float64` (la firma del modelo y `config/config_p2.json` del run las listan). `hora`, `dia_semana` y `fin_semana` son del instante que se pronostica, una hora después del corte.
+- `entrada` es un `DataFrame` con las columnas de `features_p2.FEATURES`, en ese orden y como `float64` (la firma del modelo y `config/config_p2.json` del run las listan). `hora`, `dia_semana` y `fin_semana` son del instante que se pronostica, una hora después del corte: el modelo publicado es de horizonte h=1.
 - Las tres últimas (`est_tasa_sin_bicis`, `est_tasa_sin_anclajes` y `est_neto_medio_hora`) son estadísticas de entrenamiento por estación y por estación y hora. Se guardan en `data/stats_estacion.csv` y `data/stats_estacion_hora.csv` del mismo run y se unen al panel con `features_p2.unir_stats`. Una estación que no estaba en entrenamiento queda con esas columnas vacías, y los modelos las aceptan como valores faltantes.
 - Para obtener probabilidades, `mlflow.sklearn.load_model` sobre el mismo URI y `predict_proba`; las columnas siguen el orden de `classes_` (alfabético).
 - El modelo se guarda en formato skops, que solo carga tipos de scikit-learn y NumPy declarados como confiables al registrarlo.
@@ -223,6 +223,31 @@ Con MLflow Project, después de la ingesta y de generar el manifiesto, se pueden
 mlflow run . -e train -P question=p2 --env-manager local
 mlflow run . -e train -P question=p2 -P model=hist_gradient_boosting -P hyperparameters=max_iter=300,max_leaf_nodes=63 --env-manager local
 ```
+
+#### Heatmap de error y horizontes de 2 a 4 horas
+
+Con nivel inicial 0.5, el run del HGB balanceado guarda `plots/p2_heatmap_error_ini50.png` y `data/p2_heatmap_error_ini50.csv`: la tasa de error en prueba por estación y hora objetivo. La figura muestra las 30 estaciones con más salidas y llegadas en entrenamiento, ordenadas por error medio; el CSV trae la matriz de todas las estaciones. Las copias del reporte están en `reports/figures/`.
+
+![Heatmap de error de P2](reports/figures/p2_heatmap_error_ini50.png)
+
+`construir_features` recibe el horizonte `h`: el objetivo es la clase al cierre de t+h y los rezagos del mismo instante del objetivo se desplazan 24-h, 168-h y 168k-h filas desde t, así que solo usan información hasta t. Solo se conservan orígenes desde las 5:00, porque antes la ocupación todavía es la del día de servicio anterior. Con h=1 las features son idénticas a las de la corrida entregada; una prueba lo comprueba.
+
+```powershell
+python -m mibici.modeling.horizontes_p2 --horizontes 1 2 3 4
+```
+
+El análisis entrena el HGB con y sin pesos de clase con los hiperparámetros de `p2_resultados.json` (sin búsqueda) y los compara con las baselines en filas pareadas: horas objetivo de 9 a 23 para todos los horizontes. Registra un run padre `p2_horizontes_ini50` con un hijo `p2_h<h>_ini50` por horizonte, no registra modelos y no toca el alias `champion`. La fila h=1 es un control pareado y por eso difiere de las cifras entregadas, que usan horas objetivo de 6 a 23. Macro F1 en prueba (`reports/figures/p2_horizontes.csv`):
+
+| h | Mayoritaria | Semana previa | Persistencia | HGB balanceado | HGB sin pesos |
+|---|---|---|---|---|---|
+| 1 | 0.313 | 0.563 | 0.813 | 0.751 | 0.825 |
+| 2 | 0.313 | 0.563 | 0.718 | 0.676 | 0.755 |
+| 3 | 0.313 | 0.563 | 0.638 | 0.629 | 0.705 |
+| 4 | 0.313 | 0.563 | 0.569 | 0.599 | 0.669 |
+
+La persistencia cae rápido con el horizonte y la ventaja del HGB sin pesos sobre ella crece de 0.012 a 0.100. El HGB balanceado solo supera a la persistencia en macro F1 a 4 horas, pero conserva el recall de `sin_bicicletas` (de 0.938 a 0.873) mientras el de la persistencia cae de 0.724 a 0.357.
+
+![Macro F1 contra horizonte](reports/figures/p2_horizontes_macro_f1.png)
 
 ### P3 · grupos de estaciones
 
@@ -302,7 +327,25 @@ Si faltan las tablas, las pruebas se saltan con un mensaje que indica cómo gene
 
 | Pregunta | Tablas | Qué se valida |
 |---|---|---|
+| P2 | `data/interim/p2_train.parquet` y `p2_test.parquet`, que genera `python -m mibici.modeling.exportar_p2` (18 features y objetivo, nivel inicial 0.5, estadísticas por estación solo de train) | Sobre una muestra de hasta 100 000 filas de cada tabla (semilla 29). Integridad: features numéricas, objetivo con sus tres clases, faltantes solo en las columnas donde se esperan (lags sin historia y estadísticas de estaciones nuevas en prueba), una sola fila por estación y hora en el panel, y reporte de MixedDataTypes, PercentOfNulls y DataDuplicates. Drift entre train y prueba: Feature Drift, Label Drift y Multivariate Drift; falla si el drift de alguna variable o de la etiqueta pasa de 0.2, o si el AUC del clasificador de dominio pasa de 0.75. |
 | P3 | `data/interim/p3_perfiles_entrenamiento.parquet` y `p3_perfiles_evaluacion.parquet` | Integridad de cada periodo sobre las 12 variables candidatas (faltantes, duplicados, tipos mezclados, columnas constantes y variables muy correlacionadas) y drift entre entrenamiento (enero 2025–abril 2026) y evaluación (mayo–septiembre 2026). La integridad falla si alguna condición no se cumple; el drift se mide y se reporta sin fallar, porque describe cómo cambió el uso de las estaciones y no un error en los datos. |
+
+Hallazgos de P2 con los datos reales:
+
+- Drift por variable bajo: el máximo es `neto_media24` con 0.071, seguido de las ocupaciones (0.054 a 0.055); `hora` tiene 0.
+- Drift de la etiqueta: Cramér's V de 0.074.
+- Multivariado: AUC de 0.600 (drift de 0.200). Toda la importancia del clasificador de dominio está en `est_tasa_sin_bicis`: el 13.8 % de las filas de prueba son de estaciones nuevas sin estadísticas de train y esa columna queda vacía, mientras que en train nunca falta. Es esperado por la partición temporal y coincide con el bloque de estaciones nuevas que se evalúa aparte (`test_nuevas_*`).
+
+### Chequeos de seguridad de P2
+
+La revisión de seguridad del código, las dependencias y los secretos de P2 está en `docs/seguridad_p2.md`. Para repetirla, con `bandit` y `pip-audit` instalados en un entorno fuera del repositorio (`pip install bandit==1.9.4 pip-audit==2.10.1`):
+
+```bash
+bandit mibici/features_p2.py mibici/manifiesto_p2.py mibici/registro.py mibici/modeling/train_p2.py mibici/modeling/horizontes_p2.py mibici/modeling/exportar_p2.py
+pip-audit -r requirements-deepchecks.txt --no-deps --disable-pip
+```
+
+`requirements.txt` se audita desde una copia sin las líneas `pip` y `-e .`, como se explica en el documento.
 
 ## Seguimiento en MLflow
 
