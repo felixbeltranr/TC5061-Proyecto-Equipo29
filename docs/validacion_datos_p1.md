@@ -35,6 +35,20 @@ claves repetidas) y sólo corren si el contrato pasa; por eso, en esta herramien
 confirma el contrato y no agrega un criterio nuevo. Las pruebas los ejecutan también
 directamente sobre paneles con nulos y con claves repetidas para comprobar que fallan.
 
+### Panel real en pytest
+
+`tests/datos/test_panel_real_p1.py` aplica el mismo contrato y los mismos dos checks a
+`data/interim/p1_panel_diario.parquet`, el panel que genera `python -m mibici.features`, sobre
+todas sus filas y sin modificarlo (compara su SHA256 antes y después). Si el archivo no existe,
+las tres pruebas se saltan con un mensaje que dice cómo generarlo: ese SKIP no valida el panel.
+Una tercera prueba altera una copia en memoria (una clave repetida y un conteo negativo) y
+comprueba que el contrato la rechaza. Los reportes HTML van a la carpeta temporal de pytest, no
+a `reports/deepchecks/`.
+
+```bash
+"$PY311" -m pytest tests/datos/test_panel_real_p1.py -v -rs -p no:cacheprovider
+```
+
 ## Exportación y drift
 
 `exportar_features_p1.py` verifica hashes normalizados CRLF/LF de `mibici/features.py`,
