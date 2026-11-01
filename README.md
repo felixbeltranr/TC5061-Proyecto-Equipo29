@@ -197,7 +197,7 @@ Las pruebas con datos sintéticos o fabricados comprueban el código, no la cali
 
 `test_panel_real_p1.py` revisa el panel real `data/interim/p1_panel_diario.parquet` cuando existe y se salta si falta; sus reportes van a la carpeta temporal de pytest, no a `reports/deepchecks/`. Los scripts de validación, exportación y drift de P1 están en el repositorio, en `scripts/p1/`; lo que generan (reportes HTML, resúmenes JSON y tablas exportadas) se guarda en la carpeta nueva que se indica con `--output`, que debe estar fuera del repositorio. Las pruebas que exportan variables registran el commit con git, así que requieren git y un checkout con su propio `.git` (si no, se saltan).
 
-Las capturas de pytest reproducen la salida de las corridas de esta rama; las de DeepChecks son los reportes HTML del panel real.
+Las capturas de pytest son capturas de pantalla de una consola de Windows durante la ejecución de cada comando sobre esta rama (1 de noviembre de 2026); las de DeepChecks son los reportes HTML del panel real.
 
 ![Prueba de repetibilidad de P1](reports/figures/p1_pruebas_repetibilidad.png)
 
