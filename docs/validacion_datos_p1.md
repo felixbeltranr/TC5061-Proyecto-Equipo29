@@ -122,8 +122,9 @@ en el entorno principal Python 3.14.8. Checkout: main `d2bec05` con el PR #13
   370 estaciones comunes, 101 sólo test, una sólo train.
 - La exportación `isolated-source` en Python 3.11 del mismo panel produjo las mismas
   tablas (comparadas con `DataFrame.equals`) y las mismas 22 puntuaciones de drift.
-- Tras integrar main `f164de8` (#13 y #14 fusionados): QA sintética **40 passed**; las
-  6 omitidas son de P2 y P3, porque no están sus tablas en `data/interim`. La huella de
+- Tras integrar main `f164de8` (#13 y #14 fusionados): el comando de QA de arriba sigue
+  en **40 passed**. Con todo `tests/datos` (`python -m pytest tests/datos -v -rs`), se
+  agregan 6 omitidas de P2 y P3, porque no están sus tablas en `data/interim`. La huella de
   `P1Config` y `CONFIG_P1` y los hashes de `features.py` y `train_p1.py` no cambian, así
   que la corrida con el panel real de arriba sigue vigente y no se repitió.
 
