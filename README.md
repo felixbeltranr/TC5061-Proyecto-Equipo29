@@ -336,6 +336,17 @@ Hallazgos de P2 con los datos reales:
 - Drift de la etiqueta: Cramér's V de 0.074.
 - Multivariado: AUC de 0.600 (drift de 0.200). Toda la importancia del clasificador de dominio está en `est_tasa_sin_bicis`: el 13.8 % de las filas de prueba son de estaciones nuevas sin estadísticas de train y esa columna queda vacía, mientras que en train nunca falta. Es esperado por la partición temporal y coincide con el bloque de estaciones nuevas que se evalúa aparte (`test_nuevas_*`).
 
+### Chequeos de seguridad de P2
+
+La revisión de seguridad del código, las dependencias y los secretos de P2 está en `docs/seguridad_p2.md`. Para repetirla, con `bandit` y `pip-audit` instalados en un entorno fuera del repositorio (`pip install bandit==1.9.4 pip-audit==2.10.1`):
+
+```bash
+bandit mibici/features_p2.py mibici/manifiesto_p2.py mibici/registro.py mibici/modeling/train_p2.py mibici/modeling/horizontes_p2.py mibici/modeling/exportar_p2.py
+pip-audit -r requirements-deepchecks.txt --no-deps --disable-pip
+```
+
+`requirements.txt` se audita desde una copia sin las líneas `pip` y `-e .`, como se explica en el documento.
+
 ## Seguimiento en MLflow
 
 Todos los runs usan el experimento `mibici-equipo29`, con nombre descriptivo y etiquetas `question` (P1, P2 o P3), `team`, `author`, `data_range`, `seed`, `data_version`, `git_commit` y `git_dirty`. Las métricas indican el conjunto en que se calculan (`val_mae`, `test_mae`, ...). El almacén es local: `mlflow.db` y `mlartifacts/` en la raíz del repositorio, ambos fuera de git.
