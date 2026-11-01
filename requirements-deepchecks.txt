@@ -1,0 +1,11 @@
+# Entorno aparte para las validaciones de datos con DeepChecks (requiere Python 3.11).
+# deepchecks 0.19.1 no funciona con el entorno del proyecto (Python 3.14, numpy 2,
+# pandas 3, scikit-learn 1.9); estas versiones son las que soporta. Ver README.
+deepchecks==0.19.1
+numpy==1.26.4
+pandas==2.3.3
+scikit-learn==1.5.2
+setuptools==80.10.2  # deepchecks importa pkg_resources, que setuptools quitó a partir de la 81
+plotly==5.24.1  # con plotly 6 deepchecks no puede guardar el reporte HTML
+pyarrow==25.0.1  # lectura de los perfiles en Parquet
+pytest==9.1.1
