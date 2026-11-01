@@ -224,16 +224,6 @@ mlflow run . -e train -P question=p2 --env-manager local
 mlflow run . -e train -P question=p2 -P model=hist_gradient_boosting -P hyperparameters=max_iter=300,max_leaf_nodes=63 --env-manager local
 ```
 
-#### Drift entre train y test con DeepChecks
-
-`python -m mibici.modeling.exportar_p2` deja en `data/interim/` las tablas `p2_train.parquet` y `p2_test.parquet` con las 18 features y el objetivo, nivel inicial 0.5 y estadísticas por estación calculadas solo con train. `tests/datos/test_deepchecks_p2.py` las lee en el entorno aparte de DeepChecks (Python 3.11, `requirements-deepchecks.txt`), toma 100 000 filas de cada una con semilla 29 y corre Feature Drift, Label Drift y Multivariate Drift. El reporte queda en `reports/deepchecks/p2_drift.html` con su resumen `p2_drift_resumen.json`. La prueba falla si el drift de alguna variable o el de la etiqueta pasa de 0.2, o si el AUC del clasificador de dominio pasa de 0.75.
-
-Resultados con los datos reales:
-
-- Drift por variable bajo: el máximo es `neto_media24` con 0.071, seguido de las ocupaciones (0.054 a 0.055); `hora` tiene 0.
-- Drift de la etiqueta: Cramér's V de 0.074.
-- Multivariado: AUC de 0.600 (drift de 0.200). Toda la importancia del clasificador de dominio está en `est_tasa_sin_bicis`: el 13.8 % de las filas de test son de estaciones nuevas sin estadísticas de train y esa columna queda vacía, mientras que en train nunca falta. Es esperado por la partición temporal y coincide con el bloque de estaciones nuevas que se evalúa aparte (`test_nuevas_*`).
-
 #### Heatmap de error y horizontes de 2 a 4 horas
 
 Con nivel inicial 0.5, el run del HGB balanceado guarda `plots/p2_heatmap_error_ini50.png` y `data/p2_heatmap_error_ini50.csv`: la tasa de error en prueba por estación y hora objetivo. La figura muestra las 30 estaciones con más salidas y llegadas en entrenamiento, ordenadas por error medio; el CSV trae la matriz de todas las estaciones. Las copias del reporte están en `reports/figures/`.
@@ -337,7 +327,14 @@ Si faltan las tablas, las pruebas se saltan con un mensaje que indica cómo gene
 
 | Pregunta | Tablas | Qué se valida |
 |---|---|---|
+| P2 | `data/interim/p2_train.parquet` y `p2_test.parquet`, que genera `python -m mibici.modeling.exportar_p2` (18 features y objetivo, nivel inicial 0.5, estadísticas por estación solo de train) | Drift entre train y prueba sobre 100 000 filas de cada tabla (semilla 29): Feature Drift, Label Drift y Multivariate Drift. Falla si el drift de alguna variable o de la etiqueta pasa de 0.2, o si el AUC del clasificador de dominio pasa de 0.75. |
 | P3 | `data/interim/p3_perfiles_entrenamiento.parquet` y `p3_perfiles_evaluacion.parquet` | Integridad de cada periodo sobre las 12 variables candidatas (faltantes, duplicados, tipos mezclados, columnas constantes y variables muy correlacionadas) y drift entre entrenamiento (enero 2025–abril 2026) y evaluación (mayo–septiembre 2026). La integridad falla si alguna condición no se cumple; el drift se mide y se reporta sin fallar, porque describe cómo cambió el uso de las estaciones y no un error en los datos. |
+
+Hallazgos de P2 con los datos reales:
+
+- Drift por variable bajo: el máximo es `neto_media24` con 0.071, seguido de las ocupaciones (0.054 a 0.055); `hora` tiene 0.
+- Drift de la etiqueta: Cramér's V de 0.074.
+- Multivariado: AUC de 0.600 (drift de 0.200). Toda la importancia del clasificador de dominio está en `est_tasa_sin_bicis`: el 13.8 % de las filas de prueba son de estaciones nuevas sin estadísticas de train y esa columna queda vacía, mientras que en train nunca falta. Es esperado por la partición temporal y coincide con el bloque de estaciones nuevas que se evalúa aparte (`test_nuevas_*`).
 
 ## Seguimiento en MLflow
 
