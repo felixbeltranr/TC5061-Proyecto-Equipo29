@@ -397,6 +397,32 @@ La validación con DeepChecks consume ese artefacto intermedio y toma una muestr
 
 No se evalúan duplicados sobre estas variables: viajes distintos pueden compartir legítimamente los mismos valores de features. Tampoco se mide drift, porque EDA no define una partición train/test común con semántica adecuada para esta comparación. DeepChecks genera reportes HTML de integridad y transformación, además de un resumen JSON de nulos, bajo `reports/deepchecks/`; son artefactos locales ignorados por Git.
 
+![Pruebas unitarias de dataset, features EDA y pipeline: 15 aprobadas](reports/figures/eda_pruebas_unitarias.png)
+
+![Pruebas DeepChecks de EDA: 2 aprobadas](reports/figures/eda_pruebas_deepchecks.png)
+
+#### Chequeos de seguridad de EDA y módulos compartidos
+
+La revisión de `dataset.py`, `features_eda.py`, `mlflow_project.py`, `plots.py`,
+`modeling/train.py` y `modeling/predict.py` está detallada en
+[`docs/seguridad_eda.md`](docs/seguridad_eda.md). Bandit revisó 621 líneas y reportó dos
+hallazgos B310 de severidad media en `dataset.py`; el uso predeterminado parte de la página
+HTTPS de MiBici, pero el esquema, host y redirecciones de las URL no quedan restringidos.
+Por ello se documentan como riesgo condicionado, no como falsos positivos ni como corregidos.
+
+`pip-audit` revisó los pines compartidos de ambos archivos de requisitos: reportó tres CVE
+para `mlflow==3.16.1` y dos avisos distintos para `setuptools==80.10.2` (uno aparece dos
+veces en la salida). Las dependencias no se actualizaron en esta revisión de EDA.
+
+```powershell
+bandit mibici\dataset.py mibici\features_eda.py mibici\mlflow_project.py mibici\plots.py mibici\modeling\train.py mibici\modeling\predict.py
+pip-audit -r requirements-deepchecks.txt --no-deps --disable-pip --format markdown
+```
+
+![Ejecución de Bandit sobre los módulos de EDA y compartidos](reports/figures/eda_seguridad_bandit.png)
+
+![Ejecución de pip-audit sobre los requisitos compartidos](reports/figures/eda_seguridad_pip_audit.png)
+
 #### Hallazgos de P2 con los datos reales:
 
 - Drift por variable bajo: el máximo es `neto_media24` con 0.071, seguido de las ocupaciones (0.054 a 0.055); `hora` tiene 0.
