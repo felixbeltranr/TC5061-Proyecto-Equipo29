@@ -334,6 +334,28 @@ mlflow run . -e train -P question=p3 -P model=kmeans_uso -P hyperparameters=busc
 
 Las fechas, franjas horarias, umbrales de limpieza y de VIF, semilla, rejillas de búsqueda, particiones, criterios y nombre del modelo registrado están en `CONFIG_P3` de `mibici/config.py`.
 
+#### Pruebas de P3
+
+Las pruebas de P3 usan datos fabricados dentro de cada prueba, así que no necesitan los datos reales ni el servidor de tracking, y siguen la estructura del paquete: las de `mibici/features_p3.py` en `tests/` y las de `mibici/modeling/*_p3.py` en `tests/modeling/`.
+
+| Archivo | Pruebas | Qué cubre |
+|---|---|---|
+| `tests/test_features_p3.py` | 24 | Lectura sin datos personales, limpieza mínima y bitácora, flujos horarios, periodos sin traslape, perfiles, elegibilidad, selección de variables por VIF y guardado y carga de los perfiles. Casos límite: frontera de un minuto (59 s se quita; 60 y 61 s se conservan), viaje que termina antes de empezar, id de estación no numérico, viaje de ida y vuelta, mínimo exacto de días y estación con una variable faltante. |
+| `tests/modeling/test_modelos_p3.py` | 24 | Pipelines de `kmeans_uso` y `gmm_uso` con las 12 variables, selección por VIF aprendida solo con lo que recibe `fit`, grupos ordenados que no dependen de la semilla e hiperparámetros y opciones de la CLI inválidos. |
+| `tests/modeling/test_busqueda_p3.py` | 12 | Particiones por estaciones reproducibles que cubren todas las estaciones, métricas de validación y estabilidad, desempates del ranking y configuraciones con particiones inválidas. |
+| `tests/modeling/test_seleccion_p3.py` | 22 | Criterios de interpretabilidad, elección del campeón y su motivo, registro con aliases y carga por nombre; si la comprobación de la versión falla (carga, predicción o grupos no finitos, negativos o fraccionarios), los aliases se quedan en las versiones anteriores. |
+| `tests/modeling/test_artefactos_p3.py` | 4 | Artefactos del run (modelo, datos, gráficas y configuración), asignación sin datos personales y tipos confiables de `skops`. |
+| `tests/modeling/test_reproducibilidad_p3.py` | 4 | Con la semilla de P3 (42), dos entrenamientos de `kmeans_uso` y de `gmm_uso` dan los mismos grupos y las mismas métricas, y la validación por estaciones da las mismas métricas (sin `val_fit_seconds`, que es tiempo de reloj). |
+
+```bash
+python -m pytest -k p3
+python -m pytest tests/modeling/test_reproducibilidad_p3.py -v
+```
+
+Resultado del 1 de noviembre de 2026 en Windows, con el entorno del proyecto (Python 3.14.7), sobre main (`8e8d710`): 90 aprobadas, 5 saltadas (los módulos de `tests/datos`, que corren en el entorno de DeepChecks) y 161 deseleccionadas en 18 s.
+
+![Pruebas de P3 en el entorno del proyecto](reports/figures/p3_pruebas_pytest.png)
+
 ### Pruebas, lint y formato
 
 ```bash
@@ -381,6 +403,22 @@ No se evalúan duplicados sobre estas variables: viajes distintos pueden compart
 - Drift de la etiqueta: Cramér's V de 0.074.
 - Multivariado: AUC de 0.600 (drift de 0.200). Toda la importancia del clasificador de dominio está en `est_tasa_sin_bicis`: el 13.8 % de las filas de prueba son de estaciones nuevas sin estadísticas de train y esa columna queda vacía, mientras que en train nunca falta. Es esperado por la partición temporal y coincide con el bloque de estaciones nuevas que se evalúa aparte (`test_nuevas_*`).
 
+#### Hallazgos de P3 con los datos reales
+
+Resultado del 1 de noviembre de 2026 con `python -m pytest tests/datos/test_deepchecks_p3.py -v` en el entorno de DeepChecks (Python 3.11.9): 3 aprobadas en 26 s.
+
+- Integridad: las condiciones pasan en los dos periodos (370 estaciones de entrenamiento y 453 de evaluación): sin faltantes, duplicados, tipos mezclados ni columnas constantes, y ningún par de variables con correlación mayor que 0.9.
+- Drift por variable (Kolmogorov-Smirnov): el máximo es `weekend_share` con 0.161, seguido de `log_trips_day` (0.113) y `dep_night` (0.104); las demás quedan por debajo de 0.09.
+- Multivariado: drift de 0.237 (AUC del clasificador de dominio de 0.619), cerca del límite de 0.25 de DeepChecks. `weekend_share` explica el 72 % de la diferencia: en mayo a septiembre de 2026 las estaciones tienen una proporción mayor de viajes en fin de semana. Es un cambio en el uso, no un error en los datos; por eso se reporta sin fallar, y es una razón para revisar los grupos de P3 cuando se reentrene con datos más recientes.
+
+![Pruebas de DeepChecks de P3](reports/figures/p3_pruebas_deepchecks.png)
+
+![Integridad de los perfiles de P3 (resumen igual en los dos periodos)](reports/figures/p3_deepchecks_integridad.png)
+
+![Drift de P3 entre entrenamiento y evaluación](reports/figures/p3_deepchecks_drift.png)
+
+![Drift multivariado de P3 y distribución de weekend_share](reports/figures/p3_deepchecks_drift_multivariado.png)
+
 ### Chequeos de seguridad de P2
 
 La revisión de seguridad del código, las dependencias y los secretos de P2 está en `docs/seguridad_p2.md`. Para repetirla, con `bandit` y `pip-audit` instalados en un entorno fuera del repositorio (`pip install bandit==1.9.4 pip-audit==2.10.1`):
@@ -391,6 +429,23 @@ pip-audit -r requirements-deepchecks.txt --no-deps --disable-pip
 ```
 
 `requirements.txt` se audita desde una copia sin las líneas `pip` y `-e .`, como se explica en el documento.
+
+### Chequeos de seguridad de P3
+
+La revisión de seguridad del código, las dependencias, los secretos y los datos de P3 está en `docs/seguridad_p3.md`. Para repetirla, con `bandit` y `pip-audit` instalados en un entorno fuera del repositorio (`pip install bandit==1.9.4 pip-audit==2.10.1`):
+
+```bash
+bandit mibici/features_p3.py mibici/modeling/modelos_p3.py mibici/modeling/busqueda_p3.py mibici/modeling/seleccion_p3.py mibici/modeling/artefactos_p3.py mibici/modeling/train_p3.py
+pip-audit -r requirements-deepchecks.txt --no-deps --disable-pip
+```
+
+`requirements.txt` se audita desde una copia sin las líneas `pip` y `-e .`, como se explica en `docs/seguridad_p1.md`.
+
+Resultado del 1 de noviembre de 2026 en Windows: `bandit` revisa 1,596 líneas y encuentra 3 hallazgos de severidad baja en `train_p3.py` (`import subprocess` y la llamada con argumentos fijos a `git`), ninguno medio ni alto. `pip-audit` sobre `requirements-deepchecks.txt` reporta los avisos de `setuptools` 80.10.2; cuenta 3 porque lista dos veces PYSEC-2026-3447, así que son 2 avisos distintos. La decisión sobre cada hallazgo está en el documento.
+
+![bandit sobre los módulos de P3](reports/figures/p3_seguridad_bandit.png)
+
+![pip-audit sobre requirements-deepchecks.txt](reports/figures/p3_seguridad_pip_audit.png)
 
 ## Seguimiento en MLflow
 
