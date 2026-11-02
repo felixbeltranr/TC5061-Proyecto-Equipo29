@@ -35,6 +35,32 @@ claves repetidas) y sólo corren si el contrato pasa; por eso, en esta herramien
 confirma el contrato y no agrega un criterio nuevo. Las pruebas los ejecutan también
 directamente sobre paneles con nulos y con claves repetidas para comprobar que fallan.
 
+### Panel real en pytest
+
+`tests/datos/test_panel_real_p1.py` aplica el mismo contrato y los mismos dos checks a
+`data/interim/p1_panel_diario.parquet`, el panel que genera `python -m mibici.features`, sobre
+todas sus filas y sin modificarlo (compara su SHA256 antes y después). Si el archivo no existe,
+las tres pruebas se saltan con un mensaje que dice cómo generarlo: ese SKIP no valida el panel.
+Una tercera prueba altera una copia en memoria (una clave repetida y un conteo negativo) y
+comprueba que el contrato la rechaza. Los reportes HTML van a la carpeta temporal de pytest, no
+a `reports/deepchecks/`.
+
+```bash
+"$PY311" -m pytest tests/datos/test_panel_real_p1.py -v -rs -p no:cacheprovider
+```
+
+Resultados del 1 de noviembre de 2026 (commit `375d8a8`, Python 3.11.9, deepchecks 0.19.1):
+
+- Con el panel real (245,185 filas, 472 estaciones, del 1 de enero de 2025 al 30 de
+  septiembre de 2026; SHA256 `8f14faf9743363836339d53e29386708fde77ce8a8a7e24384a515658349d468`):
+  **3 passed**.
+- En un clon temporal del repositorio sin `data/`: **3 skipped**, con el motivo.
+- En otro clon temporal con una copia alterada del panel (una clave estación-fecha repetida,
+  245,186 filas): **2 failed** (el contrato y los checks de DeepChecks) y **1 passed** (el
+  control negativo).
+
+El panel original conservó su SHA256 antes y después de cada corrida.
+
 ## Exportación y drift
 
 `exportar_features_p1.py` verifica hashes normalizados CRLF/LF de `mibici/features.py`,

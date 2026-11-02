@@ -46,6 +46,9 @@ Windows 11, entorno principal Python 3.14.8, desde la raíz del checkout:
 - Tras integrar main `f164de8` (#13 y #14 fusionados): este test **3 passed**; suite
   completa **239 passed, 4 skipped**. La cuarta omisión es `test_deepchecks_p2.py`, que
   agrega el #14 y también requiere el entorno de DeepChecks.
+- Sobre main `9426c50` con `tests/datos/test_panel_real_p1.py` (1 de noviembre de 2026,
+  commit `375d8a8`): este test **3 passed**; suite completa **239 passed, 5 skipped**. La
+  quinta omisión es ese módulo nuevo, que también requiere el entorno de DeepChecks.
 
 `mibici.features` y `mibici.modeling.train_p1` se importaron desde el checkout probado.
 No se requieren cambios de producción, dependencias nuevas o el PR #13 para este test.

@@ -179,21 +179,25 @@ demanda = modelo.predict(entrada)  # una predicción numérica por fila estació
 
 #### Pruebas, validación de datos y seguridad de P1
 
-Comandos, decisiones y límites en `docs/repetibilidad_p1.md`, `docs/validacion_datos_p1.md` y `docs/seguridad_p1.md`. Resultados del 31 de octubre de 2026 sobre esta rama, en Windows:
+Comandos, decisiones y límites en `docs/repetibilidad_p1.md`, `docs/validacion_datos_p1.md` y `docs/seguridad_p1.md`. Resultados en Windows:
 
 | Prueba | Entorno | Datos | Resultado |
 |---|---|---|---|
 | `tests/modeling/test_reproducibilidad_p1.py`: dos ajustes de cada candidata con la semilla de `CONFIG_P1` dan las mismas predicciones y el mismo MAE, sin modificar los datos de entrada y con el embargo D-2 | proyecto (Python 3.14) | panel sintético | 3 passed |
-| `python -m pytest` (suite completa) | proyecto (Python 3.14) | sintéticos | 239 passed, 4 skipped: los cuatro módulos de `tests/datos` (los dos de P1 porque no es Python 3.11; los de P2 y P3 porque falta deepchecks) |
-| `tests/datos/test_integridad_p1.py` y `test_drift_p1.py`: contrato del panel, `PercentOfNulls` y `DataDuplicates`, exportación de variables y drift, con controles negativos | DeepChecks (Python 3.11) | paneles fabricados | 40 passed (`python -m pytest tests/datos -v` también salta las 3 de P2 y las 3 de P3 si faltan sus tablas) |
-| Integridad del panel real: contrato y los dos checks de DeepChecks (`scripts/p1/validar_panel_p1.py`) | DeepChecks (Python 3.11) | `p1_panel_diario.parquet` del 18 de octubre: 245,185 filas, 472 estaciones | PASS |
+| `python -m pytest` (suite completa) | proyecto (Python 3.14) | sintéticos | 239 passed, 5 skipped: los cinco módulos de `tests/datos` (los tres de P1 porque no es Python 3.11; los de P2 y P3 porque falta deepchecks) |
+| `tests/datos/test_integridad_p1.py` y `test_drift_p1.py`: contrato del panel, `PercentOfNulls` y `DataDuplicates`, exportación de variables y drift, con controles negativos | DeepChecks (Python 3.11) | paneles fabricados | 40 passed |
+| `tests/datos/test_panel_real_p1.py`: contrato, `PercentOfNulls` y `DataDuplicates` sobre todas las filas del panel real, sin modificarlo, y un control negativo sobre una copia | DeepChecks (Python 3.11) | `data/interim/p1_panel_diario.parquet` del 18 de octubre: 245,185 filas, 472 estaciones (SHA256 `8f14faf9…`) | 3 passed. En dos clones temporales del repositorio: sin el archivo, 3 skipped; con una copia alterada (una clave repetida), 2 failed y 1 passed (el control negativo) |
+| `python -m pytest tests/datos -v` | DeepChecks (Python 3.11) | paneles fabricados (40 pruebas) y panel real (3) | 43 passed, 6 skipped: las 3 de P2 y las 3 de P3, porque faltan sus tablas en `data/interim` |
+| Integridad del panel real con el script (`scripts/p1/validar_panel_p1.py`) | DeepChecks (Python 3.11) | el mismo panel | PASS |
 | Exportación y drift reales (`exportar_features_p1.py` en el entorno del proyecto, `medir_drift_p1.py` en el de DeepChecks) | ambos | el mismo panel | 167,177 filas de entrenamiento y 62,426 de prueba, 2 días de separación; drift sobre una muestra determinista de 100,000 filas de entrenamiento (semilla 29) y la prueba completa: KS máximo `lag_28` = 0.073 con todas las estaciones y `media_28d` = 0.037 con las 370 presentes en ambos periodos; Cramér V máximo `festivo` = 0.053 y 0.054 |
 
-Las pruebas se corrieron después de integrar main con #13 y #14. La corrida con el panel real es del commit `3f12723`, anterior a esa integración. Lo que verifica el exportador no cambió (la huella de `P1Config` y `CONFIG_P1` dentro de `config.py`, donde main sólo agregó campos a `P2Config`, y los hashes de `features.py` y `train_p1.py`), así que no se repitió.
+Las corridas de pytest son del 1 de noviembre de 2026, sobre el commit `375d8a8` de esta rama; los commits posteriores sólo cambian documentación e imágenes. Las de los scripts con el panel real son del 31 de octubre, en el commit `3f12723`; lo que verifica el exportador no cambió desde entonces (la huella de `P1Config` y `CONFIG_P1` dentro de `config.py` y los hashes de `features.py` y `train_p1.py`), así que no se repitieron.
 
-Las pruebas con datos sintéticos o fabricados comprueban el código, no la calidad del panel real; ésta se revisa con los scripts. El drift se mide y se reporta sin umbral de aprobación. Quedan sin prueba automática la exportación `native` (en el entorno del proyecto se omite `tests/datos`; la cubre la corrida con el panel real) y la búsqueda completa de hiperparámetros: la prueba de repetibilidad usa hiperparámetros pequeños fijos, y con la configuración de P1 los candidatos son deterministas, así que muestra repetibilidad y que la semilla llega al modelo, no que la semilla cambie el resultado.
+Las pruebas con datos sintéticos o fabricados comprueban el código, no la calidad del panel real; ésta se revisa con `test_panel_real_p1.py` y con los scripts. El drift se mide y se reporta sin umbral de aprobación. Quedan sin prueba automática la exportación `native` (en el entorno del proyecto se omite `tests/datos`; la cubre la corrida con el panel real) y la búsqueda completa de hiperparámetros: la prueba de repetibilidad usa hiperparámetros pequeños fijos, y con la configuración de P1 los candidatos son deterministas, así que muestra repetibilidad y que la semilla llega al modelo, no que la semilla cambie el resultado.
 
-Las capturas de pytest reproducen la salida de las corridas de esta rama; las de DeepChecks son los reportes HTML del panel real.
+`test_panel_real_p1.py` revisa el panel real `data/interim/p1_panel_diario.parquet` cuando existe y se salta si falta; sus reportes van a la carpeta temporal de pytest, no a `reports/deepchecks/`. Los scripts de validación, exportación y drift de P1 están en el repositorio, en `scripts/p1/`; lo que generan (reportes HTML, resúmenes JSON y tablas exportadas) se guarda en la carpeta nueva que se indica con `--output`, que debe estar fuera del repositorio. Las pruebas que exportan variables registran el commit con git, así que requieren git y un checkout con su propio `.git` (si no, se saltan).
+
+Cada captura de pytest es una captura de pantalla de la consola de Windows al terminar esa misma ejecución. La salida completa de cada corrida se guardó a la vez con `Tee-Object`, fuera del repositorio, y su duración es la que muestra la captura. Las capturas de DeepChecks son los reportes HTML del panel real.
 
 ![Prueba de repetibilidad de P1](reports/figures/p1_pruebas_repetibilidad.png)
 
@@ -376,8 +380,6 @@ No se evalúan duplicados sobre estas variables: viajes distintos pueden compart
 - Drift por variable bajo: el máximo es `neto_media24` con 0.071, seguido de las ocupaciones (0.054 a 0.055); `hora` tiene 0.
 - Drift de la etiqueta: Cramér's V de 0.074.
 - Multivariado: AUC de 0.600 (drift de 0.200). Toda la importancia del clasificador de dominio está en `est_tasa_sin_bicis`: el 13.8 % de las filas de prueba son de estaciones nuevas sin estadísticas de train y esa columna queda vacía, mientras que en train nunca falta. Es esperado por la partición temporal y coincide con el bloque de estaciones nuevas que se evalúa aparte (`test_nuevas_*`).
-
-En P1, las pruebas de `tests/datos/` no revisan las tablas reales ni dejan reportes en `reports/deepchecks/`: eso lo hacen los scripts de `scripts/p1/`, en una carpeta nueva fuera del repositorio. Las pruebas que exportan variables registran el commit con git, así que requieren git y un checkout con su propio `.git` (si no, se saltan).
 
 ### Chequeos de seguridad de P2
 
