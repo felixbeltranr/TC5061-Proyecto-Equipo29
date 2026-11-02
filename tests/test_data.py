@@ -1,4 +1,5 @@
 import pandas as pd
+import pytest
 
 from mibici import dataset
 
@@ -59,3 +60,53 @@ def test_main_crea_carpeta_y_guarda_parquet(tmp_path, monkeypatch):
     guardado = pd.read_parquet(salida / dataset.CONFIG.output_filename)
     assert len(guardado) == 2
     assert pd.api.types.is_datetime64_any_dtype(guardado["Inicio_del_viaje"])
+
+
+def test_filtra_dataset_por_rango_inclusivo_y_ordenado():
+    urls = [
+        "https://example.test/datos_abiertos_2024_12.csv",
+        "https://example.test/datos_abiertos_2025_01.csv",
+        "https://example.test/datos_abiertos_2025_03.csv",
+        "https://example.test/datos_abiertos_2025_04.csv",
+    ]
+
+    filtradas = dataset._filter_dataset_urls(urls, 2025, 1, 2025, 3)
+
+    assert [url.rsplit("/", 1)[-1] for url in filtradas] == [
+        "datos_abiertos_2025_01.csv",
+        "datos_abiertos_2025_03.csv",
+    ]
+
+
+@pytest.mark.parametrize(
+    "bounds",
+    [
+        (2025, 1, 2025, None),
+        (2025, 0, 2025, 12),
+        (2025, 10, 2025, 1),
+    ],
+)
+def test_filtra_dataset_rechaza_rangos_invalidos(bounds):
+    with pytest.raises(ValueError):
+        dataset._filter_dataset_urls([], *bounds)
+
+
+def test_preprocess_dataframe_limpia_sin_mutar_entrada():
+    original = pd.DataFrame(
+        {
+            "origen_nombre": ["Centro", "Norte", "Sur", None, "Centro"],
+            "destino_nombre": ["Norte", "Sur", "Centro", "Norte", "Norte"],
+            "Usuario_Id": [10, 11, 12, 13, 10],
+            "Año_de_nacimiento": [1990.0, None, 1890.0, 1985.0, 1990.0],
+            "Genero": ["M", None, "F", "F", "M"],
+        }
+    )
+    antes = original.copy(deep=True)
+
+    resultado = dataset.preprocess_dataframe(original)
+
+    assert len(resultado) == 2
+    assert "Usuario_Id" not in resultado
+    assert resultado["Año_de_nacimiento"].notna().all()
+    assert set(resultado["Genero"]) == {"M", "Desconocido"}
+    pd.testing.assert_frame_equal(original, antes)
