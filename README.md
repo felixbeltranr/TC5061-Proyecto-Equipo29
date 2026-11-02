@@ -221,6 +221,28 @@ mlflow run . -e train -P question=p2 -P 'hyperparameters={}' --env-manager local
 
 `features_p2` genera `data/interim/p2_panel_horario.parquet` y su resumen JSON. `train_p2` busca los hiperparámetros del HGB en la rejilla de `CONFIG_P2` como corridas anidadas (un run padre `p2_busqueda_<nivel>` y un hijo por combinación), entrena tres baselines y tres candidatas (regresión logística balanceada, HGB balanceado con la mejor combinación y RandomForest balanceado, con los parámetros de `CONFIG_P2`), registra los runs con las etiquetas `model_family` y `stage_of_work`, métricas de validación y de prueba, `fit_seconds` y `model_size_mb` y guarda matrices de confusión, importancia por permutación y `p2_resultados.json` en `reports/runs_p2/` (ignorada por git, configurable con `--figuras`; `reports/figures/` conserva las figuras del reporte). Los artefactos de MLflow van a `mlartifacts/` o a la carpeta de `--artefactos` si el experimento aún no existe. Los cortes temporales, umbrales de riesgo, nivel inicial de ocupación, semilla y rejilla están en `CONFIG_P2` de `mibici/config.py`.
 
+#### Pruebas de P2
+
+Las pruebas de P2 usan datos fabricados dentro de cada prueba, así que no necesitan los datos reales ni el servidor de tracking. Las de `mibici/features_p2.py` están en `tests/` y las de `mibici/modeling/*_p2.py` en `tests/modeling/`.
+
+| Archivo | Pruebas | Qué cubre |
+|---|---|---|
+| `tests/test_features_p2.py` | 17 | Etiquetas por umbral, estación llena o vacía, ocupación fuera de rango, capacidad cero, acumulado acotado por la capacidad, features sin la hora objetivo, limpieza de viajes duplicados o de menos de un minuto, manifiesto con fin de línea LF y horizontes de 1 a 4 horas. |
+| `tests/modeling/test_train_p2.py` | 42 | Cortes y particiones temporales, métricas por clase y macro F1, figuras, búsqueda anidada en la rejilla, candidatas balanceadas, etiquetas y artefactos de cada run, registro solo del campeón con su alias, `git_commit` e hiperparámetros y opciones inválidos. |
+| `tests/modeling/test_reproducibilidad_p2.py` | 4 | Con la misma semilla, dos entrenamientos de HGB, regresión logística y RandomForest dan las mismas probabilidades y métricas, y la búsqueda elige la misma configuración. |
+| `tests/modeling/test_exportar_p2.py` | 1 | Exportación de train y prueba con features, objetivo y estadísticas por estación calculadas solo con train. |
+| `tests/modeling/test_horizontes_p2.py` | 1 | Un run padre con un hijo por horizonte, sin registrar modelos. |
+| `tests/datos/test_deepchecks_p2.py` | 3 | Integridad, panel sin duplicados y drift con los datos reales; corre en el entorno de DeepChecks. |
+
+```bash
+python -m pytest -k p2
+python -m pytest tests/modeling/test_reproducibilidad_p2.py -v
+```
+
+Resultado del 1 de noviembre de 2026 en el entorno del proyecto (Python 3.14.8), sobre main (`d076ebe`): 67 aprobadas (incluye una de `tests/test_tracking.py` y una de `tests/test_train_p1.py` que revisan que P2 use las mismas convenciones), 6 saltadas (los módulos de `tests/datos`, que corren en el entorno de DeepChecks) y 184 deseleccionadas en 34 s.
+
+![Pruebas de P2 en el entorno del proyecto](reports/figures/p2_pruebas_pytest.png)
+
 #### Campeón de P2 en el Model Registry
 
 Al terminar, `train_p2` registra **solo al campeón** en el modelo `mibici-equipo29-p2-riesgo` (una pregunta, un modelo registrado). Antes de mover `champion`, carga la nueva versión por su URI inmutable y exige una clase válida por fila; si falla, la versión queda marcada y el alias anterior se conserva. Después mantiene la comprobación final por alias. Cada versión nueva lleva su descripción y las etiquetas de linaje `run_id`, `git_commit`, `data_version`, `experimento`, `nivel_inicial`, `criterio_seleccion` y `candidata`. La opción `--no-registrar` omite el registro; por omisión está activo. El entry point propaga modelo, hiperparámetros y URI común; con `mlflow run` el registro está activo.
@@ -403,6 +425,14 @@ No se evalúan duplicados sobre estas variables: viajes distintos pueden compart
 - Drift de la etiqueta: Cramér's V de 0.074.
 - Multivariado: AUC de 0.600 (drift de 0.200). Toda la importancia del clasificador de dominio está en `est_tasa_sin_bicis`: el 13.8 % de las filas de prueba son de estaciones nuevas sin estadísticas de train y esa columna queda vacía, mientras que en train nunca falta. Es esperado por la partición temporal y coincide con el bloque de estaciones nuevas que se evalúa aparte (`test_nuevas_*`).
 
+Resultado del 1 de noviembre de 2026 con `python -m pytest tests/datos/test_deepchecks_p2.py -v` en el entorno de DeepChecks (Python 3.11.17): 3 aprobadas en 21 s.
+
+![Pruebas de DeepChecks de P2](reports/figures/p2_pruebas_deepchecks.png)
+
+![Faltantes por columna en la integridad de P2](reports/figures/p2_deepchecks_integridad.png)
+
+![Faltantes en prueba y duplicados en train de P2](reports/figures/p2_deepchecks_integridad_2.png)
+
 #### Hallazgos de P3 con los datos reales
 
 Resultado del 1 de noviembre de 2026 con `python -m pytest tests/datos/test_deepchecks_p3.py -v` en el entorno de DeepChecks (Python 3.11.9): 3 aprobadas en 26 s.
@@ -429,6 +459,12 @@ pip-audit -r requirements-deepchecks.txt --no-deps --disable-pip
 ```
 
 `requirements.txt` se audita desde una copia sin las líneas `pip` y `-e .`, como se explica en el documento.
+
+Resultado del 1 de noviembre de 2026: `bandit` revisa 1,552 líneas y encuentra 6 hallazgos de severidad baja, todos en `train_p2.py` (`import pickle`, `import subprocess` y las dos llamadas con argumentos fijos a `git`), ninguno medio ni alto. `pip-audit` sobre `requirements-deepchecks.txt` reporta los avisos de `setuptools` 80.10.2; cuenta 3 porque lista dos veces PYSEC-2026-3447, así que son 2 avisos distintos. La decisión sobre cada hallazgo está en el documento.
+
+![bandit sobre los módulos de P2](reports/figures/p2_seguridad_bandit.png)
+
+![pip-audit sobre requirements-deepchecks.txt](reports/figures/p2_seguridad_pip_audit.png)
 
 ### Chequeos de seguridad de P3
 
