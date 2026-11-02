@@ -53,7 +53,9 @@ pip-audit -r requirements-deepchecks.txt --no-deps --disable-pip
 | Pines de `requirements.txt` | 19 | 1 | `mlflow` 3.16.1: CVE-2026-53995 (corregido en 3.17.2), CVE-2026-115886 y CVE-2026-116691 (3.17.0) |
 | Pines de `requirements-deepchecks.txt` | 8 | 1 | `setuptools` 80.10.2: PYSEC-2026-3447 (83.0.0) y GHSA-xmj3-9gf7-h52w (84.1.0) |
 
-El resultado coincide con el de P1 y P2. Lo que toca a P3:
+`pip-audit` imprime "Found 3 known vulnerabilities" para `requirements-deepchecks.txt` porque lista
+dos veces PYSEC-2026-3447; son los 2 avisos distintos de la tabla. El resultado coincide con el de
+P1 y P2. Lo que toca a P3:
 
 - `mlflow`: P3 guarda el tracking en SQLite (`mlflow.db`, valor de `CONFIG_P3.tracking_uri`) o
   en el servidor común del README, que se lanza sin `--host` y escucha sólo en `127.0.0.1`; no

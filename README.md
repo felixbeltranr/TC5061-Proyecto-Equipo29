@@ -439,6 +439,12 @@ pip-audit -r requirements-deepchecks.txt --no-deps --disable-pip
 
 `requirements.txt` se audita desde una copia sin las líneas `pip` y `-e .`, como se explica en `docs/seguridad_p1.md`.
 
+Resultado del 1 de noviembre de 2026 en Windows: `bandit` revisa 1,596 líneas y encuentra 3 hallazgos de severidad baja en `train_p3.py` (`import subprocess` y la llamada con argumentos fijos a `git`), ninguno medio ni alto. `pip-audit` sobre `requirements-deepchecks.txt` reporta los avisos de `setuptools` 80.10.2; cuenta 3 porque lista dos veces PYSEC-2026-3447, así que son 2 avisos distintos. La decisión sobre cada hallazgo está en el documento.
+
+![bandit sobre los módulos de P3](reports/figures/p3_seguridad_bandit.png)
+
+![pip-audit sobre requirements-deepchecks.txt](reports/figures/p3_seguridad_pip_audit.png)
+
 ## Seguimiento en MLflow
 
 Todos los runs usan el experimento `mibici-equipo29`, con nombre descriptivo y etiquetas `question` (P1, P2 o P3), `team`, `author`, `data_range`, `seed`, `data_version`, `git_commit` y `git_dirty`. Las métricas indican el conjunto en que se calculan (`val_mae`, `test_mae`, ...). El almacén es local: `mlflow.db` y `mlartifacts/` en la raíz del repositorio, ambos fuera de git.
