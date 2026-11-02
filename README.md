@@ -390,6 +390,17 @@ pip-audit -r requirements-deepchecks.txt --no-deps --disable-pip
 
 `requirements.txt` se audita desde una copia sin las líneas `pip` y `-e .`, como se explica en el documento.
 
+### Chequeos de seguridad de P3
+
+La revisión de seguridad del código, las dependencias, los secretos y los datos de P3 está en `docs/seguridad_p3.md`. Para repetirla, con `bandit` y `pip-audit` instalados en un entorno fuera del repositorio (`pip install bandit==1.9.4 pip-audit==2.10.1`):
+
+```bash
+bandit mibici/features_p3.py mibici/modeling/modelos_p3.py mibici/modeling/busqueda_p3.py mibici/modeling/seleccion_p3.py mibici/modeling/artefactos_p3.py mibici/modeling/train_p3.py
+pip-audit -r requirements-deepchecks.txt --no-deps --disable-pip
+```
+
+`requirements.txt` se audita desde una copia sin las líneas `pip` y `-e .`, como se explica en `docs/seguridad_p1.md`.
+
 ## Seguimiento en MLflow
 
 Todos los runs usan el experimento `mibici-equipo29`, con nombre descriptivo y etiquetas `question` (P1, P2 o P3), `team`, `author`, `data_range`, `seed`, `data_version`, `git_commit` y `git_dirty`. Las métricas indican el conjunto en que se calculan (`val_mae`, `test_mae`, ...). El almacén es local: `mlflow.db` y `mlartifacts/` en la raíz del repositorio, ambos fuera de git.
