@@ -475,6 +475,40 @@ Resultado del 1 de noviembre de 2026 con `python -m pytest tests/datos/test_deep
 
 ![Drift multivariado de P3 y distribución de weekend_share](reports/figures/p3_deepchecks_drift_multivariado.png)
 
+### Chequeos de seguridad de P1
+
+La revisión de seguridad del código, las dependencias y los secretos de P1 está en `docs/seguridad_p1.md`. Para repetirla, con `bandit` y `pip-audit` instalados en un entorno fuera del repositorio (`pip install bandit==1.9.4 pip-audit==2.10.1`):
+
+```bash
+bandit mibici/config.py mibici/features.py mibici/features_pipeline.py mibici/registro_p1.py mibici/tracking.py mibici/modeling/train_p1.py scripts/p1/validar_panel_p1.py scripts/p1/exportar_features_p1.py scripts/p1/medir_drift_p1.py
+pip-audit -r <copia-de-requirements.txt-sin-pip-ni-editable> --no-deps --disable-pip
+pip-audit -r requirements-deepchecks.txt --no-deps --disable-pip
+pip-audit --path <entorno-del-proyecto>/Lib/site-packages
+pip-audit --path <entorno-de-deepchecks>/Lib/site-packages
+```
+
+Alcance: `bandit` revisa los módulos que usa el entrenamiento de P1 y los scripts de validación de datos; `pip-audit` revisa los pines de los dos archivos de requisitos y los paquetes instalados en el entorno del proyecto (Python 3.14.8) y en el de DeepChecks (Python 3.11.9). En las capturas, `pip-audit` lleva además `--aliases on --progress-spinner off` y una caché vacía en cada corrida (`--cache-dir`).
+
+Resultado del 1 de noviembre de 2026 en Windows, sobre main `d076ebe` (los archivos revisados son los mismos en `d206d2a`):
+
+- `bandit` revisa 2,198 líneas y encuentra 12 hallazgos: 11 de severidad baja y 1 media (el `exec` del exportador), ninguno alta. Son los 12 que explica el documento; las 3 líneas de más frente a las 2,195 que registra son campos de `P2Config` en `mibici/config.py`.
+- `requirements.txt` (19 pines): 3 avisos en `mlflow` 3.16.1, CVE-2026-53995 (corrige la 3.17.2), CVE-2026-115886 y CVE-2026-116691 (corrige la 3.17.0).
+- `requirements-deepchecks.txt`: los avisos de `setuptools` 80.10.2; cuenta 3 porque lista dos veces PYSEC-2026-3447, así que son 2 avisos distintos (corrigen la 83.0.0 y la 84.1.0).
+- Entorno del proyecto: 12 avisos en 4 paquetes, 11 distintos porque el de `certifi` aparece dos veces: `mlflow` 3.16.1 (los mismos 3), `certifi` 2026.7.22 (1, corrige la 2026.10.18), `pyasn1` 0.6.4 (4, corrige la 0.6.5) y `tornado` 6.5.10 (3, corrige la 6.6). `mibici` se omite porque no está en PyPI.
+- Entorno de DeepChecks: 15 avisos en 2 paquetes, 8 distintos: `pip` 24.0 (6) y `setuptools` 80.10.2 (los mismos 2).
+
+La decisión sobre cada hallazgo está en el documento.
+
+![bandit sobre los módulos de P1](reports/figures/p1_seguridad_bandit.png)
+
+![pip-audit sobre los pines de requirements.txt](reports/figures/p1_seguridad_pip_audit_requirements.png)
+
+![pip-audit sobre requirements-deepchecks.txt](reports/figures/p1_seguridad_pip_audit_requirements_deepchecks.png)
+
+![pip-audit sobre el entorno del proyecto](reports/figures/p1_seguridad_pip_audit_entorno_proyecto.png)
+
+![pip-audit sobre el entorno de DeepChecks](reports/figures/p1_seguridad_pip_audit_entorno_deepchecks.png)
+
 ### Chequeos de seguridad de P2
 
 La revisión de seguridad del código, las dependencias y los secretos de P2 está en `docs/seguridad_p2.md`. Para repetirla, con `bandit` y `pip-audit` instalados en un entorno fuera del repositorio (`pip install bandit==1.9.4 pip-audit==2.10.1`):
