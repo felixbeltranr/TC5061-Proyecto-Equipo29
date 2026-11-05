@@ -1,0 +1,13 @@
+.git
+.venv
+.venv-deepchecks
+__pycache__
+*.py[cod]
+.pytest_cache
+.ruff_cache
+data
+mlruns
+mlartifacts
+mlflow.db
+models
+notebooks

@@ -627,3 +627,37 @@ Seguimos GitHub Flow:
         ├── train.py
         └── predict.py
 ```
+
+## API P1
+
+La API en `mibici/api/` carga el modelo P1 `mibici-equipo29-p1-demanda` desde el alias `champion` del Model Registry de MLflow al iniciar. El endpoint `POST /api/v1/predict` realiza una predicción de demanda con las características P1.
+
+Para levantarla con Docker Compose:
+
+```powershell
+docker compose up --build
+```
+
+El contenedor necesita el servidor MLflow accesible mediante `MLFLOW_TRACKING_URI`; Compose lo configura como `http://host.containers.internal:5000`. `P1_MODEL_URI` puede usarse para seleccionar otro URI de modelo. El experimento y la versión registrada deben tener artefactos accesibles a través del servidor, no rutas locales `file:///`.
+
+La documentación interactiva queda disponible en `http://localhost:8000/docs`. Prueba `GET /live` para verificar que el proceso responde y `GET /ready` para comprobar que cargó el modelo. Un ejemplo de cuerpo para `POST /api/v1/predict`:
+
+```json
+{
+  "features": {
+    "dia_semana": 1,
+    "festivo": 0,
+    "festivo_lag7": 0,
+    "lag_2": 10,
+    "lag_7": 12,
+    "lag_14": 11,
+    "lag_21": 13,
+    "lag_28": 9,
+    "media_7d": 11,
+    "media_28d": 10.5,
+    "media_misma_dsem_4": 12
+  }
+}
+```
+
+Los valores del ejemplo solo muestran el formato; para predicciones significativas, envía características calculadas con las mismas reglas de P1. Para instalar las dependencias fuera de Docker, ejecuta `pip install -r requirements-api.txt`.

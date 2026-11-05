@@ -1,0 +1,10 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      MLFLOW_TRACKING_URI: "http://host.docker.internal:5000"
+      P1_MODEL_URI: "models:/mibici-equipo29-p1-demanda@champion"
