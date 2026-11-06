@@ -235,3 +235,37 @@ def test_argumentos_run_rechaza_dos_puntos_fuera_de_la_unidad(tmp_path, monkeypa
     monkeypatch.setattr(siembra.Path, "resolve", lambda self: self)
     with pytest.raises(siembra.ErrorSiembra, match="':'"):
         siembra.argumentos_run(Path("/datos/a:b"), "/x")
+
+
+def test_leer_registry_rechaza_rutas_de_red(monkeypatch):
+    unc = Path(r"\\servidor\compartido\mlflow.db")
+    monkeypatch.setattr(siembra.Path, "resolve", lambda self: unc)
+    with pytest.raises(siembra.ErrorSiembra, match="disco local"):
+        siembra.leer_registry(Path("mlflow.db"), NOMBRE, "champion")
+
+
+def test_validar_salida_no_sobrescribe_ni_escribe_en_el_repositorio(tmp_path):
+    existente = tmp_path / "reporte.json"
+    existente.write_text("{}", encoding="utf-8")
+    with pytest.raises(ValueError, match="ya existe"):
+        e2e.validar_salida(existente)
+    with pytest.raises(ValueError, match="fuera del repositorio"):
+        e2e.validar_salida(e2e.RAIZ / "reporte_nuevo_e2e.json")
+    e2e.validar_salida(tmp_path / "nuevo.json")
+
+
+def test_http_sin_servidor_devuelve_cero_en_lugar_de_excepcion():
+    import socket
+
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        puerto = s.getsockname()[1]
+    codigo, texto = e2e.http("GET", f"http://127.0.0.1:{puerto}/ready")
+    assert codigo == 0
+    assert "sin respuesta" in texto
+
+
+def test_commit_del_arbol_ignora_un_repositorio_superior(monkeypatch, tmp_path):
+    respuestas = {("git", "rev-parse", "--show-toplevel"): str(tmp_path)}
+    monkeypatch.setattr(e2e, "comando", lambda *args: respuestas.get(args, "no debe usarse"))
+    assert e2e.commit_del_arbol() == (None, None)

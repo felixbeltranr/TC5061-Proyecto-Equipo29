@@ -1,6 +1,7 @@
 """Resolución del alias a una versión fija, trazabilidad en la respuesta y validación de P1."""
 
 from types import SimpleNamespace
+from typing import ClassVar
 
 from fastapi.testclient import TestClient
 import pytest
@@ -49,7 +50,7 @@ def test_parse_model_uri_rechaza_uris_sin_alias_ni_version(uri):
 
 
 class FakeClient:
-    llamadas: list = []
+    llamadas: ClassVar[list] = []
 
     def __init__(self, tracking_uri, registry_uri):
         FakeClient.llamadas.append(("init", tracking_uri, registry_uri))
@@ -65,7 +66,7 @@ class FakeClient:
 
 @pytest.fixture
 def registro_falso(monkeypatch):
-    import mibici.api.services.model_registry as model_registry
+    from mibici.api.services import model_registry
 
     cargadas: list[str] = []
     FakeClient.llamadas = []

@@ -2,11 +2,13 @@
 
 Uso, desde cualquier carpeta (el script ubica la raíz del repositorio):
 
-    python scripts/p1/e2e_api_p1.py [--build] [--salida reporte.json]
+    python scripts/p1/e2e_api_p1.py [--salida reporte.json]
+    python scripts/p1/e2e_api_p1.py --no-build       # reutiliza la imagen ya construida
     python scripts/p1/e2e_api_p1.py --sin-levantar   # revisa un Compose ya iniciado
 
-Levanta ``mlflow`` y ``api`` con ``docker compose up -d``, espera ``/ready`` y comprueba contra
-``campeon_api_p1.json``:
+Levanta ``mlflow`` y ``api`` con ``docker compose up -d --build`` (la imagen sale del árbol
+actual; ``--no-build`` reutiliza la etiqueta existente, que pudo construirse desde otro clon),
+espera ``/ready`` y comprueba contra ``campeon_api_p1.json``:
 
 - que el puerto publicado de ``api`` sea el de ``--url`` (que responde este proyecto y no otro);
 - ``/live`` y ``/ready``;
@@ -19,9 +21,10 @@ Levanta ``mlflow`` y ``api`` con ``docker compose up -d``, espera ``/ready`` y c
   modelo servido y que Python tenga la misma versión mayor.menor.
 
 Si la API se cierra al arrancar (por ejemplo, con el Registry vacío) falla en cuanto lo detecta y
-muestra el final de sus logs. Termina con código 0 sólo si todo pasa. No detiene ni borra
-contenedores o volúmenes (para detenerlos: ``docker compose stop``). Sólo usa la biblioteca
-estándar.
+muestra el final de sus logs. Termina con código 0 sólo si todo pasa. No hace ``down`` ni borra
+volúmenes; ``up`` puede recrear los contenedores si cambió la imagen (para detenerlos:
+``docker compose stop``). ``--salida`` no sobrescribe archivos ni escribe dentro del repositorio.
+Sólo usa la biblioteca estándar.
 """
 
 from __future__ import annotations
@@ -29,6 +32,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import asdict, dataclass
 from datetime import datetime
+from http.client import HTTPException
 import json
 import math
 from pathlib import Path
@@ -150,6 +154,25 @@ def http(metodo: str, url: str, cuerpo: str | None = None) -> tuple[int, str]:
             return respuesta.status, respuesta.read().decode("utf-8")
     except urllib.error.HTTPError as exc:
         return exc.code, exc.read().decode("utf-8", errors="replace")
+    except (urllib.error.URLError, OSError, HTTPException) as exc:
+        return 0, f"sin respuesta: {exc!r}"
+
+
+def commit_del_arbol() -> tuple[str | None, list[str] | None]:
+    """Commit y cambios sólo si la raíz de git es este repositorio, no una carpeta superior."""
+    raiz_git = comando("git", "rev-parse", "--show-toplevel")
+    if raiz_git is None or Path(raiz_git).resolve() != RAIZ:
+        return None, None
+    estado = comando("git", "--no-optional-locks", "status", "--porcelain")
+    return comando("git", "rev-parse", "HEAD"), None if estado is None else estado.splitlines()
+
+
+def validar_salida(salida: Path) -> None:
+    destino = salida.resolve()
+    if destino.exists():
+        raise ValueError(f"--salida ya existe y no se sobrescribe: {destino}")
+    if destino.is_relative_to(RAIZ):
+        raise ValueError(f"--salida debe quedar fuera del repositorio: {destino}")
 
 
 def json_o_none(texto: str):
@@ -227,13 +250,10 @@ def esperar_ready(url: str, limite: float) -> tuple[bool, str]:
         estado = estado_servicio("api")
         if estado and estado.get("State") == "exited":
             return False, f"el contenedor api se cerró con código {estado.get('ExitCode')}"
-        try:
-            codigo, texto = http("GET", f"{url}/ready")
-            if codigo == 200 and json_o_none(texto) == {"status": "ready"}:
-                return True, texto
-            ultimo = f"HTTP {codigo} {texto[:200]}"
-        except (urllib.error.URLError, ConnectionError, TimeoutError) as exc:
-            ultimo = f"sin respuesta: {exc}"
+        codigo, texto = http("GET", f"{url}/ready")
+        if codigo == 200 and json_o_none(texto) == {"status": "ready"}:
+            return True, texto
+        ultimo = f"HTTP {codigo} {texto[:200]}"
         time.sleep(2)
     return False, f"/ready no respondió ready en {limite:.0f} s ({ultimo})"
 
@@ -246,10 +266,7 @@ def recorrido(args: argparse.Namespace) -> tuple[list[Comprobacion], dict]:
     datos: dict = {}
 
     if not args.sin_levantar:
-        up = ["up", "-d", "--build" if args.build else "--no-build", "mlflow", "api"]
-        imagen = config_compose().get("services", {}).get("api", {}).get("image")
-        if not args.build and not (imagen and comando("docker", "image", "inspect", imagen)):
-            up.remove("--no-build")  # sin imagen local, Compose la construye
+        up = ["up", "-d", "--no-build" if args.no_build else "--build", "mlflow", "api"]
         salida = compose(*up, mostrar=True)
         checks.append(
             Comprobacion(
@@ -345,7 +362,9 @@ def recorrido(args: argparse.Namespace) -> tuple[list[Comprobacion], dict]:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--build", action="store_true", help="reconstruye la imagen al levantar")
+    parser.add_argument(
+        "--no-build", action="store_true", help="no reconstruye; usa la imagen existente"
+    )
     parser.add_argument("--sin-levantar", action="store_true", help="no llama docker compose up")
     parser.add_argument("--url", default="http://127.0.0.1:8000", help="URL base de la API")
     parser.add_argument("--espera", type=float, default=180, help="segundos para /ready")
@@ -353,18 +372,27 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--salida", type=Path, help="escribe el reporte JSON en esta ruta")
     args = parser.parse_args(argv)
 
+    sys.stdout.reconfigure(errors="backslashreplace")
+    if args.salida:
+        try:
+            validar_salida(args.salida)
+        except ValueError as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return 2
     inicio = datetime.now().astimezone().isoformat(timespec="seconds")
+    commit, cambios = commit_del_arbol()
     try:
         checks, datos = recorrido(args)
     except FileNotFoundError as exc:
         print(f"ERROR: no se encontró {exc.filename} (¿Docker instalado?)", file=sys.stderr)
         return 1
-    estado_git = comando("git", "status", "--porcelain")
+    except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as exc:
+        checks, datos = [Comprobacion("recorrido sin excepciones", False, repr(exc))], {}
     reporte = {
         "inicio": inicio,
         "fin": datetime.now().astimezone().isoformat(timespec="seconds"),
-        "commit": comando("git", "rev-parse", "HEAD"),
-        "cambios_sin_commit": None if estado_git is None else estado_git.splitlines(),
+        "commit": commit,
+        "cambios_sin_commit": cambios,
         "proyecto_compose": config_compose().get("name"),
         "docker": comando("docker", "version", "--format", "{{.Server.Version}}"),
         "compose": comando("docker", "compose", "version", "--short"),
@@ -380,9 +408,8 @@ def main(argv: list[str] | None = None) -> int:
         print(datos["pista"])
     if args.salida:
         args.salida.parent.mkdir(parents=True, exist_ok=True)
-        args.salida.write_text(
-            json.dumps(reporte, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-        )
+        with args.salida.open("x", encoding="utf-8") as f:
+            f.write(json.dumps(reporte, ensure_ascii=False, indent=2) + "\n")
         print(f"Reporte: {args.salida.resolve()}")
     fallas = [c for c in checks if not c.ok]
     print(f"{len(checks) - len(fallas)} de {len(checks)} comprobaciones pasaron")

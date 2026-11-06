@@ -80,8 +80,15 @@ def ruta_relativa_artefactos(storage_location: str) -> PurePosixPath:
 
 def leer_registry(db: Path, nombre: str, alias: str) -> dict:
     """Lee la versión a la que apunta el alias, sin escribir en la base ni crear archivos."""
-    uri = f"{db.resolve().as_uri()}?mode=ro&immutable=1"
-    con = sqlite3.connect(uri, uri=True)
+    ruta = db.resolve()
+    if str(ruta).startswith("\\\\"):
+        raise ErrorSiembra(
+            f"Copia el almacén a un disco local; no se aceptan rutas de red: {ruta}"
+        )
+    try:
+        con = sqlite3.connect(f"{ruta.as_uri()}?mode=ro&immutable=1", uri=True)
+    except sqlite3.Error as exc:
+        raise ErrorSiembra(f"No se pudo abrir {ruta} en sólo lectura: {exc}") from exc
     try:
         fila = con.execute(
             "SELECT version FROM registered_model_aliases WHERE name = ? AND alias = ?",
