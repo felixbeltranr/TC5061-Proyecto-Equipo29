@@ -190,25 +190,33 @@ def leer_huellas(texto: str) -> dict:
     return huellas
 
 
-def sembrar(store: Path, verificado: dict) -> dict:
-    if "," in str(store.resolve()):
-        raise ErrorSiembra("La ruta del almacén no puede llevar comas (docker --mount)")
-    salida = compose(
+def argumentos_run(store: Path, skops_en_contenedor: str) -> list[str]:
+    """``docker compose run`` sólo acepta ``-v``; el almacén se monta sólo de lectura."""
+    origen = str(store.resolve())
+    sin_unidad = origen[2:] if len(origen) > 1 and origen[1] == ":" else origen
+    if ":" in sin_unidad:
+        raise ErrorSiembra(f"La ruta del almacén no puede llevar ':' (docker -v): {origen}")
+    return [
         "run",
         "--rm",
         "--no-deps",
         "--user",
         "root",
-        "--mount",
-        f"type=bind,source={store.resolve()},target=/seed,readonly",
+        "-v",
+        f"{origen}:/seed:ro",
         "-e",
-        f"SKOPS={verificado['skops_en_contenedor']}",
+        f"SKOPS={skops_en_contenedor}",
         "--entrypoint",
         "sh",
         "mlflow",
         "-c",
         COPIA_EN_CONTENEDOR,
-        mostrar_stderr=True,
+    ]
+
+
+def sembrar(store: Path, verificado: dict) -> dict:
+    salida = compose(
+        *argumentos_run(store, verificado["skops_en_contenedor"]), mostrar_stderr=True
     )
     if salida.returncode == VOLUMENES_OCUPADOS:
         raise ErrorSiembra(

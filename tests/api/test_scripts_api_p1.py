@@ -216,3 +216,22 @@ def test_comparar_versiones_falla_si_el_modelo_no_fija_version():
     datos["requisitos_modelo"] = ["mlflow"]
     checks = e2e.comparar_versiones(datos)
     assert checks[0].ok is False
+
+
+def test_argumentos_run_monta_el_almacen_solo_lectura_con_v(tmp_path):
+    store = tmp_path / "almacén con espacios"
+    store.mkdir()
+
+    args = siembra.argumentos_run(store, "/mlflow/artifacts/1/models/m-abc/artifacts/model.skops")
+
+    assert "--mount" not in args  # docker compose run no lo acepta
+    montaje = args[args.index("-v") + 1]
+    assert montaje == f"{store.resolve()}:/seed:ro"
+    assert args[args.index("--user") + 1] == "root"
+    assert args[-3:] == ["mlflow", "-c", siembra.COPIA_EN_CONTENEDOR]
+
+
+def test_argumentos_run_rechaza_dos_puntos_fuera_de_la_unidad(tmp_path, monkeypatch):
+    monkeypatch.setattr(siembra.Path, "resolve", lambda self: self)
+    with pytest.raises(siembra.ErrorSiembra, match="':'"):
+        siembra.argumentos_run(Path("/datos/a:b"), "/x")
