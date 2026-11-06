@@ -73,6 +73,26 @@ def configurar(
         )
     mlflow.set_experiment(EXPERIMENTO)
 
+def configurar_experimento(
+    tracking_uri: str, experimento: str, artifact_location_local: str
+) -> None:
+    """Configura MLflow y deja que un servidor HTTP gestione sus artefactos.
+
+    Para tracking local se conserva la ubicación de artefactos explícita. Para un servidor
+    MLflow HTTP no se envía artifact_location: así el servidor aplica su
+    ``--default-artifact-root`` (por ejemplo, ``mlflow-artifacts:/``).
+    """
+    mlflow.set_tracking_uri(tracking_uri)
+    mlflow.set_registry_uri(tracking_uri)
+    if mlflow.get_experiment_by_name(experimento) is None:
+        if tracking_uri.startswith(("http://", "https://")):
+            mlflow.create_experiment(experimento)
+        else:
+            mlflow.create_experiment(
+                experimento, artifact_location=artifact_location_local
+            )
+    mlflow.set_experiment(experimento)
+
 
 def etiquetas_base(
     pregunta: str, autor: str, semilla: int, rango_datos: str, data_version: str

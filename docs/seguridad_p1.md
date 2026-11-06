@@ -85,3 +85,15 @@ Exposición en P1:
   elige con `MIBICI_TRACKING_URI` y `MLFLOW_TRACKING_URI`. El exportador de `scripts/p1/`
   desactiva la carga del `.env` (`PYTHON_DOTENV_DISABLED`) y los scripts de DeepChecks, su
   telemetría.
+
+## MLflow local para probar la API en contenedor
+
+Compose ejecuta MLflow dentro de una red de contenedores, donde el servidor escucha en
+`0.0.0.0` para que la API pueda conectarse por `http://mlflow:5000`. El puerto del host se
+publica solo en `127.0.0.1:5000`, no en todas las interfaces de la máquina. La lista
+`--allowed-hosts` del servicio permite los nombres locales y el host `mlflow:5000`; no agrega
+autenticación. Esta configuración es únicamente para desarrollo local y no se debe exponer
+como un servicio multiusuario o de producción. Para uso compartido, desplieguen MLflow detrás
+de controles de acceso y una configuración segura de red. Detengan los servicios al terminar
+la prueba con `docker compose down`; los volúmenes persisten deliberadamente para conservar
+los metadatos y artefactos.

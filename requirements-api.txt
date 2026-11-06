@@ -11,3 +11,4 @@ skops==0.16.0
 cloudpickle==3.1.2
 python-dotenv==1.2.4  # imported by mibici.config
 typer==0.27.3  # imported by mibici.features
+httpx==0.28.1  # FastAPI TestClient dependency for API tests

@@ -56,6 +56,30 @@ def test_configurar_acepta_carpeta_de_artefactos_relativa(tmp_path, monkeypatch)
             mlflow.set_registry_uri(registry_previo)
 
 
+def test_configurar_experimento_delega_artefactos_al_servidor_http(monkeypatch):
+    llamadas = []
+    monkeypatch.setattr(mlflow, "set_tracking_uri", lambda uri: llamadas.append(("tracking", uri)))
+    monkeypatch.setattr(mlflow, "set_registry_uri", lambda uri: llamadas.append(("registry", uri)))
+    monkeypatch.setattr(mlflow, "get_experiment_by_name", lambda name: None)
+    monkeypatch.setattr(
+        mlflow, "create_experiment", lambda *args, **kwargs: llamadas.append(("create", args, kwargs))
+    )
+    monkeypatch.setattr(
+        mlflow, "set_experiment", lambda name: llamadas.append(("set_experiment", name))
+    )
+
+    tracking.configurar_experimento(
+        "http://localhost:5000",
+        "api-test",
+        "file:///local/artifacts",
+    )
+
+    assert ("create", ("api-test",), {}) in llamadas
+    assert ("tracking", "http://localhost:5000") in llamadas
+    assert ("registry", "http://localhost:5000") in llamadas
+    assert ("set_experiment", "api-test") in llamadas
+
+
 def test_etiquetas_base_siguen_la_convencion_del_equipo():
     tags = tracking.etiquetas_base("P1", "Alguien", 29, "2025-01..2026-09", "abc")
     assert set(tags) == {
