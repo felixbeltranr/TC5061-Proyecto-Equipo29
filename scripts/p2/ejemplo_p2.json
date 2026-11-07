@@ -1,0 +1,27 @@
+{
+  "stations": [
+    {
+      "station_id": "51",
+      "features": {
+        "hora": 8,
+        "dia_semana": 2,
+        "fin_semana": 0,
+        "capacidad": 15,
+        "ocupacion_actual": 0.47,
+        "neto_lag1": 2.0,
+        "neto_lag24": -1.0,
+        "neto_lag168": 3.0,
+        "salidas_lag1": 4,
+        "llegadas_lag1": 6,
+        "neto_media3": 1.0,
+        "neto_media24": 0.2,
+        "neto_media168_misma_hora": 1.5,
+        "ocupacion_lag24": 0.4,
+        "ocupacion_lag168": 0.53,
+        "est_tasa_sin_bicis": 0.08,
+        "est_tasa_sin_anclajes": 0.05,
+        "est_neto_medio_hora": 0.4
+      }
+    }
+  ]
+}
