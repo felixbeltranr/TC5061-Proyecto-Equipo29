@@ -58,6 +58,7 @@ import skops.io as sio
 from mibici import features_p2 as fp
 from mibici import features_pipeline, registro
 from mibici.config import CONFIG, CONFIG_P2, PROJ_ROOT
+from mibici.tracking import configurar_experimento
 
 EXPERIMENTO = CONFIG_P2.experimento
 RIESGO = ["sin_bicicletas", "sin_anclajes"]
@@ -105,7 +106,7 @@ def git_commit() -> tuple[str, bool]:
             ).strip()
         )
         return sha, sucio
-    except subprocess.CalledProcessError, FileNotFoundError:
+    except (subprocess.CalledProcessError, FileNotFoundError):
         return "desconocido", True
 
 
@@ -984,12 +985,13 @@ def main(argv: list[str] | None = None) -> None:
     if unsupported:
         ap.error(f"Unsupported {args.model} hyperparameters: {sorted(unsupported)}")
 
-    mlflow.set_tracking_uri(args.tracking_uri)
-    if mlflow.get_experiment_by_name(CONFIG_P2.experimento) is None:
-        mlflow.create_experiment(
-            CONFIG_P2.experimento, artifact_location=Path(args.artefactos).resolve().as_uri()
-        )
-    mlflow.set_experiment(CONFIG_P2.experimento)
+    # Con un servidor HTTP los artefactos quedan en mlflow-artifacts:/ (los puede leer el
+    # contenedor de la API); con SQLite local se conserva la carpeta de --artefactos.
+    configurar_experimento(
+        args.tracking_uri,
+        CONFIG_P2.experimento,
+        Path(args.artefactos).resolve().as_uri(),
+    )
 
     manifiesto = json.loads(Path(args.manifiesto).read_text())
     resumen = json.loads(Path(args.panel).with_suffix(".json").read_text())
