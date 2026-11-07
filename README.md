@@ -729,10 +729,10 @@ En bash, `curl` en lugar de `curl.exe`. También se puede probar desde `http://l
 Respuesta del contenedor:
 
 ```json
-{"assignments": [{"station_id": "51", "group": 2, "group_name": "mucho uso"}], "method": "mlflow_registry", "input_count": 1, "model_name": "mibici-equipo29-p3-grupos", "model_version": "1"}
+{"assignments": [{"station_id": "51", "group": 2, "group_name": "mucho uso"}], "method": "mlflow_registry", "input_count": 1, "model_name": "mibici-equipo29-p3-grupos", "model_version": "3"}
 ```
 
-Es el mismo grupo que da el modelo de esa versión cargado fuera del contenedor, con el perfil exacto y con el redondeado.
+Es el mismo grupo que da el modelo de esa versión cargado fuera del contenedor, con el perfil exacto y con el redondeado. El número de versión depende de cuántas veces se haya registrado P3 en ese MLflow: cada corrida de la selección registra dos versiones nuevas (campeón y retador). En la captura, la selección se corrió dos veces en volúmenes nuevos, así que `champion` es la versión 3; `GET /api/v1/p3/model` la reporta junto con su run. Con el almacén sembrado de la Entrega 2 (sección de P1), el campeón de P3 es la versión 1 (run `fd704e3c…`) y asigna el mismo grupo a la estación 51.
 
 ![Petición y respuesta de la API de P3 desde el contenedor](reports/figures/p3_api_contenedor.png)
 
