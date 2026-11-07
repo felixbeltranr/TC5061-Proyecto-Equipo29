@@ -543,34 +543,65 @@ Resultado del 1 de noviembre de 2026 en Windows: `bandit` revisa 1,596 líneas y
 
 ![pip-audit sobre requirements-deepchecks.txt](reports/figures/p3_seguridad_pip_audit.png)
 
-## Seguimiento en MLflow
+## Despliegue inicial con MLflow y FastAPI
 
-Todos los runs usan el experimento `mibici-equipo29`, con nombre descriptivo y etiquetas `question` (P1, P2 o P3), `team`, `author`, `data_range`, `seed`, `data_version`, `git_commit` y `git_dirty`. Las métricas indican el conjunto en que se calculan (`val_mae`, `test_mae`, ...). El almacén es local: `mlflow.db` y `mlartifacts/` en la raíz del repositorio, ambos fuera de git.
+Esta configuración inicial prepara una sola imagen Docker, reutilizada por dos servicios: MLflow y la API FastAPI. MLflow guarda su base de datos y artefactos en volúmenes persistentes; la API obtiene el modelo del Registry usando variables de entorno. La estructura de la API está preparada para crecer por problema, aunque actualmente solo integra P1.
 
-### Servidor de tracking
+### Qué se configuró
 
-El Model Registry necesita un almacén con base de datos. Desde la raíz del repositorio, para que la base sea el mismo `mlflow.db` que usa el proyecto por omisión:
+- El servicio `mlflow` usa `mlflow-artifacts:/` y sirve los artefactos mediante el servidor, para que los clientes no dependan de rutas `file:///` de una computadora.
+- El servicio `api` se conecta a MLflow por la red de Compose (`http://mlflow:5000`) y obtiene el modelo indicado por `P1_MODEL_URI`.
+- El puerto de MLflow se publica únicamente en `127.0.0.1:5000` durante el desarrollo local.
+- `tracking.configurar_experimento` ofrece el patrón para crear experimentos remotos sin imponer una ruta local de artefactos. **Los entrenadores de P1, P2 y P3 aún no se han migrado a ese helper.** Cada responsable deberá integrar y validar el patrón en su flujo antes de registrar un modelo para esta API.
+
+### Cómo ejecutar
+
+Desde la raíz del repositorio, inicia MLflow:
 
 ```powershell
-mlflow server --backend-store-uri sqlite:///mlflow.db --port 5000 --workers 1
+docker compose up -d mlflow
+docker compose ps
 ```
 
-En Windows, el servidor con varios workers deja de aceptar conexiones en algunos de ellos (`WinError 10022`); `--workers 1` lo evita. En Linux y macOS se puede omitir. En otra terminal, también desde la raíz, apunta ambas variables al servidor y lanza el proyecto:
+La interfaz de MLflow queda disponible en `http://localhost:5000`. Los procesos de entrenamiento ejecutados en el host deben usar `http://localhost:5000`; la API dentro de Compose utiliza `http://mlflow:5000`.
+
+**Prerequisito pendiente:** antes de entrenar para este despliegue, el responsable de P1 debe migrar su entrenador a `tracking.configurar_experimento` y comprobar que el experimento nuevo tenga artefactos `mlflow-artifacts:/`. Hasta entonces, el comando de entrenamiento local existente puede guardar artefactos `file:///...`, que el contenedor no podrá cargar.
+
+Cuando exista una versión válida de `mibici-equipo29-p1-demanda` con el alias `champion`, inicia la API:
 
 ```powershell
-$env:MIBICI_TRACKING_URI = "http://127.0.0.1:5000"
-$env:MLFLOW_TRACKING_URI = $env:MIBICI_TRACKING_URI
-mlflow run . -e ingest --env-manager local --experiment-name mibici-equipo29
-mlflow run . -e train -P question=all -P 'hyperparameters={}' --env-manager local --experiment-name mibici-equipo29
+docker compose up --build api
 ```
 
-La interfaz queda en http://127.0.0.1:5000 y los artefactos que sube el servidor en `mlartifacts/`. Las dos corridas de proyecto que crea `mlflow run` (`ingest` y `train`) llevan un nombre automático y no tienen la etiqueta `question`; las corridas de entrenamiento sí. No mezcles en una misma sesión el servidor y una URI `sqlite:///` directa: cada una debe apuntar al mismo `mlflow.db` de la raíz. Sin servidor, la interfaz se abre con:
+Prueba `GET http://localhost:8000/live` y `GET http://localhost:8000/ready`. La documentación interactiva está en `http://localhost:8000/docs`; desde ahí envía una petición a `POST /api/v1/predict`, por ejemplo:
 
-```bash
-mlflow ui --backend-store-uri sqlite:///mlflow.db
+```json
+{
+  "features": {
+    "dia_semana": 1,
+    "festivo": 0,
+    "festivo_lag7": 0,
+    "lag_2": 10,
+    "lag_7": 12,
+    "lag_14": 11,
+    "lag_21": 13,
+    "lag_28": 9,
+    "media_7d": 11,
+    "media_28d": 10.5,
+    "media_misma_dsem_4": 12
+  }
+}
 ```
 
-Usar el mismo nombre de experimento en otro archivo SQLite no junta las corridas: para compararlas deben registrarse en el mismo almacén.
+Los valores ilustran el formato; para una predicción significativa, usa características calculadas con las reglas de P1. Si la API no inicia, revisa `docker compose logs api`.
+
+### Consideraciones
+
+- La base y los volúmenes de este Compose son persistentes, pero **locales a una máquina**. No constituyen todavía un Registry compartido entre integrantes; para eso MLflow y su base de datos/almacén de artefactos deben alojarse en infraestructura accesible por todo el equipo.
+- Las versiones existentes cuyos artefactos apuntan a `file:///...` no se convierten al cambiar la configuración del servidor. Se debe crear y verificar una versión nueva.
+- El uso de `--host 0.0.0.0` es interno a la red de contenedores; el puerto del host está limitado a loopback. Esta configuración de desarrollo no incluye autenticación y no debe exponerse como servicio multiusuario o de producción. Consulta [seguridad_p1.md](docs/seguridad_p1.md).
+- Los volúmenes sobreviven a `docker compose down`. No uses `docker compose down -v` salvo que quieras borrar también los datos locales de MLflow.
+- P2 y P3 podrán incorporarse siguiendo el mismo patrón, con sus rutas, esquemas, servicios, dependencias y variables de URI independientes.
 
 ## Flujo de trabajo con Git
 
