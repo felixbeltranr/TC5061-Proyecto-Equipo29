@@ -48,14 +48,18 @@ BALANCEADAS = ("logistica", "hgb", "random_forest")
 
 @pytest.fixture
 def tracking(tmp_path):
-    """Tracking en SQLite dentro de tmp_path; restaura la direccion global de MLflow al terminar."""
-    previa = mlflow.get_tracking_uri()
+    """Tracking y Registry en SQLite dentro de tmp_path; restaura ambas URIs al terminar."""
+    previa, previo_registry = mlflow.get_tracking_uri(), mlflow.get_registry_uri()
     uri = f"sqlite:///{tmp_path / 'mlflow.db'}"
+    # El Registry también apunta aquí: tracking.configurar_experimento lo fija globalmente y
+    # otra prueba pudo dejarlo en su propio almacén temporal.
     mlflow.set_tracking_uri(uri)
+    mlflow.set_registry_uri(uri)
     mlflow.create_experiment("registro", artifact_location=(tmp_path / "arts").as_uri())
     mlflow.set_experiment("registro")
-    yield MlflowClient(tracking_uri=uri)
+    yield MlflowClient(tracking_uri=uri, registry_uri=uri)
     mlflow.set_tracking_uri(previa)
+    mlflow.set_registry_uri(previo_registry)
 
 
 def entrenar_y_loguear(semilla: int = 0) -> tuple[str, str]:
