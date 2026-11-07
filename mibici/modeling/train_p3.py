@@ -61,6 +61,7 @@ from mibici.modeling.modelos_p3 import (
     nombre_corrida,
     validar_hiperparametros,
 )
+from mibici.tracking import configurar_experimento
 
 app = typer.Typer()
 
@@ -569,10 +570,9 @@ def main(
         f"evaluación {len(ds.evaluacion)} estaciones | variables {ds.variables}"
     )
     if registrar:
-        mlflow.set_tracking_uri(tracking_uri)
-        if mlflow.get_experiment_by_name(cfg.experimento) is None:
-            mlflow.create_experiment(cfg.experimento, artifact_location=cfg.artifact_location)
-        mlflow.set_experiment(cfg.experimento)
+        # Con un servidor HTTP los artefactos quedan en mlflow-artifacts:/ (los puede leer el
+        # contenedor de la API); con SQLite local se conserva cfg.artifact_location.
+        configurar_experimento(tracking_uri, cfg.experimento, cfg.artifact_location)
     if model == "seleccion":
         seleccionar(ds, cfg, registrar)
         return
