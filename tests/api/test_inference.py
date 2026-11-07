@@ -9,7 +9,7 @@ from starlette.requests import Request
 from mibici.api.routes.health import liveness, readiness
 from mibici.api.routes.p1 import predict
 from mibici.api.schemas.p1 import P1Features, PredictionRequest
-from mibici.api.services.model_registry import load_registered_model
+from mibici.api.services.model_registry import RegisteredModelInfo, load_registered_model
 from mibici.api.services.p1_inference import predict_with_model
 from mibici.features import FEATURES
 
@@ -54,6 +54,8 @@ def test_p1_route_returns_prediction_metadata():
         "prediction": 12.5,
         "method": "mlflow_registry",
         "input_count": 1,
+        "model_name": None,
+        "model_version": None,
     }
 
 
@@ -87,7 +89,14 @@ def test_readiness_requires_p1_model():
 def test_app_loads_p1_and_exposes_health_and_prediction_routes(monkeypatch):
     import mibici.api.main as api_main
 
-    monkeypatch.setattr(api_main, "load_p1_model", lambda: FakeModel(8.5))
+    info = RegisteredModelInfo(
+        name="mibici-equipo29-p1-demanda",
+        version="1",
+        alias="champion",
+        run_id="abc",
+        model_uri="models:/mibici-equipo29-p1-demanda/1",
+    )
+    monkeypatch.setattr(api_main, "load_p1_model_with_info", lambda: (FakeModel(8.5), info))
 
     with TestClient(api_main.app) as client:
         assert client.get("/live").json() == {"status": "alive"}
@@ -102,6 +111,8 @@ def test_app_loads_p1_and_exposes_health_and_prediction_routes(monkeypatch):
         "prediction": 8.5,
         "method": "mlflow_registry",
         "input_count": 1,
+        "model_name": "mibici-equipo29-p1-demanda",
+        "model_version": "1",
     }
 
 

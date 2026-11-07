@@ -2,7 +2,11 @@ from mlflow.pyfunc import PyFuncModel
 import numpy as np
 import pandas as pd
 
-from mibici.api.services.model_registry import load_registered_model
+from mibici.api.services.model_registry import (
+    RegisteredModelInfo,
+    load_registered_model,
+    load_registered_model_with_info,
+)
 from mibici.features import FEATURES
 
 DEFAULT_MODEL_URI = "models:/mibici-equipo29-p1-demanda@champion"
@@ -10,6 +14,10 @@ DEFAULT_MODEL_URI = "models:/mibici-equipo29-p1-demanda@champion"
 
 def load_p1_model() -> PyFuncModel:
     return load_registered_model("P1_MODEL_URI", DEFAULT_MODEL_URI)
+
+
+def load_p1_model_with_info() -> tuple[PyFuncModel, RegisteredModelInfo]:
+    return load_registered_model_with_info("P1_MODEL_URI", DEFAULT_MODEL_URI)
 
 
 def predict_with_model(model: PyFuncModel, features: dict[str, int | float]) -> float:

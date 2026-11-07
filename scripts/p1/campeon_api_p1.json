@@ -1,0 +1,34 @@
+{
+  "descripcion": "Campeón de P1 que sirve la API y petición real con su predicción de referencia, calculada fuera del contenedor con el model.skops de esta versión.",
+  "modelo": {
+    "nombre": "mibici-equipo29-p1-demanda",
+    "alias": "champion",
+    "version": "1",
+    "run_id": "a8fea49c708d4e849bd92ec54536809f",
+    "git_commit": "42918951d913fd2a27949a7237a381536242b11e",
+    "storage_location": "mlflow-artifacts:/1/models/m-27be68580c664b51ad959511e90832f5/artifacts",
+    "model_skops_sha256": "d0a9f7e17cba6001d5f60e04d2b355c07f7ad270433abf300953cf38188f8127"
+  },
+  "peticion_real": {
+    "estacion": "51",
+    "fecha_objetivo": "2026-10-01",
+    "panel": "data/interim/p1_panel_diario.parquet",
+    "panel_sha256": "8f14faf9743363836339d53e29386708fde77ce8a8a7e24384a515658349d468",
+    "cuerpo": {
+      "features": {
+        "dia_semana": 3,
+        "festivo": 0,
+        "festivo_lag7": 0,
+        "lag_2": 404.0,
+        "lag_7": 369.0,
+        "lag_14": 413.0,
+        "lag_21": 332.0,
+        "lag_28": 273.0,
+        "media_7d": 398.7142857142857,
+        "media_28d": 364.10714285714283,
+        "media_misma_dsem_4": 346.75
+      }
+    },
+    "prediccion_referencia": 280.9855056086529
+  }
+}
