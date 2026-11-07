@@ -1,0 +1,21 @@
+{
+  "stations": [
+    {
+      "station_id": "51",
+      "features": {
+        "log_trips_day": 5.7487,
+        "weekend_share": 0.2622,
+        "net_am": -0.4885,
+        "net_pm": 0.3124,
+        "dep_am": 0.3048,
+        "dep_pm": 0.281,
+        "dep_mid": 0.2113,
+        "dep_night": 0.1137,
+        "arr_am": 0.0904,
+        "arr_pm": 0.4629,
+        "arr_mid": 0.2306,
+        "arr_night": 0.1018
+      }
+    }
+  ]
+}

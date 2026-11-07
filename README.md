@@ -545,14 +545,14 @@ Resultado del 1 de noviembre de 2026 en Windows: `bandit` revisa 1,596 líneas y
 
 ## Despliegue inicial con MLflow y FastAPI
 
-Esta configuración inicial prepara una sola imagen Docker, reutilizada por dos servicios: MLflow y la API FastAPI. MLflow guarda su base de datos y artefactos en volúmenes persistentes; la API obtiene el modelo del Registry usando variables de entorno. La estructura de la API está preparada para crecer por problema, aunque actualmente solo integra P1.
+Esta configuración inicial prepara una sola imagen Docker, reutilizada por dos servicios: MLflow y la API FastAPI. MLflow guarda su base de datos y artefactos en volúmenes persistentes; la API obtiene el modelo del Registry usando variables de entorno. La estructura de la API está preparada para crecer por problema; actualmente integra P1 y P3, y cada modelo se carga por separado.
 
 ### Qué se configuró
 
 - El servicio `mlflow` usa `mlflow-artifacts:/` y sirve los artefactos mediante el servidor, para que los clientes no dependan de rutas `file:///` de una computadora.
 - El servicio `api` se conecta a MLflow por la red de Compose (`http://mlflow:5000`) y obtiene el modelo indicado por `P1_MODEL_URI`.
 - El puerto de MLflow se publica únicamente en `127.0.0.1:5000` durante el desarrollo local.
-- `tracking.configurar_experimento` ofrece el patrón para crear experimentos remotos sin imponer una ruta local de artefactos. **Los entrenadores de P1, P2 y P3 aún no se han migrado a ese helper.** Cada responsable deberá integrar y validar el patrón en su flujo antes de registrar un modelo para esta API.
+- `tracking.configurar_experimento` ofrece el patrón para crear experimentos remotos sin imponer una ruta local de artefactos. P3 ya lo usa en `train_p3`. **Los entrenadores de P1 y P2 aún no se han migrado a ese helper.** Cada responsable deberá integrar y validar el patrón en su flujo antes de registrar un modelo para esta API.
 
 ### Cómo ejecutar
 
@@ -624,7 +624,7 @@ Sin `COMPOSE_PROJECT_NAME`, el proyecto de Compose toma el nombre de la carpeta 
 python scripts/p1/e2e_api_p1.py
 ```
 
-El recorrido construye la imagen desde el árbol actual (con `--no-build` reutiliza la etiqueta `mibici-service:local`, que pudo construirse desde otro clon), levanta `mlflow` y `api` y espera `/ready`. Si la API se cierra al arrancar, por ejemplo con el Registry vacío, falla en ese momento y muestra sus logs. Después comprueba contra `campeon_api_p1.json`:
+El recorrido construye la imagen desde el árbol actual (con `--no-build` reutiliza la etiqueta `mibici-service:local`, que pudo construirse desde otro clon), levanta `mlflow` y `api` y espera `/ready`. Si un modelo no carga, por ejemplo con el Registry vacío, la API sigue arriba y `/ready` responde 503 con el modelo que falta; el recorrido espera hasta `--espera` segundos y falla con esa respuesta y los logs de `api`. Después comprueba contra `campeon_api_p1.json`:
 
 - que el puerto de `api` sea el de la URL probada;
 - `/live`, `/ready` y `GET /api/v1/model`: nombre, versión, alias, run y URI inmutable;
@@ -677,13 +677,88 @@ La captura es de la corrida del 5 de noviembre de 2026 con el commit `e787768`; 
 - La imagen parte de `python:3.14-slim` sin digest, y `fastapi` y `uvicorn` van con rangos en `requirements-api.txt`. Por eso la versión de parche de Python y la de FastAPI pueden cambiar entre máquinas y construcciones. Las que importan para el modelo (mlflow, scikit-learn, pandas, numpy, skops y cloudpickle) están fijadas igual que en el `requirements.txt` del modelo, y el recorrido lo comprueba.
 - La política de dominio de P1 (predicciones de validación finitas y no negativas) se agregó después de ver resultados de prueba, así que el `test_mae` de este campeón (6.28) no es una medición con TEST intacto.
 
+### P3 en el contenedor: grupo de uso de cada estación
+
+La API carga el campeón de P3, `models:/mibici-equipo29-p3-grupos@champion` (configurable con `P3_MODEL_URI` en `compose.yaml`), resuelve el alias a su versión fija igual que P1 y asigna a cada estación uno de los grupos de uso del modelo. P1 y P3 se cargan por separado: si uno falla, el otro se sigue sirviendo y `/ready` responde 503 con el modelo que falta.
+
+#### 1. Registrar el campeón de P3 en el MLflow del Compose
+
+Si el Registry del Compose ya tiene `mibici-equipo29-p3-grupos@champion` con artefactos `mlflow-artifacts:/`, no hace falta nada más. Si no, se registra entrenando P3 contra el servidor del Compose. `train_p3` usa `tracking.configurar_experimento`: con una URI `http://` el experimento nuevo guarda sus artefactos en `mlflow-artifacts:/` y el contenedor de la API los puede leer; con la URI SQLite local nada cambia. Se necesitan los perfiles de `data/interim` (`python -m mibici.features_p3`, ver la sección de P3). Desde la raíz del repositorio:
+
+```powershell
+docker compose up -d mlflow
+python -m mibici.modeling.train_p3 --model seleccion --tracking-uri http://localhost:5000
+```
+
+Es el flujo completo de selección de P3 (búsquedas, candidatas, campeón y retador) y tarda unos dos minutos. Termina con `carga por models:/mibici-equipo29-p3-grupos@champion OK`. Con los perfiles de `data_version` `66dd3d190bba` y la semilla 42, el campeón vuelve a ser `p3-kmeans-uso-k3` (C2).
+
+#### 2. Levantar y probar
+
+```powershell
+docker compose up -d --build api
+curl.exe http://localhost:8000/api/v1/p3/model
+curl.exe -X POST http://localhost:8000/api/v1/p3/predict -H "Content-Type: application/json" --data-binary "@scripts/p3/ejemplo_p3.json"
+```
+
+En bash, `curl` en lugar de `curl.exe`. También se puede probar desde `http://localhost:8000/docs`, que ya trae el ejemplo. `scripts/p3/ejemplo_p3.json` es una petición real: la estación 51 con su perfil del periodo de evaluación (mayo a septiembre de 2026, `data/interim/p3_perfiles_evaluacion.parquet`), redondeado a 4 decimales:
+
+```json
+{
+  "stations": [
+    {
+      "station_id": "51",
+      "features": {
+        "log_trips_day": 5.7487,
+        "weekend_share": 0.2622,
+        "net_am": -0.4885,
+        "net_pm": 0.3124,
+        "dep_am": 0.3048,
+        "dep_pm": 0.281,
+        "dep_mid": 0.2113,
+        "dep_night": 0.1137,
+        "arr_am": 0.0904,
+        "arr_pm": 0.4629,
+        "arr_mid": 0.2306,
+        "arr_night": 0.1018
+      }
+    }
+  ]
+}
+```
+
+Respuesta del contenedor:
+
+```json
+{"assignments": [{"station_id": "51", "group": 2, "group_name": "mucho uso"}], "method": "mlflow_registry", "input_count": 1, "model_name": "mibici-equipo29-p3-grupos", "model_version": "1"}
+```
+
+Es el mismo grupo que da el modelo de esa versión cargado fuera del contenedor, con el perfil exacto y con el redondeado.
+
+![Petición y respuesta de la API de P3 desde el contenedor](reports/figures/p3_api_contenedor.png)
+
+#### 3. Qué sirve la API
+
+- `POST /api/v1/p3/predict` recibe de 1 a 1000 estaciones; cada una con un `station_id` opcional y las 12 variables de uso de `CONFIG_P3.prioridad_variables`, las mismas que calcula `mibici.features_p3.perfil_estaciones`. El modelo elige internamente cuáles usa (selección por VIF), así que siempre recibe las 12. Devuelve, en el mismo orden, el grupo, su nombre, el modelo y la versión.
+- `GET /api/v1/p3/model` reporta nombre, versión, alias, run y URI inmutable.
+- Validación de la entrada (si no cumple, 422 sin llamar al modelo): proporciones entre 0 y 1; `net_am` y `net_pm` entre -1 y 1; `log_trips_day` no negativo; las proporciones de salidas por franja suman a lo más 1, igual que las de llegadas (las franjas no cubren las 10 y 16 h); números como número y no como texto; sin NaN, sin campos extra ni faltantes, y `station_id` corto y sin caracteres especiales.
+- Validación de la salida: si el modelo devuelve grupos no enteros, negativos o en otra cantidad, la API responde 500 con el detalle en lugar de una asignación inválida.
+- Los nombres de los grupos salen de `data/grupos_interpretabilidad.csv` del mismo run que la versión cargada, así que cambian junto con ella. Si esa tabla no se puede leer, la API asigna el grupo y devuelve `group_name` nulo.
+
+#### 4. Estrategia de despliegue
+
+P3 se sirve como **inferencia por lotes con consulta en línea**:
+
+- El perfil de una estación resume meses de viajes (P3 pide al menos 60 días activos), así que su grupo no cambia de un viaje a otro y no tiene sentido calcularlo por evento. El uso principal es por lotes: al recalcular los perfiles (por ejemplo, cada mes, o cuando abren estaciones nuevas, como las 84 que abrieron entre mayo y agosto de 2026), se envían todas las estaciones en una sola petición (las 453 del periodo de evaluación caben en una) y se guarda la asignación.
+- La misma API responde en línea a una estación a la vez, por ejemplo para consultar el grupo de una estación nueva en cuanto cumple los días mínimos o para que un tablero lo pida al abrirse.
+- Para cambiar de versión, la selección de P3 registra versiones nuevas y sólo mueve `champion` después de cargar cada una y comprobar su predicción; luego se reinicia el servicio `api`. Para volver atrás se fija `P3_MODEL_URI` a la versión anterior en `compose.yaml`.
+
 ### Consideraciones
 
 - La base y los volúmenes de este Compose son persistentes, pero **locales a una máquina**. No constituyen todavía un Registry compartido entre integrantes; para eso MLflow y su base de datos/almacén de artefactos deben alojarse en infraestructura accesible por todo el equipo.
 - Las versiones existentes cuyos artefactos apuntan a `file:///...` no se convierten al cambiar la configuración del servidor. Se debe crear y verificar una versión nueva.
 - El uso de `--host 0.0.0.0` es interno a la red de contenedores; el puerto del host está limitado a loopback. Esta configuración de desarrollo no incluye autenticación y no debe exponerse como servicio multiusuario o de producción. Consulta [seguridad_p1.md](docs/seguridad_p1.md).
 - Los volúmenes sobreviven a `docker compose down`. No uses `docker compose down -v` salvo que quieras borrar también los datos locales de MLflow.
-- P2 y P3 podrán incorporarse siguiendo el mismo patrón, con sus rutas, esquemas, servicios, dependencias y variables de URI independientes.
+- P2 podrá incorporarse siguiendo el mismo patrón que P1 y P3, con su ruta, esquema, servicio, variable de URI y cargador propios en `mibici/api/main.py`.
 
 ## Flujo de trabajo con Git
 
