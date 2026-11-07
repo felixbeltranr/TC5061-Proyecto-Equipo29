@@ -603,7 +603,7 @@ El campeón de P1 es la versión 1 de `mibici-equipo29-p1-demanda`, con alias `c
 
 #### 1. Sembrar el Registry, antes de iniciar MLflow
 
-El Compose arranca con volúmenes vacíos y MLflow crea una base vacía en cuanto inicia, así que la siembra va antes de cualquier `docker compose up`. Se necesita una copia del almacén de la Entrega 2 donde está registrado el campeón: una carpeta con `mlflow.db` y `mlartifacts/` (unos 62 MiB, con los runs y campeones de P1, P2 y P3 de esa entrega; P2 y P3 no se sirven ni se validan en esta API). No está en el repositorio, porque `mlflow.db` y `mlartifacts/` están en `.gitignore`. Se comparte aparte como `almacen_mlflow_entrega2_r1.zip` (23 MB, SHA256 `18130d22ca361c06…`; la tiene el responsable de P1). Descomprímelo en una carpeta fuera del repositorio, no en su raíz, donde está el `mlflow.db` local del proyecto, y pasa esa carpeta a `--store`. Desde la raíz del repositorio, en PowerShell o en bash:
+El Compose arranca con volúmenes vacíos y MLflow crea una base vacía en cuanto inicia, así que la siembra va antes de cualquier `docker compose up`. Se necesita una copia del almacén de la Entrega 2 donde está registrado el campeón: una carpeta con `mlflow.db` y `mlartifacts/` (unos 62 MiB, con los runs y campeones de P1, P2 y P3 de esa entrega). El de P1 de esa copia ya tiene artefactos `mlflow-artifacts:/`. P2 y P3 se sirven en esta API, pero hay que registrarlos contra el servidor del Compose si sus artefactos siguen en una ruta local (ver las secciones de P2 y P3). No está en el repositorio, porque `mlflow.db` y `mlartifacts/` están en `.gitignore`. Se comparte aparte como `almacen_mlflow_entrega2_r1.zip` (23 MB, SHA256 `18130d22ca361c06…`; la tiene el responsable de P1). Descomprímelo en una carpeta fuera del repositorio, no en su raíz, donde está el `mlflow.db` local del proyecto, y pasa esa carpeta a `--store`. Desde la raíz del repositorio, en PowerShell o en bash:
 
 ```bash
 python scripts/p1/sembrar_registry_p1.py --store "<carpeta con mlflow.db y mlartifacts/>" --solo-verificar
@@ -752,13 +752,95 @@ P3 se sirve como **inferencia por lotes con consulta en línea**:
 - La misma API responde en línea a una estación a la vez, por ejemplo para consultar el grupo de una estación nueva en cuanto cumple los días mínimos o para que un tablero lo pida al abrirse.
 - Para cambiar de versión, la selección de P3 registra versiones nuevas y sólo mueve `champion` después de cargar cada una y comprobar su predicción; luego se reinicia el servicio `api`. Para volver atrás se fija `P3_MODEL_URI` a la versión anterior en `compose.yaml`.
 
+
+### P2 en el contenedor: riesgo horario de ocupación
+
+La API carga el campeón de P2, `models:/mibici-equipo29-p2-riesgo@champion` (configurable con `P2_MODEL_URI` en `compose.yaml`), resuelve el alias a su versión fija igual que P1 y clasifica el riesgo de ocupación de cada estación a t+1: `segura`, `sin_bicicletas` o `sin_anclajes`. P1, P2 y P3 se cargan por separado: si uno falla, los demás se siguen sirviendo y `/ready` responde 503 con el modelo que falta.
+
+El modelo publicado cubre el horizonte de 1 hora. La API no calcula el panel: recibe las 18 variables de `features_p2.FEATURES` ya armadas, incluidas las estadísticas de entrenamiento.
+
+#### 1. Registrar el campeón de P2 en el MLflow del Compose
+
+Si el Registry del Compose ya tiene `mibici-equipo29-p2-riesgo@champion` con artefactos `mlflow-artifacts:/`, no hace falta nada más. Si no, se registra entrenando P2 contra el servidor del Compose. `train_p2` usa `tracking.configurar_experimento`: con una URI `http://` el experimento nuevo guarda sus artefactos en `mlflow-artifacts:/` y el contenedor de la API los puede leer; con la URI SQLite local nada cambia. Se necesitan el panel y el manifiesto de P2 (`python -m mibici.features_p2`, ver la sección de P2). Desde la raíz del repositorio, un entrenamiento acotado a un nivel:
+
+```powershell
+docker compose up -d mlflow
+python -m mibici.modeling.train_p2 --niveles 0.5 --tracking-uri http://localhost:5000
+```
+
+Es el flujo de P2 sobre ese recorte y tarda según la máquina. Termina registrando el campeón con el alias `champion` (salvo que se pase `--no-registrar`).
+
+#### 2. Levantar y probar
+
+```powershell
+docker compose up -d --build api
+curl.exe http://localhost:8000/api/v1/p2/model
+curl.exe -X POST http://localhost:8000/api/v1/p2/predict -H "Content-Type: application/json" --data-binary "@scripts/p2/ejemplo_p2.json"
+```
+
+En bash, `curl` en lugar de `curl.exe`. También se puede probar desde `http://localhost:8000/docs`, que ya trae el ejemplo. `scripts/p2/ejemplo_p2.json` es una petición que cumple el contrato (estación 51, hora 8 de un miércoles). Los valores ilustran el formato; para una predicción operativa hay que calcular las características con `mibici.features_p2`:
+
+```json
+{
+  "stations": [
+    {
+      "station_id": "51",
+      "features": {
+        "hora": 8,
+        "dia_semana": 2,
+        "fin_semana": 0,
+        "capacidad": 15,
+        "ocupacion_actual": 0.47,
+        "neto_lag1": 2.0,
+        "neto_lag24": -1.0,
+        "neto_lag168": 3.0,
+        "salidas_lag1": 4,
+        "llegadas_lag1": 6,
+        "neto_media3": 1.0,
+        "neto_media24": 0.2,
+        "neto_media168_misma_hora": 1.5,
+        "ocupacion_lag24": 0.4,
+        "ocupacion_lag168": 0.53,
+        "est_tasa_sin_bicis": 0.08,
+        "est_tasa_sin_anclajes": 0.05,
+        "est_neto_medio_hora": 0.4
+      }
+    }
+  ]
+}
+```
+
+Respuesta (forma; la clase sale del campeón cargado):
+
+```json
+{"predictions": [{"station_id": "51", "risk_class": "segura"}], "method": "mlflow_registry", "input_count": 1, "model_name": "mibici-equipo29-p2-riesgo", "model_version": "1"}
+```
+
+La captura de la petición y la respuesta desde el contenedor queda en `reports/figures/p2_api_contenedor.png` después de correr este flujo en local.
+
+#### 3. Qué sirve la API
+
+- `POST /api/v1/p2/predict` recibe de 1 a 1000 estaciones; cada una con un `station_id` opcional y las 18 variables de `features_p2.FEATURES`, en ese orden. Devuelve, en el mismo orden, la clase de riesgo, el modelo y la versión. No incluye probabilidades: el cargador compartido es pyfunc y no expone `predict_proba`.
+- `GET /api/v1/p2/model` reporta nombre, versión, alias, run y URI inmutable.
+- Validación de la entrada (si no cumple, 422 sin llamar al modelo): `hora` de 6 a 23; `dia_semana` de 0 a 6; `fin_semana` en 0 o 1 y coherente con el día (1 sólo si es sábado o domingo); `capacidad` entera y positiva; `salidas_lag1` y `llegadas_lag1` enteros no negativos; `neto_lag1` igual a llegadas menos salidas de la hora previa; ocupaciones y tasas no nulas entre 0 y 1; las dos tasas históricas suman a lo más 1. Pueden ir nulas (la clave va en el cuerpo) las estadísticas de estación (`est_*`) y los rezagos largos (`neto_lag24`, `neto_lag168`, `neto_media168_misma_hora`, `ocupacion_lag24`, `ocupacion_lag168`), que el modelo trata como valores faltantes. Números como número y no como texto; sin NaN, sin campos extra ni faltantes, y `station_id` corto y sin caracteres especiales.
+- Validación de la salida: si el modelo devuelve una clase que no sea `segura`, `sin_bicicletas` o `sin_anclajes`, o una cantidad distinta de estaciones, la API responde 500 con el detalle en lugar de una predicción inválida.
+
+#### 4. Estrategia de despliegue
+
+P2 se sirve como **inferencia en línea o por micro-lotes horarios**:
+
+- El uso principal es rebalancear antes de t+1: el operador (o un tablero) envía el panel de las estaciones que le interesan al cerrar la hora actual y recibe la clase de riesgo de la hora siguiente. Un lote de hasta 1000 estaciones cabe en una petición.
+- La misma API responde en línea a una estación a la vez, por ejemplo para consultar el riesgo de una estación concreta al abrir un tablero.
+- No tiene sentido invocarla por cada viaje: las características son horarias y el horizonte publicado es de 1 hora.
+- Para cambiar de versión, el entrenamiento de P2 registra versiones nuevas y sólo mueve `champion` después de cargar cada una y comprobar su predicción; luego se reinicia el servicio `api`. Para volver atrás se fija `P2_MODEL_URI` a la versión anterior en `compose.yaml`.
+
 ### Consideraciones
 
 - La base y los volúmenes de este Compose son persistentes, pero **locales a una máquina**. No constituyen todavía un Registry compartido entre integrantes; para eso MLflow y su base de datos/almacén de artefactos deben alojarse en infraestructura accesible por todo el equipo.
 - Las versiones existentes cuyos artefactos apuntan a `file:///...` no se convierten al cambiar la configuración del servidor. Se debe crear y verificar una versión nueva.
 - El uso de `--host 0.0.0.0` es interno a la red de contenedores; el puerto del host está limitado a loopback. Esta configuración de desarrollo no incluye autenticación y no debe exponerse como servicio multiusuario o de producción. Consulta [seguridad_p1.md](docs/seguridad_p1.md).
 - Los volúmenes sobreviven a `docker compose down`. No uses `docker compose down -v` salvo que quieras borrar también los datos locales de MLflow.
-- P2 podrá incorporarse siguiendo el mismo patrón que P1 y P3, con su ruta, esquema, servicio, variable de URI y cargador propios en `mibici/api/main.py`.
+- P1, P2 y P3 ya están en la API, cada uno con su ruta, esquema, servicio, variable de URI y cargador en `mibici/api/main.py`.
 
 ## Flujo de trabajo con Git
 

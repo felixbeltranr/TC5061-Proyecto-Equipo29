@@ -10,6 +10,7 @@ from loguru import logger
 import typer
 
 from mibici.config import CONFIG, CONFIG_P2
+from mibici.dataset import discover_latest_nomenclature_file
 from mibici.features_p2 import manifiesto_datos
 
 app = typer.Typer()
@@ -22,7 +23,7 @@ def main(
 ) -> None:
     """Calcula el manifiesto de los CSV mensuales y la nomenclatura en carpeta."""
     archivos = sorted(carpeta.glob("datos_abiertos_*.csv")) + [
-        carpeta / CONFIG_P2.nomenclatura_path.name
+        discover_latest_nomenclature_file(carpeta)
     ]
     manifiesto = manifiesto_datos(archivos)
     salida.parent.mkdir(parents=True, exist_ok=True)

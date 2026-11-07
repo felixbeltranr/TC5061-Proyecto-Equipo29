@@ -106,6 +106,22 @@ def discover_latest_nomenclature_url(page_url: str = DATA_PAGE_URL) -> str:
     return max(nomenclature_urls, key=_nomenclature_sort_key)
 
 
+def discover_latest_nomenclature_file(data_dir: Path = CONFIG.raw_data_dir) -> Path:
+    """Return the newest local nomenclatura_YYYY_MM.csv in data_dir."""
+    paths = sorted(
+        (
+            path
+            for path in data_dir.glob("nomenclatura_*.csv")
+            if NOMENCLATURE_FILENAME_RE.fullmatch(path.name) is not None
+            and 1 <= int(path.stem[-2:]) <= 12
+        ),
+        key=lambda path: _nomenclature_sort_key(path.name),
+    )
+    if not paths:
+        raise FileNotFoundError(f"No monthly MiBici nomenclature CSV found in {data_dir}")
+    return paths[-1]
+
+
 def _filter_dataset_urls(
     dataset_urls: list[str],
     start_year: int | None,
