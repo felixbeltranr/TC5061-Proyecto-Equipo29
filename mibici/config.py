@@ -159,7 +159,6 @@ def _random_forest_p2() -> dict[str, float | int]:
 @dataclass(frozen=True)
 class P2Config:
     # Datos
-    nomenclatura_path: Path = CONFIG.raw_data_dir / "nomenclatura_2026_09.csv"
     panel_path: Path = CONFIG.interim_data_dir / "p2_panel_horario.parquet"
     manifiesto_path: Path = PROJ_ROOT / "references" / "manifiesto_datos_p2.json"
     figuras_dir: Path = CONFIG.reports_dir / "figures"  # figuras versionadas del reporte

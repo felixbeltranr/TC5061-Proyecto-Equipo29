@@ -19,6 +19,7 @@ import pandas as pd
 import typer
 
 from mibici.config import CONFIG, CONFIG_P2
+from mibici.dataset import _read_dataset, discover_latest_nomenclature_file
 from mibici.features_p3 import leer_viajes, limpiar_viajes
 
 app = typer.Typer()
@@ -303,12 +304,13 @@ def manifiesto_datos(archivos: list[Path], contar_filas: bool = True) -> dict:
 @app.command()
 def main(
     entrada: Path = CONFIG.processed_data_dir / CONFIG.output_filename,
-    nomenclatura: Path = CONFIG_P2.nomenclatura_path,
+    nomenclatura: Path | None = None,
     salida: Path = CONFIG_P2.panel_path,
 ) -> None:
     """Genera el panel estacion-hora de flujos para P2."""
+    ruta_nomenclatura = nomenclatura or discover_latest_nomenclature_file()
     viajes, bitacora = cargar_viajes(entrada)
-    panel, resumen = construir_panel(viajes, tabla_estaciones(pd.read_csv(nomenclatura)))
+    panel, resumen = construir_panel(viajes, tabla_estaciones(_read_dataset(ruta_nomenclatura)))
     limpieza = bitacora.drop(columns="mes").sum().astype(int).to_dict()
     resumen = {f"limpieza_{k}": v for k, v in limpieza.items()} | resumen
     salida.parent.mkdir(parents=True, exist_ok=True)

@@ -110,3 +110,22 @@ def test_preprocess_dataframe_limpia_sin_mutar_entrada():
     assert resultado["Año_de_nacimiento"].notna().all()
     assert set(resultado["Genero"]) == {"M", "Desconocido"}
     pd.testing.assert_frame_equal(original, antes)
+
+
+def test_elige_la_nomenclatura_local_mas_reciente(tmp_path):
+    for nombre in [
+        "nomenclatura_2025_12.csv",
+        "nomenclatura_2026_10.csv",
+        "nomenclatura_2026_09.csv",
+        "nomenclatura_invalida.csv",
+        "otro.csv",
+    ]:
+        (tmp_path / nombre).write_text("id,name\n")
+    assert dataset.discover_latest_nomenclature_file(tmp_path).name == "nomenclatura_2026_10.csv"
+
+
+def test_sin_nomenclatura_local_lanza_error(tmp_path):
+    (tmp_path / "datos_abiertos_2026_09.csv").write_text("a,b\n")
+    with pytest.raises(FileNotFoundError, match="nomenclature"):
+        dataset.discover_latest_nomenclature_file(tmp_path)
+
