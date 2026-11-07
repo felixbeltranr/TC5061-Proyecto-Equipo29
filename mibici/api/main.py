@@ -7,14 +7,19 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from loguru import logger
 
-from mibici.api.routes import health, p1, p3
+from mibici.api.routes import health, p1, p2, p3
 from mibici.api.services.p1_inference import load_p1_model_with_info
+from mibici.api.services.p2_inference import load_p2_model_with_info
 from mibici.api.services.p3_inference import load_p3_group_names, load_p3_model_with_info
 
 
 def _cargadores() -> dict:
     """Un cargador por pregunta; se leen al arrancar para que las pruebas puedan sustituirlos."""
-    return {"p1": load_p1_model_with_info, "p3": load_p3_model_with_info}
+    return {
+        "p1": load_p1_model_with_info,
+        "p2": load_p2_model_with_info,
+        "p3": load_p3_model_with_info,
+    }
 
 
 @asynccontextmanager
@@ -37,9 +42,9 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="MiBici API",
-    description="P1: demanda diaria por estación. P3: grupo de uso de cada estación. "
-    "Ambos modelos se cargan desde el Model Registry de MLflow.",
-    version="0.3.0",
+    description="P1: demanda diaria por estación. P2: riesgo horario de ocupación. "
+    "P3: grupo de uso de cada estación. Los modelos se cargan desde el Model Registry de MLflow.",
+    version="0.4.0",
     lifespan=lifespan,
 )
 
@@ -66,4 +71,5 @@ async def validation_error(request: Request, exc: RequestValidationError) -> JSO
 
 app.include_router(health.router, tags=["health"])
 app.include_router(p1.router, prefix="/api/v1", tags=["predictions"])
+app.include_router(p2.router, prefix="/api/v1/p2", tags=["p2"])
 app.include_router(p3.router, prefix="/api/v1/p3", tags=["p3"])
