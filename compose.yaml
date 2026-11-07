@@ -55,4 +55,4 @@ services:
 
 volumes:
   mlflow-backend:
-  mlflow-artifacts:
+  mlflow-artifacts:
