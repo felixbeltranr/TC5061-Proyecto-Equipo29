@@ -23,10 +23,10 @@ def model_info(http_request: Request) -> ModelInfoResponse:
 
 @router.post("/predict", response_model=PredictionResponse)
 def predict(payload: PredictionRequest, http_request: Request) -> PredictionResponse:
-    prediction = predict_with_model(
-        http_request.app.state.models["p1"],
-        payload.features.model_dump(),
-    )
+    model = getattr(http_request.app.state, "models", {}).get("p1")
+    if model is None:
+        raise HTTPException(status_code=503, detail="P1 model is not loaded")
+    prediction = predict_with_model(model, payload.features.model_dump())
     info = _p1_info(http_request)
     return PredictionResponse(
         prediction=prediction,
