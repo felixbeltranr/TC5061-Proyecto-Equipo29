@@ -556,6 +556,8 @@ Esta configuración inicial prepara una sola imagen Docker, reutilizada por dos 
 
 ### Cómo ejecutar
 
+Para servir el campeón de P1, siembra primero el Registry (ver [P1 en el contenedor](#p1-en-el-contenedor-campeón-del-registry)): MLflow crea una base vacía al iniciar y la siembra no la sobrescribe. Si ya iniciaste MLflow en este proyecto de Compose, siembra en otro (`COMPOSE_PROJECT_NAME`).
+
 Desde la raíz del repositorio, inicia MLflow:
 
 ```powershell
@@ -565,7 +567,7 @@ docker compose ps
 
 La interfaz de MLflow queda disponible en `http://localhost:5000`. Los procesos de entrenamiento ejecutados en el host deben usar `http://localhost:5000`; la API dentro de Compose utiliza `http://mlflow:5000`.
 
-**Prerequisito pendiente:** antes de entrenar para este despliegue, el responsable de P1 debe migrar su entrenador a `tracking.configurar_experimento` y comprobar que el experimento nuevo tenga artefactos `mlflow-artifacts:/`. Hasta entonces, el comando de entrenamiento local existente puede guardar artefactos `file:///...`, que el contenedor no podrá cargar.
+**Prerequisito pendiente:** antes de entrenar para este despliegue, el responsable de P1 debe migrar su entrenador a `tracking.configurar_experimento` y comprobar que el experimento nuevo tenga artefactos `mlflow-artifacts:/`. Hasta entonces, el comando de entrenamiento local existente puede guardar artefactos `file:///...`, que el contenedor no podrá cargar. El campeón actual de P1 no necesita reentrenarse: se registró contra el servidor de tracking y ya usa `mlflow-artifacts:/` (ver «P1 en el contenedor»).
 
 Cuando exista una versión válida de `mibici-equipo29-p1-demanda` con el alias `champion`, inicia la API:
 
@@ -594,6 +596,86 @@ Prueba `GET http://localhost:8000/live` y `GET http://localhost:8000/ready`. La 
 ```
 
 Los valores ilustran el formato; para una predicción significativa, usa características calculadas con las reglas de P1. Si la API no inicia, revisa `docker compose logs api`.
+
+### P1 en el contenedor: campeón del Registry
+
+El campeón de P1 es la versión 1 de `mibici-equipo29-p1-demanda`, con alias `champion`: el run `p1_hgb_poisson` (`a8fea49c708d4e849bd92ec54536809f`) de la corrida final de la Entrega 2 (25 de octubre de 2026), commit `4291895`, `git_dirty=False`, elegido por el menor `val_mae` (5.61). Se registró contra el servidor de tracking, así que sus artefactos ya son `mlflow-artifacts:/` y no hace falta reentrenarlo. Los datos esperados del campeón y la petición real están en `scripts/p1/campeon_api_p1.json`.
+
+#### 1. Sembrar el Registry, antes de iniciar MLflow
+
+El Compose arranca con volúmenes vacíos y MLflow crea una base vacía en cuanto inicia, así que la siembra va antes de cualquier `docker compose up`. Se necesita una copia del almacén de la Entrega 2 donde está registrado el campeón: una carpeta con `mlflow.db` y `mlartifacts/` (unos 62 MiB, con los runs y campeones de P1, P2 y P3 de esa entrega; P2 y P3 no se sirven ni se validan en esta API). No está en el repositorio, porque `mlflow.db` y `mlartifacts/` están en `.gitignore`. Se comparte aparte como `almacen_mlflow_entrega2_r1.zip` (23 MB, SHA256 `18130d22ca361c06…`; la tiene el responsable de P1). Descomprímelo en una carpeta fuera del repositorio, no en su raíz, donde está el `mlflow.db` local del proyecto, y pasa esa carpeta a `--store`. Desde la raíz del repositorio, en PowerShell o en bash:
+
+```bash
+python scripts/p1/sembrar_registry_p1.py --store "<carpeta con mlflow.db y mlartifacts/>" --solo-verificar
+python scripts/p1/sembrar_registry_p1.py --store "<carpeta con mlflow.db y mlartifacts/>"
+```
+
+El script usa sólo la biblioteca estándar de Python:
+
+- verifica la copia sin modificarla: `champion` → versión 1, el run, la ubicación `mlflow-artifacts:/` y el SHA256 de `model.skops`;
+- se detiene sin copiar si los volúmenes del proyecto de Compose ya tienen una base o artefactos;
+- copia con la carpeta montada sólo de lectura y comprueba en el volumen el SHA256 de `mlflow.db`, el de `model.skops` y el número de archivos.
+
+Sin `COMPOSE_PROJECT_NAME`, el proyecto de Compose toma el nombre de la carpeta del repositorio, y sus volúmenes también. Para sembrar volúmenes nuevos, define la variable en la misma terminal antes de los dos scripts y de `docker compose stop` (`$env:COMPOSE_PROJECT_NAME = 'p1-nuevo'` en PowerShell, `export COMPOSE_PROJECT_NAME=p1-nuevo` en bash). Los puertos 5000 y 8000 son fijos: dos proyectos no pueden estar levantados a la vez, así que detén el otro con `docker compose -p <otro> stop`.
+
+#### 2. Levantar y comprobar
+
+```bash
+python scripts/p1/e2e_api_p1.py
+```
+
+El recorrido construye la imagen desde el árbol actual (con `--no-build` reutiliza la etiqueta `mibici-service:local`, que pudo construirse desde otro clon), levanta `mlflow` y `api` y espera `/ready`. Si la API se cierra al arrancar, por ejemplo con el Registry vacío, falla en ese momento y muestra sus logs. Después comprueba contra `campeon_api_p1.json`:
+
+- que el puerto de `api` sea el de la URL probada;
+- `/live`, `/ready` y `GET /api/v1/model`: nombre, versión, alias, run y URI inmutable;
+- la petición real: HTTP 200, la versión cargada y la predicción de referencia (tolerancia relativa 1e-9);
+- que respondan 422 un lag negativo, `festivo=7`, NaN, un campo extra (dentro y fuera de `features`) y un campo faltante;
+- dentro del contenedor, que las versiones instaladas sean las del `requirements.txt` del modelo servido y que Python tenga la misma versión mayor.menor que el modelo (3.14).
+
+Termina con código 0 sólo si todo pasa. Con `--salida <archivo.json>` guarda el reporte, con la versión cargada y la respuesta; no sobrescribe un archivo existente ni escribe dentro del repositorio. No hace `down` ni borra volúmenes, aunque `up` puede recrear los contenedores si cambió la imagen; para detenerlos, `docker compose stop`.
+
+#### 3. Qué sirve la API
+
+Al arrancar, la API resuelve el alias a su versión y carga la URI inmutable `models:/mibici-equipo29-p1-demanda/1`: la versión que reporta es la que sirve aunque el alias se mueva después. `P1_MODEL_URI` también acepta una versión fija, por ejemplo para volver a una anterior. `GET /api/v1/model` devuelve nombre, versión, alias, run y URI, y cada predicción incluye `model_name` y `model_version`. La entrada se valida: conteos y medias no negativos, `festivo` y `festivo_lag7` en 0 o 1, `dia_semana` de 0 a 6, sin campos extra ni NaN; si no cumple, responde 422.
+
+Petición real: estación 51, pronóstico del 1 de octubre de 2026 emitido con el panel real, que llega al 30 de septiembre (`data/interim/p1_panel_diario.parquet`, SHA256 `8f14faf9…`), y las reglas de `mibici.features.construir_features`; por la regla D-2, las variables usan salidas hasta el 29. Es el cuerpo de `peticion_real.cuerpo` en `scripts/p1/campeon_api_p1.json`:
+
+```json
+{
+  "features": {
+    "dia_semana": 3,
+    "festivo": 0,
+    "festivo_lag7": 0,
+    "lag_2": 404.0,
+    "lag_7": 369.0,
+    "lag_14": 413.0,
+    "lag_21": 332.0,
+    "lag_28": 273.0,
+    "media_7d": 398.7142857142857,
+    "media_28d": 364.10714285714283,
+    "media_misma_dsem_4": 346.75
+  }
+}
+```
+
+Respuesta del contenedor:
+
+```json
+{"prediction": 280.9855056086529, "method": "mlflow_registry", "input_count": 1, "model_name": "mibici-equipo29-p1-demanda", "model_version": "1"}
+```
+
+Es la misma predicción que da el `model.skops` de esa versión cargado fuera del contenedor.
+
+![Petición y respuesta de la API de P1 desde el contenedor](reports/figures/p1_api_contenedor.png)
+
+La captura es de la corrida del 5 de noviembre de 2026 con el commit `e787768`; `mibici/api` no cambió después.
+
+#### 4. Estrategia de despliegue y límites
+
+- Para cambiar de modelo, el flujo de P1 registra una versión nueva y sólo mueve `champion` después de cargarla y validar una predicción; luego se reinicia el servicio `api`. Para volver atrás se fija `P1_MODEL_URI` a la versión anterior en `compose.yaml` o en un `compose.override.yaml`: el valor está escrito en el archivo, así que definir la variable en la terminal no basta. Con una versión fija, `/api/v1/model` reporta `alias` nulo. Si el campeón cambia o se fija una versión, hay que actualizar `campeon_api_p1.json`; mientras tanto el recorrido falla, a propósito.
+- El Registry de este Compose es una copia local del almacén de la Entrega 2, no un Registry compartido.
+- La imagen parte de `python:3.14-slim` sin digest, y `fastapi` y `uvicorn` van con rangos en `requirements-api.txt`. Por eso la versión de parche de Python y la de FastAPI pueden cambiar entre máquinas y construcciones. Las que importan para el modelo (mlflow, scikit-learn, pandas, numpy, skops y cloudpickle) están fijadas igual que en el `requirements.txt` del modelo, y el recorrido lo comprueba.
+- La política de dominio de P1 (predicciones de validación finitas y no negativas) se agregó después de ver resultados de prueba, así que el `test_mae` de este campeón (6.28) no es una medición con TEST intacto.
 
 ### Consideraciones
 
