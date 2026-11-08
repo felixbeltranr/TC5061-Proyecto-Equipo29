@@ -543,14 +543,45 @@ Resultado del 1 de noviembre de 2026 en Windows: `bandit` revisa 1,596 líneas y
 
 ![pip-audit sobre requirements-deepchecks.txt](reports/figures/p3_seguridad_pip_audit.png)
 
+## Seguimiento en MLflow
+
+Esta sección conserva el flujo local anterior al despliegue con Docker; la configuración más reciente de Docker y FastAPI se describe inmediatamente después.
+
+Todos los runs usan el experimento `mibici-equipo29`, con nombre descriptivo y etiquetas `question` (P1, P2 o P3), `team`, `author`, `data_range`, `seed`, `data_version`, `git_commit` y `git_dirty`. Las métricas indican el conjunto en que se calculan (`val_mae`, `test_mae`, ...). El almacén es local: `mlflow.db` y `mlartifacts/` en la raíz del repositorio, ambos fuera de git.
+
+### Servidor de tracking
+
+El Model Registry necesita un almacén con base de datos. Desde la raíz del repositorio, para que la base sea el mismo `mlflow.db` que usa el proyecto por omisión:
+
+```powershell
+mlflow server --backend-store-uri sqlite:///mlflow.db --port 5000 --workers 1
+```
+
+En Windows, el servidor con varios workers deja de aceptar conexiones en algunos de ellos (`WinError 10022`); `--workers 1` lo evita. En Linux y macOS se puede omitir. En otra terminal, también desde la raíz, apunta ambas variables al servidor y lanza el proyecto:
+
+```powershell
+$env:MIBICI_TRACKING_URI = "http://127.0.0.1:5000"
+$env:MLFLOW_TRACKING_URI = $env:MIBICI_TRACKING_URI
+mlflow run . -e ingest --env-manager local --experiment-name mibici-equipo29
+mlflow run . -e train -P question=all -P 'hyperparameters={}' --env-manager local --experiment-name mibici-equipo29
+```
+
+La interfaz queda en http://127.0.0.1:5000 y los artefactos que sube el servidor en `mlartifacts/`. Las dos corridas de proyecto que crea `mlflow run` (`ingest` y `train`) llevan un nombre automático y no tienen la etiqueta `question`; las corridas de entrenamiento sí. No mezcles en una misma sesión el servidor y una URI `sqlite:///` directa: cada una debe apuntar al mismo `mlflow.db` de la raíz. Sin servidor, la interfaz se abre con:
+
+```bash
+mlflow ui --backend-store-uri sqlite:///mlflow.db
+```
+
+Usar el mismo nombre de experimento en otro archivo SQLite no junta las corridas: para compararlas deben registrarse en el mismo almacén.
+
 ## Despliegue inicial con MLflow y FastAPI
 
-Esta configuración inicial prepara una sola imagen Docker, reutilizada por dos servicios: MLflow y la API FastAPI. MLflow guarda su base de datos y artefactos en volúmenes persistentes; la API obtiene el modelo del Registry usando variables de entorno. La estructura de la API está preparada para crecer por problema; actualmente integra P1 y P3, y cada modelo se carga por separado.
+Esta configuración inicial prepara una sola imagen Docker, reutilizada por dos servicios: MLflow y la API FastAPI. MLflow guarda su base de datos y artefactos en volúmenes persistentes; la API obtiene el modelo del Registry usando variables de entorno. La estructura de la API integra P1, P2 y P3, y cada modelo se carga por separado.
 
 ### Qué se configuró
 
 - El servicio `mlflow` usa `mlflow-artifacts:/` y sirve los artefactos mediante el servidor, para que los clientes no dependan de rutas `file:///` de una computadora.
-- El servicio `api` se conecta a MLflow por la red de Compose (`http://mlflow:5000`) y obtiene el modelo indicado por `P1_MODEL_URI`.
+- El servicio `api` se conecta a MLflow por la red de Compose (`http://mlflow:5000`) y obtiene cada modelo según su variable `P1_MODEL_URI`, `P2_MODEL_URI` o `P3_MODEL_URI`.
 - El puerto de MLflow se publica únicamente en `127.0.0.1:5000` durante el desarrollo local.
 - `tracking.configurar_experimento` ofrece el patrón para crear experimentos remotos sin imponer una ruta local de artefactos. P3 ya lo usa en `train_p3`. **Los entrenadores de P1 y P2 aún no se han migrado a ese helper.** Cada responsable deberá integrar y validar el patrón en su flujo antes de registrar un modelo para esta API.
 
