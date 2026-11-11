@@ -195,6 +195,7 @@ mlruns/
 mlartifacts/
 mlflow.db
 reports/runs_p2/
+reports/monitoring/
 models/*.pkl
 models/*.joblib
 .env

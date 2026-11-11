@@ -78,6 +78,21 @@ def test_filtra_dataset_por_rango_inclusivo_y_ordenado():
     ]
 
 
+def test_download_month_only_downloads_requested_raw_month(tmp_path, monkeypatch):
+    url = "https://example.test/datos_abiertos_2026_10.csv"
+    monkeypatch.setattr(dataset, "discover_dataset_urls", lambda page_url: [url])
+    monkeypatch.setattr(
+        dataset,
+        "download_datasets",
+        lambda urls, output_dir: [output_dir / "datos_abiertos_2026_10.csv"],
+    )
+
+    path = dataset.download_month(2026, 10, output_dir=tmp_path)
+
+    assert path == tmp_path / "datos_abiertos_2026_10.csv"
+    assert not (tmp_path / dataset.CONFIG.output_filename).exists()
+
+
 @pytest.mark.parametrize(
     "bounds",
     [
@@ -128,4 +143,3 @@ def test_sin_nomenclatura_local_lanza_error(tmp_path):
     (tmp_path / "datos_abiertos_2026_09.csv").write_text("a,b\n")
     with pytest.raises(FileNotFoundError, match="nomenclature"):
         dataset.discover_latest_nomenclature_file(tmp_path)
-

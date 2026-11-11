@@ -194,6 +194,23 @@ def download_datasets(
     return paths
 
 
+def download_month(
+    year: int,
+    month: int,
+    page_url: str = DATA_PAGE_URL,
+    output_dir: Path = CONFIG.raw_data_dir,
+) -> Path:
+    """Download one published monthly trip CSV without rebuilding the combined dataset."""
+    urls = _filter_dataset_urls(
+        discover_dataset_urls(page_url),
+        year,
+        month,
+        year,
+        month,
+    )
+    return download_datasets(urls, output_dir)[0]
+
+
 def _normalize_column_name(name: str) -> str:
     # Quita espacios y comillas sueltas y unifica acentos para que coincidan entre meses
     name = unicodedata.normalize("NFC", str(name)).strip().strip('"')
@@ -306,28 +323,30 @@ def merge_dataset_define_nomenclature(
     return trips
 
 
-#Preprocessing of the data frame
+# Preprocessing of the data frame
 def preprocess_dataframe(df):
-    #output_file_path = CONFIG.processed_data_dir / CONFIG.processed_filename
+    # output_file_path = CONFIG.processed_data_dir / CONFIG.processed_filename
     dataframe = df.copy()  # Create a copy of the original DataFrame to avoid modifying it directly
 
-    #Drop rows where Origen_Id is null and rows where Destino_Id is null, as it does not find id for the station
+    # Drop rows where Origen_Id is null and rows where Destino_Id is null, as it does not find id for the station
     dataframe = dataframe.dropna(subset=["origen_nombre"])
     dataframe = dataframe.dropna(subset=["destino_nombre"])
 
-    #Drop columns that does not have meaningful data for the model
-    dataframe = dataframe.drop(columns=['Usuario_Id'], errors="ignore")
+    # Drop columns that does not have meaningful data for the model
+    dataframe = dataframe.drop(columns=["Usuario_Id"], errors="ignore")
 
-    #Drop columns with incorrect data for year of birth
+    # Drop columns with incorrect data for year of birth
     dataframe = dataframe.drop(dataframe[dataframe["Año_de_nacimiento"] < 1900].index)
 
     # For gender, to preserve data, replace NaN values with "desconocido"
     dataframe["Genero"] = dataframe["Genero"].fillna("Desconocido")
 
-    #For year of birth, impute with median
-    dataframe["Año_de_nacimiento"] = dataframe["Año_de_nacimiento"].fillna(dataframe["Año_de_nacimiento"].median())
+    # For year of birth, impute with median
+    dataframe["Año_de_nacimiento"] = dataframe["Año_de_nacimiento"].fillna(
+        dataframe["Año_de_nacimiento"].median()
+    )
 
-    #Drop duplicates
+    # Drop duplicates
     dataframe = dataframe.drop_duplicates()
 
     return dataframe

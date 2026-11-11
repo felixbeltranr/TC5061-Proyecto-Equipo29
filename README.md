@@ -543,6 +543,15 @@ Resultado del 1 de noviembre de 2026 en Windows: `bandit` revisa 1,596 líneas y
 
 ![pip-audit sobre requirements-deepchecks.txt](reports/figures/p3_seguridad_pip_audit.png)
 
+## Monitoreo de datos y modelos
+
+Se agregó una base compartida para monitoreo y un ejemplo P1 que compara las features de
+entrenamiento con las del mes disponible de octubre de 2026 usando Evidently. Genera un reporte de
+drift/calidad y un manifiesto de periodos, tamaños y hashes; no entrena, compara ni promueve
+modelos. La guía incluye el procedimiento de descarga, los periodos de datos de P1/P2/P3 y la
+estructura para ampliar el monitoreo por pregunta: [docs/monitoring/guia.md](docs/monitoring/guia.md).
+Los reportes generados se guardan localmente en `reports/monitoring/` y están excluidos de Git.
+
 ## Seguimiento en MLflow
 
 Esta sección conserva el flujo local anterior al despliegue con Docker; la configuración más reciente de Docker y FastAPI se describe inmediatamente después.
