@@ -50,7 +50,6 @@ CONFIG_CHICA = {
     "muestra_importancia": 200,
     "repeticiones_importancia": 1,
 }
-CANDIDATAS_NUEVAS = ("p2_logistica_balanceada", "p2_random_forest_balanceado")
 BUSQUEDA_INI50 = {"p2_busqueda_ini50", "p2_busqueda_ini50_c1", "p2_busqueda_ini50_c2"}
 RUNS_INI50 = {
     "p2_baseline_mayoritaria_ini50",

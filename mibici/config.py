@@ -169,7 +169,6 @@ class P2Config:
     umbral_bajo: float = 0.10  # menos es sin_bicicletas
     umbral_alto: float = 0.90  # mas es sin_anclajes
     nivel_inicial: float = 0.5  # ocupacion supuesta al iniciar el dia de servicio
-    niveles_sensibilidad: tuple[float, ...] = (0.5, 0.3, 0.7)
     hora_inicio_servicio: int = 5  # el sistema opera aprox. de 5:00 a 24:00
     horas_etiqueta: tuple[int, ...] = tuple(range(6, 24))  # horas objetivo que se evaluan
     horizonte_horas: int = 1
