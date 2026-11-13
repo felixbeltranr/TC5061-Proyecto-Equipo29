@@ -197,6 +197,9 @@ class P2Config:
     artefactos_dir: Path = PROJ_ROOT / "mlartifacts"
     modelo_registrado: str = "mibici-equipo29-p2-riesgo"  # un solo modelo para la pregunta P2
     alias_campeon: str = "champion"
+    alias_retador: str = "challenger"
+    # version B del monitoreo: mismo modelo con train hasta esta fecha objetivo (excluida)
+    fecha_fin_entrenamiento_retador: str = "2026-10-01"
     # candidatas balanceadas entre las que se elige el campeon (la regla esta en registro.py)
     candidatas_campeon: tuple[str, ...] = ("logistica", "hgb", "random_forest")
     question: str = "P2"
