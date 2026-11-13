@@ -114,12 +114,45 @@ def figura_distancias(tabla: pd.DataFrame, titulo: str, ruta: Path) -> Path:
     return ruta
 
 
-def figura_clases(proporciones: dict[str, dict[str, float]], titulo: str, ruta: Path) -> Path:
+MESES = (
+    "enero", "febrero", "marzo", "abril", "mayo", "junio",
+    "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre",
+)  # fmt: skip
+
+
+def nombre_mes(year: int, month: int) -> str:
+    """Mes en texto para títulos y etiquetas, por ejemplo octubre de 2026."""
+    return f"{MESES[month - 1]} de {year}"
+
+
+def etiquetas_grupos(
+    mes_control: str, mes_actual: str, n_existentes: int, n_nuevas: int
+) -> dict[str, str]:
+    """Etiquetas legibles de los grupos de ``proporciones_por_grupo`` para la figura de clases."""
+    control = pd.Period(mes_control, freq="M")
+    return {
+        "referencia": "Referencia\n(train del campeón)",
+        mes_control: f"{nombre_mes(control.year, control.month).capitalize()}\n(control)",
+        "actual": f"{mes_actual.capitalize()}\ntodas",
+        "actual_existentes": f"{mes_actual.capitalize()}\nexistentes ({n_existentes})",
+        "actual_nuevas": f"{mes_actual.capitalize()}\nnuevas ({n_nuevas})",
+    }
+
+
+def figura_clases(
+    proporciones: dict[str, dict[str, float]],
+    titulo: str,
+    ruta: Path,
+    etiquetas: dict[str, str] | None = None,
+) -> Path:
     """Proporción de sin_bicicletas y sin_anclajes por grupo de filas."""
     tabla = pd.DataFrame(proporciones).T[["sin_bicicletas", "sin_anclajes"]] * 100
+    if etiquetas:
+        tabla = tabla.rename(index=etiquetas)
     fig, ax = plt.subplots(figsize=(8, 4.5))
     tabla.plot.bar(ax=ax, color=["#DD8452", "#55A868"], rot=0)
     ax.set_ylabel("% de filas estación-hora")
+    ax.legend(["sin bicicletas", "sin anclajes"])
     ax.set_title(titulo)
     for contenedor in ax.containers:
         ax.bar_label(contenedor, fmt="%.1f", fontsize=8)
@@ -200,7 +233,9 @@ def run(
     evidently.to_csv(output_dir / "p2_drift_evidently.csv")
     filas_actual.to_parquet(output_dir / "p2_filas_actual.parquet", index=False)
     clases = proporciones_por_grupo(referencia, actual, mes_control)
-    etiqueta_mes = f"{year}-{month:02d}"
+    estaciones_ref = set(referencia["estacion"].unique())
+    estaciones_act = set(actual["estacion"].unique())
+    etiqueta_mes = nombre_mes(year, month)
     figuras = [
         figura_distancias(
             tabla,
@@ -211,11 +246,15 @@ def run(
             clases,
             "P2: proporción de clases de riesgo (etiqueta proxy)",
             output_dir / "p2_drift_clases.png",
+            etiquetas_grupos(
+                mes_control,
+                etiqueta_mes,
+                len(estaciones_act & estaciones_ref),
+                len(estaciones_act - estaciones_ref),
+            ),
         ),
     ]
 
-    estaciones_ref = set(referencia["estacion"].unique())
-    estaciones_act = set(actual["estacion"].unique())
     metadata = {
         "problem": "P2",
         "unit_of_analysis": "station-hour (target hour 6-23, horizon 1 h)",
