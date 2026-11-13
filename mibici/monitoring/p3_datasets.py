@@ -100,7 +100,7 @@ def perfiles_mensuales(
     return pd.concat(perfiles), resumen
 
 
-def _viajes_del_mes_actual(
+def flujos_del_mes_actual(
     ruta: Path, inicio: pd.Timestamp, fin_excl: pd.Timestamp
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Flujos horarios del mes actual, su bitácora de limpieza y los viajes válidos."""
@@ -154,7 +154,7 @@ def build_p3_populations(
     if faltantes:
         raise ValueError(f"Al dataset combinado le faltan meses de entrenamiento: {faltantes}")
 
-    flujos_act, bitacora_act, validos_act = _viajes_del_mes_actual(
+    flujos_act, bitacora_act, validos_act = flujos_del_mes_actual(
         current_trips_path, inicio, fin_excl
     )
 
