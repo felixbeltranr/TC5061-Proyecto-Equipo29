@@ -50,8 +50,11 @@ def distancia_normada(referencia: pd.Series, actual: pd.Series) -> float:
     """Distancia de Wasserstein entre dos muestras dividida entre la desviación de la referencia.
 
     Es la misma medida que usa Evidently para columnas numéricas ("Wasserstein distance
-    (normed)").
+    (normed)"). Los faltantes se ignoran; si una muestra queda vacía regresa NaN.
     """
+    referencia, actual = referencia.dropna(), actual.dropna()
+    if referencia.empty or actual.empty:
+        return float("nan")
     distancia = wasserstein_distance(referencia, actual)
     desviacion = float(np.std(referencia))
     if desviacion == 0:
