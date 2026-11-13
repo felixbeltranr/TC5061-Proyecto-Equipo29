@@ -545,12 +545,123 @@ Resultado del 1 de noviembre de 2026 en Windows: `bandit` revisa 1,596 líneas y
 
 ## Monitoreo de datos y modelos
 
-Se agregó una base compartida para monitoreo y un ejemplo P1 que compara las features de
-entrenamiento con las del mes disponible de octubre de 2026 usando Evidently. Genera un reporte de
-drift/calidad y un manifiesto de periodos, tamaños y hashes; no entrena, compara ni promueve
-modelos. La guía incluye el procedimiento de descarga, los periodos de datos de P1/P2/P3 y la
-estructura para ampliar el monitoreo por pregunta: [docs/monitoring/guia.md](docs/monitoring/guia.md).
-Los reportes generados se guardan localmente en `reports/monitoring/` y están excluidos de Git.
+La base común está en `mibici/monitoring/`; el ejemplo ejecutable de P1 compara las features de
+referencia con las del mes actual usando Evidently (`evidently==0.7.23`, fijado en
+`requirements.txt`). Genera un diagnóstico de calidad y drift, más un manifiesto con periodos,
+tamaños, nulos, versiones y SHA-256 de las entradas. No entrena ni compara modelos, no promueve
+versiones y no toma decisiones automáticas de reentrenamiento. Actualmente sólo está implementado
+el adaptador de P1; la estructura permite agregar P2 y P3. La guía conserva el diseño, los periodos
+de los tres problemas y los detalles de la ejecución: [docs/monitoring/guia.md](docs/monitoring/guia.md).
+
+### Base y estructura de código
+
+| Archivo | Responsabilidad |
+|---|---|
+| `mibici/monitoring/contracts.py` | Contrato compartido para validar columnas ordenadas, tipos, valores infinitos y calidad básica de los DataFrames de features. |
+| `mibici/monitoring/evidently_report.py` | Adaptador común a Evidently: declara tipos de columnas y guarda reportes HTML y JSON de resumen y drift. |
+| `mibici/monitoring/p1_datasets.py` | Prepara un histórico independiente y construye las poblaciones de referencia y actual con el pipeline existente de features de P1; excluye identificador, fecha y objetivo del reporte. |
+| `mibici/monitoring/p1_drift.py` | Valida el mes y las entradas, ejecuta la comparación P1 y escribe el manifiesto con hashes de entradas y rutas de salida. |
+| `mibici/monitoring/__main__.py` | CLI y orquestación por pregunta; genera `monitoring_run.json` y directorios de salida separados. |
+
+El análisis es por estación-día. La referencia usa las features elegibles del entrenamiento de P1
+hasta el 29 de abril de 2026, respetando la disponibilidad de etiquetas y el embargo configurado;
+la población actual usa un mes calendario completo y el mismo constructor de features. Las filas
+sin historia suficiente o de estaciones inactivas no entran en la comparación.
+
+### Cómo ejecutar
+
+Desde la raíz, con el entorno del proyecto activado y los datos históricos combinados hasta
+septiembre de 2026 junto con el CSV de octubre disponibles, ejecuta:
+
+```powershell
+python -m mibici.monitoring --question p1
+```
+
+La CLI toma por defecto el periodo `2026-10-01` a `2026-11-01` (fin exclusivo), el histórico
+`data/processed/combined_dataset.parquet`, el CSV
+`data/raw/datos_abiertos_2026_10.csv` y guarda los resultados en
+`reports/monitoring/2026_10/`. Para descargar el CSV actual si falta:
+
+```powershell
+python -m mibici.monitoring --question p1 --download-current
+```
+
+Si necesitas reconstruir las entradas históricas, usa la opción explícita:
+
+```powershell
+python -m mibici.monitoring --question p1 --prepare-history --download-current
+```
+
+`--prepare-history` descarga los meses históricos que falten y crea un Parquet sólo con las
+columnas de viajes que P1 necesita en `data/interim/monitoring/`. **No reemplaza ni modifica**
+`data/processed/combined_dataset.parquet`; `--download-current` sólo descarga el CSV mensual
+solicitado si aún no existe. Los datos bajo `data/` no se versionan.
+
+Para otro mes, proporciona un mes calendario completo con `--current-start` y
+`--current-end-exclusive`; también puedes indicar rutas explícitas con `--historical-trips`,
+`--current-trips` y `--output`. Por ejemplo:
+
+```powershell
+python -m mibici.monitoring --question p1 `
+  --historical-trips data/processed/combined_dataset.parquet `
+  --current-trips data/raw/datos_abiertos_2026_10.csv `
+  --current-start 2026-10-01 `
+  --current-end-exclusive 2026-11-01 `
+  --output reports/monitoring/2026_10/p1
+```
+
+También se puede ejecutar el monitor P1 directamente, sin la orquestación:
+
+```powershell
+python -m mibici.monitoring.p1_drift `
+  --historical-trips data/processed/combined_dataset.parquet `
+  --current-trips data/raw/datos_abiertos_2026_10.csv `
+  --current-start 2026-10-01 `
+  --current-end-exclusive 2026-11-01 `
+  --output reports/monitoring/2026_10/p1
+```
+
+Cada ejecución produce `p1_data_drift.html`, `p1_data_drift.json` y `manifest.json`; la
+orquestación añade `monitoring_run.json` en la carpeta raíz del periodo. Los reportes quedan en
+`reports/monitoring/`, localmente y fuera de Git. No se exportan los viajes ni se envían los
+datasets a servicios externos.
+
+`--question all` está disponible para la orquestación, pero por ahora sólo P1 tiene un runner
+registrado: P2 y P3 aún no generan reportes. Octubre de 2026 tampoco es una ventana suficiente para
+evaluar perfiles de P3, que requieren al menos 60 días activos por estación.
+
+### Resultados históricos de P1 (octubre de 2026)
+
+Esta ejecución se conserva como evidencia histórica; sus datos son de octubre de 2026 y no
+representan una corrida para meses posteriores.
+
+- Referencia: 167,177 filas estación-día elegibles, del 30 de enero de 2025 al 29 de abril de
+  2026, sin nulos en las 11 features.
+- Octubre: 635,532 viajes de entrada; 14,651 filas estación-día antes del filtro de elegibilidad.
+  Se excluyeron 19 filas sin historia suficiente y 124 de estaciones inactivas; quedaron 14,508
+  filas elegibles de 468 estaciones, sin nulos en las features.
+- Evidently marcó drift en 9 de 11 features con su umbral predeterminado de 0.1. Los scores
+  reportados fueron:
+
+| Feature | Método | Score |
+|---|---|---:|
+| `lag_2` | Wasserstein normalizada | 0.3095 |
+| `lag_7` | Wasserstein normalizada | 0.2712 |
+| `lag_14` | Wasserstein normalizada | 0.2294 |
+| `lag_21` | Wasserstein normalizada | 0.1572 |
+| `lag_28` | Wasserstein normalizada | 0.0899 |
+| `media_7d` | Wasserstein normalizada | 0.3029 |
+| `media_28d` | Wasserstein normalizada | 0.2177 |
+| `media_misma_dsem_4` | Wasserstein normalizada | 0.1893 |
+| `dia_semana` | Jensen-Shannon | 0.0393 |
+| `festivo` | Jensen-Shannon | 0.1001 |
+| `festivo_lag7` | Jensen-Shannon | 0.1001 |
+
+El cambio de distribución es una señal descriptiva, no evidencia de degradación ni una decisión
+automática de reentrenar. La comparación cubre más de un año de referencia frente a un solo mes y
+contiene observaciones repetidas por estación; cualquier decisión requiere revisar las
+distribuciones y evaluar desempeño predictivo sobre filas etiquetadas comparables. Los cortes,
+limitaciones y resultados completos se conservan en [docs/monitoring/guia.md](docs/monitoring/guia.md).
 
 ## Seguimiento en MLflow
 
@@ -913,6 +1024,8 @@ Seguimos GitHub Flow:
 │   ├── processed      <- combined_dataset.parquet
 │   └── raw            <- CSV originales de MiBici
 ├── docs
+│   └── monitoring
+│       └── guia.md    <- Diseño, periodos y evidencia histórica del monitoreo
 ├── models             <- Modelos serializados (fuera de git)
 ├── notebooks          <- Exploración: número-iniciales-descripción.ipynb
 ├── pyproject.toml     <- Metadatos del paquete y configuración de Ruff
@@ -930,6 +1043,12 @@ Seguimos GitHub Flow:
     ├── manifiesto_p2.py <- Manifiesto con SHA256 y registros de cada archivo
     ├── tracking.py    <- Convención de MLflow de P1
     ├── plots.py
+    ├── monitoring     <- Contratos comunes y adaptador de drift de P1
+    │   ├── contracts.py
+    │   ├── evidently_report.py
+    │   ├── p1_datasets.py
+    │   ├── p1_drift.py
+    │   └── __main__.py
     └── modeling
         ├── train_p1.py
         ├── train_p2.py
