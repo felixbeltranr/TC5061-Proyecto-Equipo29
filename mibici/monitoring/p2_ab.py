@@ -88,7 +88,6 @@ def decidir(
 
 CLASES = tuple(fp.CLASES)
 N_BOOTSTRAP = 1000
-SUBGRUPOS = ("todas", "vistas_por_a", "nuevas_para_a", "nuevas_para_ambos")
 METRICAS_MENOR_ES_MEJOR = ("brier_multiclase",)
 
 
