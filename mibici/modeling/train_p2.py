@@ -221,13 +221,14 @@ def volumen_estacion(df: pd.DataFrame) -> pd.Series:
     return (df["salidas"] + df["llegadas"]).groupby(df["estacion"]).sum()
 
 
-def particionar(df: pd.DataFrame) -> dict[str, pd.DataFrame]:
+def particionar(df: pd.DataFrame, cortes: dict[str, str] | None = None) -> dict[str, pd.DataFrame]:
     """Cortes temporales por fecha objetivo: fit, val (ajuste), train completo y test.
 
+    cortes tiene las mismas claves que CORTES, que es el valor por omision.
     Falla si alguna particion queda vacia, igual que train_p1.particionar.
     """
     t = df["ts_objetivo"]
-    c = {k: pd.Timestamp(v) for k, v in CORTES.items()}
+    c = {k: pd.Timestamp(v) for k, v in (CORTES if cortes is None else cortes).items()}
     partes = {
         "fit": df[(t >= c["train_inicio"]) & (t < c["val_inicio"])],
         "val": df[(t >= c["val_inicio"]) & (t < c["test_inicio"])],

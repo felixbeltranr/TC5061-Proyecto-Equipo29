@@ -292,6 +292,21 @@ def test_particionar_falla_si_alguna_particion_queda_vacia():
         t2.particionar(sin_val)
 
 
+def test_particionar_acepta_cortes_explicitos_sin_tocar_cortes():
+    df = pd.DataFrame({"ts_objetivo": pd.date_range("2026-01-01", "2026-01-10", freq="D")})
+    cortes = {
+        "train_inicio": "2026-01-01",
+        "val_inicio": "2026-01-04",
+        "test_inicio": "2026-01-07",
+        "test_fin": "2026-01-09",
+    }
+    antes = dict(t2.CORTES)
+    partes = t2.particionar(df, cortes)
+    assert len(partes["fit"]) == 3 and len(partes["val"]) == 3
+    assert len(partes["train"]) == 6 and len(partes["test"]) == 2
+    assert t2.CORTES == antes
+
+
 # metricas
 
 
