@@ -232,6 +232,8 @@ Las pruebas de P2 usan datos fabricados dentro de cada prueba, así que no neces
 | `tests/modeling/test_reproducibilidad_p2.py` | 4 | Con la misma semilla, dos entrenamientos de HGB, regresión logística y RandomForest dan las mismas probabilidades y métricas, y la búsqueda elige la misma configuración. |
 | `tests/modeling/test_exportar_p2.py` | 1 | Exportación de train y prueba con features, objetivo y estadísticas por estación calculadas solo con train. |
 | `tests/modeling/test_horizontes_p2.py` | 1 | Un run padre con un hijo por horizonte, sin registrar modelos. |
+| `tests/monitoring/test_p2_datasets.py` | 10 | Nomenclatura vigente por estación, filas del mes con las columnas del contrato, estadísticas por versión, proporciones de clases, lectura del drift de Evidently, control estacional y separación de estaciones nuevas. |
+| `tests/monitoring/test_p2_ab.py` | 17 | Regla de decisión del A/B con el mismo empate que la selección del campeón, métricas iguales a sklearn, Brier multiclase, bootstrap pareado reproducible, subgrupos de estaciones y cortes de B. |
 | `tests/datos/test_deepchecks_p2.py` | 3 | Integridad, panel sin duplicados y drift con los datos reales; corre en el entorno de DeepChecks. |
 
 ```bash
@@ -304,6 +306,22 @@ El análisis entrena el HGB con y sin pesos de clase con los hiperparámetros de
 La persistencia cae rápido con el horizonte y la ventaja del HGB sin pesos sobre ella crece de 0.012 a 0.100. El HGB balanceado solo supera a la persistencia en macro F1 a 4 horas, pero conserva el recall de `sin_bicicletas` (de 0.938 a 0.873) mientras el de la persistencia cae de 0.724 a 0.357.
 
 ![Macro F1 contra horizonte](reports/figures/p2_horizontes_macro_f1.png)
+
+#### P2: drift y A/B testing (octubre de 2026)
+
+P2 tiene adaptador de monitoreo y genera reportes (`mibici/monitoring/p2_datasets.py`, `p2_drift.py` y `p2_ab.py`). La unidad es la fila estación-hora con las 18 variables del modelo (horas objetivo de 6 a 23, h=1). La referencia son las filas de entrenamiento del campeón (enero de 2025 a abril de 2026) y el mes actual es octubre de 2026; el panel del mes se arma con todo el histórico para que los rezagos sean exactos, y cada estación toma la capacidad de la nomenclatura más reciente que la incluye. Además del umbral de 0.1 de Evidently, cada variable tiene un umbral calibrado (la mayor distancia de un mes del entrenamiento contra los demás); las distancias se separan por estaciones existentes y nuevas y se comparan contra octubre de 2025 como control estacional.
+
+```powershell
+python -m mibici.download_month --year 2026 --month 10
+# nomenclatura_2026_10.csv en data/raw; por omisión se usan todas las de data/raw, la más reciente primero
+python -m mibici.monitoring --question p2
+python -m mibici.monitoring.p2_ab --registrar
+python -m mibici.monitoring.p2_ab
+```
+
+Los dos módulos leen `@champion` del URI de `MLFLOW_TRACKING_URI` (o `--tracking-uri`; si no está definido, `CONFIG_P2.tracking_uri`). `p2_ab` compara el campeón (A) con el mismo HGB balanceado reentrenado con fechas objetivo de enero de 2025 a septiembre de 2026 (B) sobre las mismas filas de octubre: recall, precisión, F1 y PR-AUC por clase de riesgo, macro F1 y Brier multiclase, con intervalos del 95 % por bootstrap pareado por estación (1,000 réplicas, semilla 29). B se promueve si el recall medio de riesgo sube al menos 0.005 con intervalo sobre cero; si la diferencia queda dentro de 0.005 decide el PR-AUC medio, también con intervalo sobre cero, con el mismo margen que la selección del campeón. `--registrar` entrena B y lo registra como `challenger` con `registro.registrar_retador`, que nunca mueve `champion`; sin la opción compara `@champion` contra `@challenger`. Las salidas quedan en `reports/monitoring/2026_10/p2/` (fuera de Git): reporte HTML y JSON de Evidently, `p2_drift_calibrado.csv`, `p2_drift_distancias.png`, `p2_drift_clases.png`, `p2_ab_resultados.csv`, `p2_ab_resultados.md`, `p2_ab_resumen.json` y `manifest.json`.
+
+Resultados de octubre de 2026 (262,404 filas de 471 estaciones, 100 nuevas): con el umbral calibrado hay drift en `salidas_lag1` (0.187 contra 0.085), `llegadas_lag1` (0.177 contra 0.080), `neto_media24` (0.128 contra 0.083) y `capacidad` (0.107 contra 0.002, por las estaciones nuevas); el calendario no cambia. En el A/B, B sube el recall medio de riesgo +0.0029 (IC [+0.0003, +0.0058]), dentro del margen, y el PR-AUC medio +0.0022 (IC [+0.0007, +0.0037]); la regla indica promover B, pero el Brier empeora +0.0026 y en las 99 estaciones nuevas para A el recall baja −0.0401. B quedó como versión 2 `challenger` y el campeón sigue en la versión 1.
 
 ### P3 · grupos de estaciones
 
@@ -592,7 +610,7 @@ Esta configuración inicial prepara una sola imagen Docker, reutilizada por dos 
 - El servicio `mlflow` usa `mlflow-artifacts:/` y sirve los artefactos mediante el servidor, para que los clientes no dependan de rutas `file:///` de una computadora.
 - El servicio `api` se conecta a MLflow por la red de Compose (`http://mlflow:5000`) y obtiene cada modelo según su variable `P1_MODEL_URI`, `P2_MODEL_URI` o `P3_MODEL_URI`.
 - El puerto de MLflow se publica únicamente en `127.0.0.1:5000` durante el desarrollo local.
-- `tracking.configurar_experimento` ofrece el patrón para crear experimentos remotos sin imponer una ruta local de artefactos. P3 ya lo usa en `train_p3`. **Los entrenadores de P1 y P2 aún no se han migrado a ese helper.** Cada responsable deberá integrar y validar el patrón en su flujo antes de registrar un modelo para esta API.
+- `tracking.configurar_experimento` ofrece el patrón para crear experimentos remotos sin imponer una ruta local de artefactos. P3 ya lo usa en `train_p3` y P2 en `train_p2`, `horizontes_p2` y `p2_ab`. **El entrenador de P1 aún no se ha migrado a ese helper.** Cada responsable deberá integrar y validar el patrón en su flujo antes de registrar un modelo para esta API.
 
 ### Cómo ejecutar
 
