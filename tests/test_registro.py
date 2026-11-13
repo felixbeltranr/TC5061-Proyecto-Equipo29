@@ -228,7 +228,13 @@ def test_registrar_retador_agrega_version_con_challenger_sin_mover_champion(trac
     registrar_campeon_de_prueba()
     run_id, uri = entrenar_y_loguear(2)
     version = registro.registrar_retador(
-        NOMBRE, "challenger", "champion", run_id, uri, "reentrenado", {"origen": "x"},
+        NOMBRE,
+        "challenger",
+        "champion",
+        run_id,
+        uri,
+        "reentrenado",
+        {"origen": "x"},
         ejemplo_prueba(),
     )
     assert str(version.version) == "2" and version.description == "reentrenado"

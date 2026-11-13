@@ -11,7 +11,9 @@ def test_all_runs_registered_adapters_and_creates_question_folders(tmp_path, mon
         lambda *args: calls.append(args),
     )
     p2_calls = []
-    monkeypatch.setattr(monitoring, "run_p2", lambda *args, **kwargs: p2_calls.append((args, kwargs)))
+    monkeypatch.setattr(
+        monitoring, "run_p2", lambda *args, **kwargs: p2_calls.append((args, kwargs))
+    )
     p3_calls = []
     monkeypatch.setattr(monitoring, "run_p3", lambda *args, **kwargs: p3_calls.append((args, kwargs)))
 
@@ -49,7 +51,9 @@ def test_p2_runs_only_its_adapter(tmp_path, monkeypatch):
     monkeypatch.setattr(monitoring, "run_p1", no_debe_correr)
     monkeypatch.setattr(monitoring, "run_p3", no_debe_correr)
     p2_calls = []
-    monkeypatch.setattr(monitoring, "run_p2", lambda *args, **kwargs: p2_calls.append((args, kwargs)))
+    monkeypatch.setattr(
+        monitoring, "run_p2", lambda *args, **kwargs: p2_calls.append((args, kwargs))
+    )
 
     summary = monitoring.run(
         "p2",
