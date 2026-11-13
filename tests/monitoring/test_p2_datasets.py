@@ -158,3 +158,18 @@ def test_tabla_drift_p2_agrega_control_estacional_y_separa_nuevas():
     assert drift["distancia_nuevas"].notna().all()
     grupos = p2_drift.proporciones_por_grupo(referencia, actual, "2025-10")
     assert set(grupos) == {"referencia", "2025-10", "actual", "actual_existentes", "actual_nuevas"}
+
+
+def test_etiquetas_grupos_legibles_con_conteo_de_estaciones():
+    mes = p2_drift.nombre_mes(2026, 10)
+    etiquetas = p2_drift.etiquetas_grupos("2025-10", mes, 371, 100)
+    assert mes == "octubre de 2026"
+    assert etiquetas["2025-10"] == "Octubre de 2025\n(control)"
+    assert etiquetas["actual_nuevas"] == "Octubre de 2026\nnuevas (100)"
+    assert set(etiquetas) == {
+        "referencia",
+        "2025-10",
+        "actual",
+        "actual_existentes",
+        "actual_nuevas",
+    }
