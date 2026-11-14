@@ -550,7 +550,7 @@ referencia con las del mes actual usando Evidently (`evidently==0.7.23`, fijado 
 `requirements.txt`). Genera un diagnóstico de calidad y drift, más un manifiesto con periodos,
 tamaños, nulos, versiones y SHA-256 de las entradas. No entrena ni compara modelos, no promueve
 versiones y no toma decisiones automáticas de reentrenamiento. Están implementados los adaptadores
-de P1 y de P3 (este último con A/B testing; ver abajo); la estructura permite agregar P2. La guía conserva el diseño, los periodos
+de P1 y de P3, y el A/B testing de los dos (ver abajo); la estructura permite agregar P2. La guía conserva el diseño, los periodos
 de los tres problemas y los detalles de la ejecución: [docs/monitoring/guia.md](docs/monitoring/guia.md).
 
 ### Base y estructura de código
@@ -561,6 +561,7 @@ de los tres problemas y los detalles de la ejecución: [docs/monitoring/guia.md]
 | `mibici/monitoring/evidently_report.py` | Adaptador común a Evidently: declara tipos de columnas y guarda reportes HTML y JSON de resumen y drift. |
 | `mibici/monitoring/p1_datasets.py` | Prepara un histórico independiente y construye las poblaciones de referencia y actual con el pipeline existente de features de P1; excluye identificador, fecha y objetivo del reporte. |
 | `mibici/monitoring/p1_drift.py` | Valida el mes y las entradas, ejecuta la comparación P1 y escribe el manifiesto con hashes de entradas y rutas de salida. |
+| `mibici/monitoring/p1_ab.py` | A/B testing de P1: campeón contra el mismo modelo reentrenado hasta el embargo, sobre las mismas filas estación-día del mes actual; registra la nueva versión como `challenger`. |
 | `mibici/monitoring/p3_datasets.py` | Construye los perfiles de uso estación-mes de P3 (las 12 variables de entrada del modelo) para la referencia y el mes actual, con la limpieza de `features_p3`. |
 | `mibici/monitoring/p3_drift.py` | Reporte de Evidently de P3, umbrales calibrados por variable (`p3_drift_calibrado.csv`), manifiesto y perfiles en Parquet. |
 | `mibici/monitoring/p3_ab.py` | A/B testing de P3: campeón contra versión reentrenada sobre las mismas estaciones del mes actual; registra la nueva versión como `challenger`. |
@@ -695,6 +696,43 @@ quedan `log_trips_day` (0.244 contra 0.166), `net_pm` (0.214 contra 0.096) y `ne
 0.075). En el A/B, B no mejora la silueta (+0.006, IC [−0.004, +0.017]) y es menos estable (ARI
 −0.124, IC [−0.226, −0.030]); se mantiene el campeón (versión 3) y B quedó como versión 5
 `challenger`.
+
+### P1: A/B testing de versiones del Registry (octubre de 2026)
+
+`p1_ab` compara el campeón (A, `mibici-equipo29-p1-demanda@champion`) con el mismo
+HistGradientBoosting de Poisson y los mismos hiperparámetros, reentrenado con objetivos del 1 de
+enero de 2025 al 29 de septiembre de 2026 (B): el último día con conteo completo al emitir el
+pronóstico del 1 de octubre (embargo de 2 días). Las dos versiones pronostican las mismas filas
+estación-día elegibles de octubre, que ninguna vio al entrenar; es una comparación retrospectiva
+fuera de línea, sin reparto de tráfico. Antes de entrenar B se reentrena A' con la ventana del
+campeón y se exige que reproduzca sus predicciones, así B solo difiere de A en los datos.
+
+La métrica principal es el MAE; también se reportan RMSE, WAPE y sesgo, para todas las estaciones,
+las existentes en el entrenamiento de A y las nuevas. La diferencia B − A lleva un IC del 95 % por
+bootstrap pareado por estación (1,000 réplicas, semilla 29). Regla fijada antes de ver octubre: B
+cumple si el IC de todas queda completo bajo 0, en ningún grupo queda completo arriba de 0 y sus
+predicciones son finitas y no negativas. Cumplir la regla permite proponer B; no la promueve.
+
+```powershell
+python -X utf8 -m mibici.monitoring.p1_ab --registrar --tracking-uri http://127.0.0.1:5000
+python -X utf8 -m mibici.monitoring.p1_ab --tracking-uri http://127.0.0.1:5000 `
+  --modelo-a models:/mibici-equipo29-p1-demanda@champion --modelo-b models:/mibici-equipo29-p1-demanda@challenger
+```
+
+El servidor debe tener el campeón de P1 (por ejemplo, el Registry del Compose sembrado con
+`scripts/p1/sembrar_registry_p1.py`). `--registrar` registra B como nueva versión y le asigna
+`challenger` solo después de comprobar que la versión registrada reproduce sus predicciones en
+todas las filas evaluadas; `champion` nunca se mueve. En Windows, `-X utf8` evita que la consola
+falle al imprimir el enlace del run. Las salidas quedan en `reports/monitoring/2026_10/p1/`
+(`p1_ab_resumen.json`, `p1_ab_resultados.csv`, `p1_ab_por_estacion.csv`, `p1_ab_por_dia.csv` y
+`p1_ab_predicciones.parquet`).
+
+Resultados de octubre de 2026, con A y B cargadas del Registry (14,508 filas de 468 estaciones):
+MAE 7.886 con A y 7.756 con B, diferencia −0.130 (IC [−0.275, −0.024]); en las 369 existentes
+−0.168 (IC [−0.362, −0.038]) y en las 99 nuevas +0.012 (IC [−0.016, +0.040]), no concluyente.
+B cumple la regla y quedó como versión 2 `challenger` en un Registry local que parte del almacén
+de la Entrega 2 (el que siembra la API); `champion` sigue en la versión 1. El MAE de mayo a septiembre (6.28) es una referencia histórica, no una prueba intacta: la política de
+dominio se agregó después de ver ese periodo.
 
 ## Seguimiento en MLflow
 
@@ -1076,11 +1114,12 @@ Seguimos GitHub Flow:
     ├── manifiesto_p2.py <- Manifiesto con SHA256 y registros de cada archivo
     ├── tracking.py    <- Convención de MLflow de P1
     ├── plots.py
-    ├── monitoring     <- Contratos comunes, drift de P1 y P3, A/B testing de P3
+    ├── monitoring     <- Contratos comunes, drift de P1 y P3, A/B testing de P1 y P3
     │   ├── contracts.py
     │   ├── evidently_report.py
     │   ├── p1_datasets.py
     │   ├── p1_drift.py
+    │   ├── p1_ab.py
     │   ├── p3_datasets.py
     │   ├── p3_drift.py
     │   ├── p3_ab.py
