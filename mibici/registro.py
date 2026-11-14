@@ -131,6 +131,46 @@ def registrar_campeon(
     return cliente.get_model_version(nombre, version.version)
 
 
+def registrar_retador(
+    nombre: str,
+    alias: str,
+    alias_protegido: str,
+    run_id: str,
+    model_uri: str,
+    descripcion: str,
+    linaje: dict[str, str],
+    ejemplo: pd.DataFrame,
+) -> mlflow.entities.model_registry.ModelVersion:
+    """Registra una version retadora del modelo existente y le pone ``alias``.
+
+    La version se comprueba (carga y prediccion) antes de mover ``alias``; ``alias_protegido``
+    (el del campeon) no se toca y se verifica que siga en la misma version al terminar.
+    """
+    if alias == alias_protegido:
+        raise ValueError(f"El alias del retador no puede ser {alias_protegido}")
+    cliente = MlflowClient()
+    protegida = cliente.get_registered_model(nombre).aliases.get(alias_protegido)
+    run = cliente.get_run(run_id)
+    etiquetas = {
+        "run_id": run_id,
+        "git_commit": run.data.tags.get("git_commit", ""),
+        "data_version": run.data.tags.get("data_version", ""),
+        **linaje,
+    }
+    version = mlflow.register_model(model_uri, nombre, tags=etiquetas)
+    cliente.update_model_version(nombre, version.version, description=descripcion)
+    try:
+        comprobar_version(nombre, version.version, ejemplo)
+    except Exception:
+        cliente.set_model_version_tag(nombre, version.version, "comprobacion", "fallida")
+        raise
+    cliente.set_model_version_tag(nombre, version.version, "comprobacion", "ok")
+    cliente.set_registered_model_alias(nombre, alias, version.version)
+    if cliente.get_registered_model(nombre).aliases.get(alias_protegido) != protegida:
+        raise RuntimeError(f"El alias {alias_protegido} cambio al registrar el retador")
+    return cliente.get_model_version(nombre, version.version)
+
+
 def comprobar_version(nombre: str, version: str, ejemplo: pd.DataFrame) -> list[str]:
     """Carga una version inmutable y exige una clase valida por fila."""
     modelo = mlflow.pyfunc.load_model(f"models:/{nombre}/{version}")

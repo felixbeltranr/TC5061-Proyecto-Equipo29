@@ -169,7 +169,6 @@ class P2Config:
     umbral_bajo: float = 0.10  # menos es sin_bicicletas
     umbral_alto: float = 0.90  # mas es sin_anclajes
     nivel_inicial: float = 0.5  # ocupacion supuesta al iniciar el dia de servicio
-    niveles_sensibilidad: tuple[float, ...] = (0.5, 0.3, 0.7)
     hora_inicio_servicio: int = 5  # el sistema opera aprox. de 5:00 a 24:00
     horas_etiqueta: tuple[int, ...] = tuple(range(6, 24))  # horas objetivo que se evaluan
     horizonte_horas: int = 1
@@ -198,6 +197,9 @@ class P2Config:
     artefactos_dir: Path = PROJ_ROOT / "mlartifacts"
     modelo_registrado: str = "mibici-equipo29-p2-riesgo"  # un solo modelo para la pregunta P2
     alias_campeon: str = "champion"
+    alias_retador: str = "challenger"
+    # version B del monitoreo: mismo modelo con train hasta esta fecha objetivo (excluida)
+    fecha_fin_entrenamiento_retador: str = "2026-10-01"
     # candidatas balanceadas entre las que se elige el campeon (la regla esta en registro.py)
     candidatas_campeon: tuple[str, ...] = ("logistica", "hgb", "random_forest")
     question: str = "P2"

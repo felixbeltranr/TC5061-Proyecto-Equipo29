@@ -58,7 +58,7 @@ class P2Features(BaseModel):
     neto_media3: float = Field(description="Media del neto de las 3 horas previas")
     neto_media24: float = Field(description="Media del neto de las 24 horas previas")
     neto_media168_misma_hora: float | None = Field(
-        description="Media del neto a la misma hora en las 7 semanas previas"
+        description="Media del neto a la misma hora en las 4 semanas previas"
     )
     ocupacion_lag24: float | None = Field(ge=0, le=1, description="Ocupación de hace 24 horas")
     ocupacion_lag168: float | None = Field(ge=0, le=1, description="Ocupación de hace 168 horas")
@@ -133,4 +133,3 @@ class P2PredictionResponse(BaseModel):
     input_count: int
     model_name: str | None = None
     model_version: str | None = None
-

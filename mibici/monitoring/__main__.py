@@ -8,10 +8,11 @@ from mibici.config import CONFIG
 from mibici.monitoring.p1_datasets import prepare_historical_trips
 from mibici.monitoring.p1_drift import month_bounds
 from mibici.monitoring.p1_drift import run as run_p1
+from mibici.monitoring.p2_drift import run as run_p2
 from mibici.monitoring.p3_drift import run as run_p3
 
 QUESTIONS = ("p1", "p2", "p3")
-ADAPTERS = ("p1", "p3")  # preguntas con adaptador de monitoreo registrado
+ADAPTERS = ("p1", "p2", "p3")  # preguntas con adaptador de monitoreo registrado
 
 
 def run(
@@ -58,6 +59,21 @@ def run(
         results["p1"] = {
             "status": "completed",
             "report_dir": "p1",
+        }
+
+    if "p2" in targets:
+        run_p2(
+            historical_trips,
+            current_trips,
+            question_output_dirs["p2"],
+            current_start,
+            current_end_exclusive,
+            download_current,
+            nomenclature_path=nomenclature,
+        )
+        results["p2"] = {
+            "status": "completed",
+            "report_dir": "p2",
         }
 
     if "p3" in targets:
@@ -130,7 +146,10 @@ def main() -> None:
         "--nomenclature",
         type=Path,
         default=None,
-        help="Station nomenclature for P3 (default: latest nomenclatura_*.csv in data/raw).",
+        help=(
+            "Station nomenclature for P2 and P3 (default: P3 uses the latest "
+            "nomenclatura_*.csv in data/raw; P2 combines all of them, newest first)."
+        ),
     )
     parser.add_argument(
         "--output",
