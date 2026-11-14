@@ -549,8 +549,8 @@ La base común está en `mibici/monitoring/`; el ejemplo ejecutable de P1 compar
 referencia con las del mes actual usando Evidently (`evidently==0.7.23`, fijado en
 `requirements.txt`). Genera un diagnóstico de calidad y drift, más un manifiesto con periodos,
 tamaños, nulos, versiones y SHA-256 de las entradas. No entrena ni compara modelos, no promueve
-versiones y no toma decisiones automáticas de reentrenamiento. Actualmente sólo está implementado
-el adaptador de P1; la estructura permite agregar P2 y P3. La guía conserva el diseño, los periodos
+versiones y no toma decisiones automáticas de reentrenamiento. Están implementados los adaptadores
+de P1 y de P3 (este último con A/B testing; ver abajo); la estructura permite agregar P2. La guía conserva el diseño, los periodos
 de los tres problemas y los detalles de la ejecución: [docs/monitoring/guia.md](docs/monitoring/guia.md).
 
 ### Base y estructura de código
@@ -561,6 +561,9 @@ de los tres problemas y los detalles de la ejecución: [docs/monitoring/guia.md]
 | `mibici/monitoring/evidently_report.py` | Adaptador común a Evidently: declara tipos de columnas y guarda reportes HTML y JSON de resumen y drift. |
 | `mibici/monitoring/p1_datasets.py` | Prepara un histórico independiente y construye las poblaciones de referencia y actual con el pipeline existente de features de P1; excluye identificador, fecha y objetivo del reporte. |
 | `mibici/monitoring/p1_drift.py` | Valida el mes y las entradas, ejecuta la comparación P1 y escribe el manifiesto con hashes de entradas y rutas de salida. |
+| `mibici/monitoring/p3_datasets.py` | Construye los perfiles de uso estación-mes de P3 (las 12 variables de entrada del modelo) para la referencia y el mes actual, con la limpieza de `features_p3`. |
+| `mibici/monitoring/p3_drift.py` | Reporte de Evidently de P3, umbrales calibrados por variable (`p3_drift_calibrado.csv`), manifiesto y perfiles en Parquet. |
+| `mibici/monitoring/p3_ab.py` | A/B testing de P3: campeón contra versión reentrenada sobre las mismas estaciones del mes actual; registra la nueva versión como `challenger`. |
 | `mibici/monitoring/__main__.py` | CLI y orquestación por pregunta; genera `monitoring_run.json` y directorios de salida separados. |
 
 El análisis es por estación-día. La referencia usa las features elegibles del entrenamiento de P1
@@ -626,9 +629,7 @@ orquestación añade `monitoring_run.json` en la carpeta raíz del periodo. Los 
 `reports/monitoring/`, localmente y fuera de Git. No se exportan los viajes ni se envían los
 datasets a servicios externos.
 
-`--question all` está disponible para la orquestación, pero por ahora sólo P1 tiene un runner
-registrado: P2 y P3 aún no generan reportes. Octubre de 2026 tampoco es una ventana suficiente para
-evaluar perfiles de P3, que requieren al menos 60 días activos por estación.
+`--question all` corre los adaptadores registrados (P1 y P3); P2 aún no genera reportes.
 
 ### Resultados históricos de P1 (octubre de 2026)
 
@@ -662,6 +663,38 @@ automática de reentrenar. La comparación cubre más de un año de referencia f
 contiene observaciones repetidas por estación; cualquier decisión requiere revisar las
 distribuciones y evaluar desempeño predictivo sobre filas etiquetadas comparables. Los cortes,
 limitaciones y resultados completos se conservan en [docs/monitoring/guia.md](docs/monitoring/guia.md).
+
+### P3: drift y A/B testing (octubre de 2026)
+
+La unidad es el perfil de uso de cada estación en un mes (las 12 variables de entrada del modelo).
+La referencia son los meses de entrenamiento del campeón (enero de 2025 a abril de 2026) y el mes
+actual, octubre de 2026; se compara mes contra mes porque un perfil de un mes es más ruidoso que uno
+de 16 meses. Una estación entra con ubicación conocida y al menos 15 días con viajes en el mes. Como
+el umbral de 0.1 de Evidently marca drift en 6 de los 16 meses del propio entrenamiento, cada
+variable tiene además un umbral calibrado: la mayor distancia de un mes del entrenamiento contra los
+demás.
+
+```powershell
+python -m mibici.download_month --year 2026 --month 10
+python -m mibici.monitoring --question p3 --nomenclature data/raw/nomenclatura_2026_09.csv
+docker compose -p p3 up -d mlflow
+python -m mibici.monitoring.p3_ab --nomenclature data/raw/nomenclatura_2026_09.csv --registrar --tracking-uri http://127.0.0.1:5000
+python -m mibici.monitoring.p3_ab --nomenclature data/raw/nomenclatura_2026_09.csv --tracking-uri http://127.0.0.1:5000 `
+  --modelo-a models:/mibici-equipo29-p3-grupos@champion --modelo-b models:/mibici-equipo29-p3-grupos@challenger
+```
+
+`p3_ab` compara el campeón (A) con el mismo modelo reentrenado hasta septiembre de 2026 (B) sobre
+las mismas estaciones de octubre: silueta y Davies-Bouldin con las 12 variables, estabilidad del
+grupo entre quincenas (ARI) e intervalos del 95 % por bootstrap pareado. B solo reemplaza a A si
+mejora la silueta con un intervalo sin el cero, no es menos estable y ningún grupo baja de 5 % de
+las estaciones; `--registrar` registra B como `challenger` y nunca mueve `champion`. Las salidas
+quedan en `reports/monitoring/2026_10/p3/`.
+
+Resultados de octubre de 2026: Evidently marcó drift en 10 de 12 variables; con el umbral calibrado
+quedan `log_trips_day` (0.244 contra 0.166), `net_pm` (0.214 contra 0.096) y `net_am` (0.115 contra
+0.075). En el A/B, B no mejora la silueta (+0.006, IC [−0.004, +0.017]) y es menos estable (ARI
+−0.124, IC [−0.226, −0.030]); se mantiene el campeón (versión 3) y B quedó como versión 5
+`challenger`.
 
 ## Seguimiento en MLflow
 
@@ -1043,11 +1076,14 @@ Seguimos GitHub Flow:
     ├── manifiesto_p2.py <- Manifiesto con SHA256 y registros de cada archivo
     ├── tracking.py    <- Convención de MLflow de P1
     ├── plots.py
-    ├── monitoring     <- Contratos comunes y adaptador de drift de P1
+    ├── monitoring     <- Contratos comunes, drift de P1 y P3, A/B testing de P3
     │   ├── contracts.py
     │   ├── evidently_report.py
     │   ├── p1_datasets.py
     │   ├── p1_drift.py
+    │   ├── p3_datasets.py
+    │   ├── p3_drift.py
+    │   ├── p3_ab.py
     │   └── __main__.py
     └── modeling
         ├── train_p1.py

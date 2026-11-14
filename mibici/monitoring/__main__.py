@@ -8,8 +8,10 @@ from mibici.config import CONFIG
 from mibici.monitoring.p1_datasets import prepare_historical_trips
 from mibici.monitoring.p1_drift import month_bounds
 from mibici.monitoring.p1_drift import run as run_p1
+from mibici.monitoring.p3_drift import run as run_p3
 
 QUESTIONS = ("p1", "p2", "p3")
+ADAPTERS = ("p1", "p3")  # preguntas con adaptador de monitoreo registrado
 
 
 def run(
@@ -21,11 +23,12 @@ def run(
     current_trips: Path,
     download_current: bool = False,
     prepare_history: bool = False,
+    nomenclature: Path | None = None,
 ) -> dict:
     selected = question.lower()
     if selected != "all" and selected not in QUESTIONS:
         raise ValueError(f"question must be one of all, {', '.join(QUESTIONS)}.")
-    if selected not in ("all", "p1"):
+    if selected != "all" and selected not in ADAPTERS:
         raise ValueError(f"No monitoring adapter is registered for {selected.upper()}.")
     month_bounds(current_start, current_end_exclusive)
     targets = QUESTIONS if selected == "all" else (selected,)
@@ -55,6 +58,22 @@ def run(
         results["p1"] = {
             "status": "completed",
             "report_dir": "p1",
+        }
+
+    if "p3" in targets:
+        # P3 necesita salidas y llegadas: usa el dataset combinado, no el Parquet de P1
+        run_p3(
+            historical_trips,
+            current_trips,
+            question_output_dirs["p3"],
+            current_start,
+            current_end_exclusive,
+            download_current,
+            nomenclature_path=nomenclature,
+        )
+        results["p3"] = {
+            "status": "completed",
+            "report_dir": "p3",
         }
 
     summary = {
@@ -108,6 +127,12 @@ def main() -> None:
         help="Ensure raw historical months exist and build a separate P1-only history Parquet.",
     )
     parser.add_argument(
+        "--nomenclature",
+        type=Path,
+        default=None,
+        help="Station nomenclature for P3 (default: latest nomenclatura_*.csv in data/raw).",
+    )
+    parser.add_argument(
         "--output",
         type=Path,
         default=None,
@@ -115,7 +140,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    if args.question not in ("all", "p1"):
+    if args.question not in ("all", *ADAPTERS):
         parser.error(f"No monitoring adapter is registered for {args.question.upper()}.")
 
     year, month = month_bounds(args.current_start, args.current_end_exclusive)
@@ -130,6 +155,7 @@ def main() -> None:
         current,
         args.download_current,
         args.prepare_history,
+        args.nomenclature,
     )
     for name, result in summary["questions"].items():
         print(f"{name.upper()}: {result['status']}")
