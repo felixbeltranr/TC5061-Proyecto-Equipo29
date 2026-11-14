@@ -568,7 +568,7 @@ referencia con las del mes actual usando Evidently (`evidently==0.7.23`, fijado 
 `requirements.txt`). Genera un diagnóstico de calidad y drift, más un manifiesto con periodos,
 tamaños, nulos, versiones y SHA-256 de las entradas. No entrena ni compara modelos, no promueve
 versiones y no toma decisiones automáticas de reentrenamiento. Están implementados los adaptadores
-de P1 y de P3 (este último con A/B testing; ver abajo); la estructura permite agregar P2. La guía conserva el diseño, los periodos
+de P1, P2 y P3 (los dos últimos con A/B testing; ver abajo). La guía conserva el diseño, los periodos
 de los tres problemas y los detalles de la ejecución: [docs/monitoring/guia.md](docs/monitoring/guia.md).
 
 ### Base y estructura de código
@@ -579,6 +579,9 @@ de los tres problemas y los detalles de la ejecución: [docs/monitoring/guia.md]
 | `mibici/monitoring/evidently_report.py` | Adaptador común a Evidently: declara tipos de columnas y guarda reportes HTML y JSON de resumen y drift. |
 | `mibici/monitoring/p1_datasets.py` | Prepara un histórico independiente y construye las poblaciones de referencia y actual con el pipeline existente de features de P1; excluye identificador, fecha y objetivo del reporte. |
 | `mibici/monitoring/p1_drift.py` | Valida el mes y las entradas, ejecuta la comparación P1 y escribe el manifiesto con hashes de entradas y rutas de salida. |
+| `mibici/monitoring/p2_datasets.py` | Construye las filas estación-hora de P2 (las 18 variables del modelo) para la referencia y el mes actual, con la nomenclatura vigente por estación. |
+| `mibici/monitoring/p2_drift.py` | Reporte de Evidently de P2, umbrales calibrados por variable (`p2_drift_calibrado.csv`), control estacional, gráficas y manifiesto. |
+| `mibici/monitoring/p2_ab.py` | A/B testing de P2: campeón contra versión reentrenada sobre las mismas filas del mes actual; registra la nueva versión como `challenger`. |
 | `mibici/monitoring/p3_datasets.py` | Construye los perfiles de uso estación-mes de P3 (las 12 variables de entrada del modelo) para la referencia y el mes actual, con la limpieza de `features_p3`. |
 | `mibici/monitoring/p3_drift.py` | Reporte de Evidently de P3, umbrales calibrados por variable (`p3_drift_calibrado.csv`), manifiesto y perfiles en Parquet. |
 | `mibici/monitoring/p3_ab.py` | A/B testing de P3: campeón contra versión reentrenada sobre las mismas estaciones del mes actual; registra la nueva versión como `challenger`. |
@@ -647,7 +650,7 @@ orquestación añade `monitoring_run.json` en la carpeta raíz del periodo. Los 
 `reports/monitoring/`, localmente y fuera de Git. No se exportan los viajes ni se envían los
 datasets a servicios externos.
 
-`--question all` corre los adaptadores registrados (P1 y P3); P2 aún no genera reportes.
+`--question all` corre los adaptadores registrados de P1, P2 y P3.
 
 ### Resultados históricos de P1 (octubre de 2026)
 
