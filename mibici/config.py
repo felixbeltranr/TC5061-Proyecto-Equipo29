@@ -257,6 +257,7 @@ class P1Config:
     artefactos_dir: Path = PROJ_ROOT / "mlartifacts"
     modelo_registrado: str = "mibici-equipo29-p1-demanda"
     alias_campeon: str = "champion"
+    alias_retador: str = "challenger"
 
 
 CONFIG_P1 = P1Config()
