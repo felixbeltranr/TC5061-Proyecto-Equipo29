@@ -736,8 +736,10 @@ Resultados de octubre de 2026, con A y B cargadas del Registry (14,508 filas de 
 MAE 7.886 con A y 7.756 con B, diferencia −0.130 (IC [−0.275, −0.024]); en las 369 existentes
 −0.168 (IC [−0.362, −0.038]) y en las 99 nuevas +0.012 (IC [−0.016, +0.040]), no concluyente.
 B cumple la regla y quedó como versión 2 `challenger` en un Registry local que parte del almacén
-de la Entrega 2 (el que siembra la API); `champion` sigue en la versión 1. El MAE de mayo a septiembre (6.28) es una referencia histórica, no una prueba intacta: la política de
-dominio se agregó después de ver ese periodo.
+de la Entrega 2 (el que siembra la API); `champion` sigue en la versión 1. La propuesta queda pendiente
+de confirmar con noviembre de 2026: una B entrenada hasta el 30 de octubre, con el mismo embargo y
+la misma regla. El MAE de mayo a septiembre (6.28) es una referencia histórica, no una prueba
+intacta: la política de dominio se agregó después de ver ese periodo.
 
 ### P1: calidad de datos y drift calibrado (octubre de 2026)
 
@@ -1162,6 +1164,8 @@ Seguimos GitHub Flow:
     │   ├── p1_datasets.py
     │   ├── p1_drift.py
     │   ├── p1_ab.py
+    │   ├── p1_calidad.py
+    │   ├── p1_drift_calibrado.py
     │   ├── p3_datasets.py
     │   ├── p3_drift.py
     │   ├── p3_ab.py
