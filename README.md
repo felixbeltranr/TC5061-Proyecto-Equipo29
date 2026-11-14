@@ -562,6 +562,8 @@ de los tres problemas y los detalles de la ejecución: [docs/monitoring/guia.md]
 | `mibici/monitoring/p1_datasets.py` | Prepara un histórico independiente y construye las poblaciones de referencia y actual con el pipeline existente de features de P1; excluye identificador, fecha y objetivo del reporte. |
 | `mibici/monitoring/p1_drift.py` | Valida el mes y las entradas, ejecuta la comparación P1 y escribe el manifiesto con hashes de entradas y rutas de salida. |
 | `mibici/monitoring/p1_ab.py` | A/B testing de P1: campeón contra el mismo modelo reentrenado hasta el embargo, sobre las mismas filas estación-día del mes actual; registra la nueva versión como `challenger`. |
+| `mibici/monitoring/p1_calidad.py` | Reporte de calidad de datos de P1 con Evidently, separado del de drift: pruebas explícitas por columna y del conjunto, más integridad del archivo de viajes y de la tabla estación-día (llave, cobertura, calendario, rezagos recalculados sin fuga). |
+| `mibici/monitoring/p1_drift_calibrado.py` | Drift calibrado de P1: umbral por variable a partir de los meses de la referencia, distancias por grupo (todas, existentes y nuevas), control del mismo mes del año anterior y meses intermedios; comprueba que sus distancias coinciden con el reporte de Evidently. |
 | `mibici/monitoring/p3_datasets.py` | Construye los perfiles de uso estación-mes de P3 (las 12 variables de entrada del modelo) para la referencia y el mes actual, con la limpieza de `features_p3`. |
 | `mibici/monitoring/p3_drift.py` | Reporte de Evidently de P3, umbrales calibrados por variable (`p3_drift_calibrado.csv`), manifiesto y perfiles en Parquet. |
 | `mibici/monitoring/p3_ab.py` | A/B testing de P3: campeón contra versión reentrenada sobre las mismas estaciones del mes actual; registra la nueva versión como `challenger`. |
@@ -722,7 +724,10 @@ python -X utf8 -m mibici.monitoring.p1_ab --tracking-uri http://127.0.0.1:5000 `
 El servidor debe tener el campeón de P1 (por ejemplo, el Registry del Compose sembrado con
 `scripts/p1/sembrar_registry_p1.py`). `--registrar` registra B como nueva versión y le asigna
 `challenger` solo después de comprobar que la versión registrada reproduce sus predicciones en
-todas las filas evaluadas; `champion` nunca se mueve. En Windows, `-X utf8` evita que la consola
+todas las filas evaluadas; `champion` nunca se mueve. Si ya existe una versión de `p1_ab` para el
+mismo mes y la misma ventana con `comprobacion=ok`, no registra otra salvo con `--forzar`.
+`--modelo-b` solo acepta versiones del Registry y rechaza las que, según su etiqueta
+`entrenamiento_fin`, se entrenaron después del embargo. En Windows, `-X utf8` evita que la consola
 falle al imprimir el enlace del run. Las salidas quedan en `reports/monitoring/2026_10/p1/`
 (`p1_ab_resumen.json`, `p1_ab_resultados.csv`, `p1_ab_por_estacion.csv`, `p1_ab_por_dia.csv` y
 `p1_ab_predicciones.parquet`).
@@ -733,6 +738,43 @@ MAE 7.886 con A y 7.756 con B, diferencia −0.130 (IC [−0.275, −0.024]); en
 B cumple la regla y quedó como versión 2 `challenger` en un Registry local que parte del almacén
 de la Entrega 2 (el que siembra la API); `champion` sigue en la versión 1. El MAE de mayo a septiembre (6.28) es una referencia histórica, no una prueba intacta: la política de
 dominio se agregó después de ver ese periodo.
+
+### P1: calidad de datos y drift calibrado (octubre de 2026)
+
+```powershell
+python -X utf8 -m mibici.monitoring.p1_calidad --current-start 2026-10-01 `
+  --current-end-exclusive 2026-11-01 --panel-campeon data/interim/p1_panel_diario.parquet
+python -X utf8 -m mibici.monitoring.p1_drift_calibrado `
+  --historical-trips data/processed/combined_dataset.parquet `
+  --current-trips data/raw/datos_abiertos_2026_10.csv `
+  --panel-campeon data/interim/p1_panel_diario.parquet
+```
+
+`p1_calidad` escribe `p1_data_quality.html`, `p1_data_quality.json` y `p1_calidad_resumen.json`.
+Es un reporte de Evidently distinto del de drift: prueba el mes actual con umbrales explícitos
+(faltantes, duplicados, columnas constantes, dominio y valores fuera del rango de la referencia) y
+agrega la integridad del archivo de viajes (`Viaje_Id` único, viajes repetidos con otro
+identificador, conciliación de salidas con viajes válidos y volumen diario) y de la tabla
+estación-día (llave única, todos los días del mes, calendario y rezagos y medias recalculados con
+salidas de D−29 a D−2). Con `--estricto` termina con código 1 si falla una prueba crítica.
+
+En octubre de 2026 (14,508 filas de 468 estaciones) dio 84 pruebas aprobadas, 0 fallidas y 15
+advertencias, cada una explicada en el resumen. Cinco vienen de que `festivo` y `festivo_lag7` son
+constantes, porque el mes no tiene festivos. Nueve son valores arriba del máximo de la referencia:
+una fila del objetivo y una de cada rezago, todas de la estación 51 (657 salidas contra 561, debajo
+del tope crítico de 2 veces), y entre 53 y 81 filas de 3 o 4 estaciones en cada media. La última:
+43 viajes (0.007 %) repiten inicio, fin, origen y destino de otro con distinto `Viaje_Id`, debajo
+del límite de falla de 0.1 %. No hay faltantes y los rezagos y medias coinciden con el panel.
+
+`p1_drift_calibrado` escribe `p1_drift_calibrado.csv`, `p1_umbrales_calibrados.csv`,
+`p1_distancias_mes_vs_resto.csv`, `p1_drift_mensual.csv` y `p1_drift_calibrado_resumen.json`. Sus
+distancias coinciden con los scores de Evidently del mismo mes (diferencia máxima 2.8e-17) y
+comprueba que agregar octubre no cambia el panel del campeón. Con el umbral calibrado (la mayor
+distancia de un mes de la referencia contra el resto) quedan con drift en el total `lag_2`
+(0.310 contra 0.117), `media_7d` (0.303 contra 0.139), `lag_7` (0.271 contra 0.165), `lag_14`
+(0.229 contra 0.208) y `media_28d` (0.218 contra 0.197); con las existentes o con las nuevas por
+separado pasan su umbral las 8 numéricas. Contra octubre de 2025, `lag_2` de las existentes está a
+0.382, así que el aumento no es solo estacional.
 
 ## Seguimiento en MLflow
 
