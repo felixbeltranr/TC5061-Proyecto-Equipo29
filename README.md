@@ -307,22 +307,6 @@ La persistencia cae rápido con el horizonte y la ventaja del HGB sin pesos sobr
 
 ![Macro F1 contra horizonte](reports/figures/p2_horizontes_macro_f1.png)
 
-#### P2: drift y A/B testing (octubre de 2026)
-
-P2 tiene adaptador de monitoreo y genera reportes (`mibici/monitoring/p2_datasets.py`, `p2_drift.py` y `p2_ab.py`). La unidad es la fila estación-hora con las 18 variables del modelo (horas objetivo de 6 a 23, h=1). La referencia son las filas de entrenamiento del campeón (enero de 2025 a abril de 2026) y el mes actual es octubre de 2026; el panel del mes se arma con todo el histórico para que los rezagos sean exactos, y cada estación toma la capacidad de la nomenclatura más reciente que la incluye. Además del umbral de 0.1 de Evidently, cada variable tiene un umbral calibrado (la mayor distancia de un mes del entrenamiento contra los demás); las distancias se separan por estaciones existentes y nuevas y se comparan contra octubre de 2025 como control estacional.
-
-```powershell
-python -m mibici.download_month --year 2026 --month 10
-# nomenclatura_2026_10.csv en data/raw; por omisión se usan todas las de data/raw, la más reciente primero
-python -m mibici.monitoring --question p2
-python -m mibici.monitoring.p2_ab --registrar
-python -m mibici.monitoring.p2_ab
-```
-
-Los dos módulos leen `@champion` del URI de `MLFLOW_TRACKING_URI` (o `--tracking-uri`; si no está definido, `CONFIG_P2.tracking_uri`). `p2_ab` compara el campeón (A) con el mismo HGB balanceado reentrenado con fechas objetivo de enero de 2025 a septiembre de 2026 (B) sobre las mismas filas de octubre: recall, precisión, F1 y PR-AUC por clase de riesgo, macro F1 y Brier multiclase, con intervalos del 95 % por bootstrap pareado por estación (1,000 réplicas, semilla 29). B se promueve si el recall medio de riesgo sube al menos 0.005 con intervalo sobre cero; si la diferencia queda dentro de 0.005 decide el PR-AUC medio, también con intervalo sobre cero, con el mismo margen que la selección del campeón. `--registrar` entrena B y lo registra como `challenger` con `registro.registrar_retador`, que nunca mueve `champion`; sin la opción compara `@champion` contra `@challenger`. Las salidas quedan en `reports/monitoring/2026_10/p2/` (fuera de Git): reporte HTML y JSON de Evidently, `p2_drift_calibrado.csv`, `p2_drift_distancias.png`, `p2_drift_clases.png`, `p2_ab_resultados.csv`, `p2_ab_resultados.md`, `p2_ab_resumen.json` y `manifest.json`.
-
-Resultados de octubre de 2026 (262,404 filas de 471 estaciones, 100 nuevas): con el umbral calibrado hay drift en `salidas_lag1` (0.187 contra 0.085), `llegadas_lag1` (0.177 contra 0.080), `neto_media24` (0.128 contra 0.083) y `capacidad` (0.107 contra 0.002, por las estaciones nuevas); el calendario no cambia. En el A/B, B sube el recall medio de riesgo +0.0029 (IC [+0.0003, +0.0058]), dentro del margen, y el PR-AUC medio +0.0022 (IC [+0.0007, +0.0037]); la regla indica promover B, pero el Brier empeora +0.0026 y en las 99 estaciones nuevas para A el recall baja −0.0401. B quedó como versión 2 `challenger` y el campeón sigue en la versión 1.
-
 ### P3 · grupos de estaciones
 
 P3 agrupa estaciones con perfiles de uso similares y los compara con su ubicación. `features_p3` lee el parquet combinado, construye los perfiles de uso por estación del periodo de entrenamiento (enero 2025 a abril 2026) y del de evaluación (mayo a septiembre 2026) y los guarda en `data/interim`. Todo lo que se elige (variables, hiperparámetros y campeón) usa solo el periodo de entrenamiento; el de evaluación solo se reporta.
@@ -684,6 +668,22 @@ automática de reentrenar. La comparación cubre más de un año de referencia f
 contiene observaciones repetidas por estación; cualquier decisión requiere revisar las
 distribuciones y evaluar desempeño predictivo sobre filas etiquetadas comparables. Los cortes,
 limitaciones y resultados completos se conservan en [docs/monitoring/guia.md](docs/monitoring/guia.md).
+
+### P2: drift y A/B testing (octubre de 2026)
+
+P2 tiene adaptador de monitoreo y genera reportes (`mibici/monitoring/p2_datasets.py`, `p2_drift.py` y `p2_ab.py`). La unidad es la fila estación-hora con las 18 variables del modelo (horas objetivo de 6 a 23, h=1). La referencia son las filas de entrenamiento del campeón (enero de 2025 a abril de 2026) y el mes actual es octubre de 2026; el panel del mes se arma con todo el histórico para que los rezagos sean exactos, y cada estación toma la capacidad de la nomenclatura más reciente que la incluye. Además del umbral de 0.1 de Evidently, cada variable tiene un umbral calibrado (la mayor distancia de un mes del entrenamiento contra los demás); las distancias se separan por estaciones existentes y nuevas y se comparan contra octubre de 2025 como control estacional.
+
+```powershell
+python -m mibici.download_month --year 2026 --month 10
+# nomenclatura_2026_10.csv en data/raw; por omisión se usan todas las de data/raw, la más reciente primero
+python -m mibici.monitoring --question p2
+python -m mibici.monitoring.p2_ab --registrar
+python -m mibici.monitoring.p2_ab
+```
+
+Los dos módulos leen `@champion` del URI de `MLFLOW_TRACKING_URI` (o `--tracking-uri`; si no está definido, `CONFIG_P2.tracking_uri`). `p2_ab` compara el campeón (A) con el mismo HGB balanceado reentrenado con fechas objetivo de enero de 2025 a septiembre de 2026 (B) sobre las mismas filas de octubre: recall, precisión, F1 y PR-AUC por clase de riesgo, macro F1 y Brier multiclase, con intervalos del 95 % por bootstrap pareado por estación (1,000 réplicas, semilla 29). La regla de decisión se fijó en un commit antes de comparar: B se puede promover si el recall medio de riesgo sube al menos 0.005 con intervalo sobre cero; si la diferencia queda dentro de 0.005 decide el PR-AUC medio, también con intervalo sobre cero, con el mismo margen que la selección del campeón. `--registrar` entrena B y lo registra como `challenger` con `registro.registrar_retador`, que nunca mueve `champion`; sin la opción compara `@champion` contra `@challenger`. Las salidas quedan en `reports/monitoring/2026_10/p2/` (fuera de Git): reporte HTML y JSON de Evidently, `p2_drift_calibrado.csv`, `p2_drift_distancias.png`, `p2_drift_clases.png`, `p2_ab_resultados.csv`, `p2_ab_resultados.md`, `p2_ab_resumen.json` y `manifest.json`.
+
+Resultados de octubre de 2026 (262,404 filas de 471 estaciones, 100 nuevas): con el umbral calibrado hay drift en `salidas_lag1` (0.187 contra 0.085), `llegadas_lag1` (0.177 contra 0.080), `neto_media24` (0.128 contra 0.083) y `capacidad` (0.107 contra 0.002, por las estaciones nuevas); el calendario no cambia. En el A/B, B sube el recall medio de riesgo +0.0029 (IC [+0.0003, +0.0058]), dentro del margen, y el PR-AUC medio +0.0022 (IC [+0.0007, +0.0037]). B cumple la regla, así que la decisión es promover B, con cautela. El A/B no mueve alias: B quedó como versión 2 `challenger` y `champion` sigue en la versión 1 hasta que se despliegue la nueva versión, que es un paso aparte. La cautela viene de dos puntos que la regla no mide y que conviene vigilar al promover: el Brier empeora +0.0026 (B está un poco peor calibrado) y en las 99 estaciones nuevas para A el recall baja −0.0401.
 
 ### P3: drift y A/B testing (octubre de 2026)
 
