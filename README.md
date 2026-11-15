@@ -726,7 +726,9 @@ python -X utf8 -m mibici.monitoring.p1_ab --tracking-uri http://127.0.0.1:5000 `
 El servidor debe tener el campeón de P1 (por ejemplo, el Registry del Compose sembrado con
 `scripts/p1/sembrar_registry_p1.py`). `--registrar` registra B como nueva versión y le asigna
 `challenger` solo después de comprobar que la versión registrada reproduce sus predicciones en
-todas las filas evaluadas; `champion` nunca se mueve. Si ya existe una versión de `p1_ab` para el
+todas las filas evaluadas; `champion` nunca se mueve. Si el cierre del registro falla, la versión
+queda marcada como fallida, el alias `challenger` vuelve a donde estaba y el reintento registra
+otra. Si ya existe una versión de `p1_ab` para el
 mismo mes y la misma ventana con `comprobacion=ok`, no registra otra salvo con `--forzar`.
 `--modelo-b` solo acepta versiones del Registry y rechaza las que, según su etiqueta
 `entrenamiento_fin`, se entrenaron después del embargo. En Windows, `-X utf8` evita que la consola
@@ -740,7 +742,10 @@ MAE 7.886 con A y 7.756 con B, diferencia −0.130 (IC [−0.275, −0.024]); en
 B cumple la regla y quedó como versión 2 `challenger` en un Registry local que parte del almacén
 de la Entrega 2 (el que siembra la API). Decisión: `champion` sigue en la versión 1 y la versión 2
 queda como candidata; se promueve solo si en noviembre de 2026 esa misma versión, sin reentrenar,
-vuelve a cumplir la regla contra A. La mejora es pequeña (1.6 %) y cinco estaciones explican 83 %;
+vuelve a cumplir la regla contra A. Esa comparación se corre con las versiones por número
+(`--modelo-a models:/mibici-equipo29-p1-demanda/1 --modelo-b models:/mibici-equipo29-p1-demanda/2`),
+porque `challenger` se mueve cuando se registra otro retador. La mejora es pequeña (1.6 %) y cinco
+estaciones explican 83 %;
 con bootstrap por día el IC toca el cero con 1,000 réplicas ([−0.226, +0.0002]) y queda bajo cero
 con 10,000. El MAE de mayo a septiembre (6.28) es una referencia histórica, no una prueba
 intacta: la política de dominio se agregó después de ver ese periodo.
