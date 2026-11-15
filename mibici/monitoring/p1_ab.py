@@ -151,6 +151,20 @@ def ventanas(current_start: str | pd.Timestamp) -> dict[str, tuple[pd.Timestamp,
     }
 
 
+def exigir_mes_posterior_a_a(inicio: pd.Timestamp) -> None:
+    """Error si el mes evaluado empieza dentro de la ventana de entrenamiento de A.
+
+    A ya vio esas etiquetas al entrenar, así que la comparación no sería fuera de muestra.
+    """
+    fin_a = ventanas(inicio)["A"][1]
+    if pd.Timestamp(inicio) <= fin_a:
+        raise ValueError(
+            f"El mes evaluado empieza el {pd.Timestamp(inicio).date()}, dentro de la ventana de "
+            f"entrenamiento de A (hasta el {fin_a.date()}): A ya vio esas etiquetas y no se "
+            "compara."
+        )
+
+
 def construir_panel(
     historical_trips: Path,
     current_trips: Path,
@@ -212,6 +226,7 @@ def particionar(
     feats: pd.DataFrame, inicio: pd.Timestamp, fin_excl: pd.Timestamp
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Filas elegibles para entrenar A, para entrenar B y del mes evaluado (completo o error)."""
+    exigir_mes_posterior_a_a(inicio)
     eleg = feats.loc[feats["elegible"]].copy()
     v = ventanas(inicio)
     train_a = eleg[eleg["fecha"].between(*v["A"])]
@@ -571,6 +586,49 @@ def marcar_run_fallido(cliente, run_id: str, exc: BaseException) -> None:
         logger.warning(f"No se pudo marcar el run {run_id} como fallido: {otro}")
 
 
+def deshacer_cierre(
+    cliente,
+    cfg: P1Config,
+    numero: str,
+    run_id: str,
+    retador_anterior: int | None,
+    alias_movido: bool,
+    exc: BaseException,
+) -> None:
+    """Deja una versión cuyo cierre falló como fallida, sin alias y con su run fallido.
+
+    Si el alias del retador ya se había movido, vuelve a la versión anterior (o se borra si no
+    había) y se quita ``reemplazada_por`` de esa versión. Así la versión no cuenta como
+    equivalente (:func:`version_equivalente` exige ``comprobacion=ok``) y el reintento normal
+    registra otra. Cada paso es independiente: un error al deshacer solo se avisa, para no
+    ocultar la excepción original. El alias del campeón no se toca.
+    """
+    nombre = cfg.modelo_registrado
+    pasos = [
+        lambda: cliente.set_model_version_tag(nombre, numero, "comprobacion", "fallida"),
+        lambda: cliente.set_model_version_tag(
+            nombre, numero, "comprobacion_detalle", f"{type(exc).__name__}: {exc}"[:500]
+        ),
+    ]
+    if alias_movido and retador_anterior is not None:
+        pasos += [
+            lambda: cliente.set_registered_model_alias(
+                nombre, cfg.alias_retador, str(retador_anterior)
+            ),
+            lambda: cliente.delete_model_version_tag(
+                nombre, str(retador_anterior), "reemplazada_por"
+            ),
+        ]
+    elif alias_movido:
+        pasos.append(lambda: cliente.delete_registered_model_alias(nombre, cfg.alias_retador))
+    for paso in pasos:
+        try:
+            paso()
+        except Exception as otro:  # noqa: BLE001 - la excepción original es la que se propaga
+            logger.warning(f"No se pudo deshacer el cierre de {nombre} v{numero}: {otro}")
+    marcar_run_fallido(cliente, run_id, exc)
+
+
 def registrar_version_b(
     modelo_b,
     train_b: pd.DataFrame,
@@ -596,8 +654,11 @@ def registrar_version_b(
     memoria y dominio válido. Si la descripción o la comprobación fallan, la versión queda con
     ``comprobacion=fallida`` y sin alias. (6) Solo si pasa se asigna ``cfg.alias_retador``; si
     apuntaba a otra versión, esa queda con ``reemplazada_por`` y la nueva con
-    ``retador_anterior``. Al final se confirma que ``@champion`` sigue en la misma versión. El
-    alias del campeón nunca se mueve, borra ni reasigna aquí.
+    ``retador_anterior``. Se confirma que ``@champion`` sigue en la misma versión y, como
+    última escritura, la versión pasa a ``comprobacion=ok``. Si este cierre falla en cualquier
+    punto, :func:`deshacer_cierre` deja la versión fallida, devuelve el alias del retador a
+    donde estaba y marca el run como fallido, así que el reintento normal no queda bloqueado.
+    El alias del campeón nunca se mueve, borra ni reasigna aquí.
     """
     from mlflow import MlflowClient
     from mlflow.exceptions import MlflowException
@@ -732,28 +793,41 @@ def registrar_version_b(
         marcar_run_fallido(cliente, run_id, exc)
         raise ValueError(f"{nombre} v{numero} queda sin alias: {exc}") from exc
 
-    cliente.set_model_version_tag(nombre, numero, "comprobacion", "ok")
-    cliente.set_model_version_tag(nombre, numero, "comprobacion_max_abs_dif", repr(dif))
-    cliente.set_model_version_tag(nombre, numero, "comprobacion_filas", str(len(X)))
-    try:  # el alias del retador sí se reasigna; se deja constancia en las dos versiones
-        retador_anterior = int(
-            cliente.get_model_version_by_alias(nombre, cfg.alias_retador).version
+    # Cierre del registro. ``comprobacion=ok`` es la última escritura: una versión con esa
+    # etiqueta ya tiene su alias y su run cerrado. Si algo falla antes, todo se deshace.
+    retador_anterior = None
+    alias_movido = False
+    try:
+        cliente.set_model_version_tag(nombre, numero, "comprobacion_max_abs_dif", repr(dif))
+        cliente.set_model_version_tag(nombre, numero, "comprobacion_filas", str(len(X)))
+        try:  # el alias del retador sí se reasigna; se deja constancia en las dos versiones
+            retador_anterior = int(
+                cliente.get_model_version_by_alias(nombre, cfg.alias_retador).version
+            )
+        except MlflowException:
+            retador_anterior = None
+        if retador_anterior is not None:
+            cliente.set_model_version_tag(
+                nombre, numero, "retador_anterior", str(retador_anterior)
+            )
+        cliente.set_registered_model_alias(nombre, cfg.alias_retador, numero)
+        alias_movido = True
+        if retador_anterior is not None:
+            cliente.set_model_version_tag(nombre, str(retador_anterior), "reemplazada_por", numero)
+        campeon_despues = int(
+            cliente.get_model_version_by_alias(nombre, cfg.alias_campeon).version
         )
-    except MlflowException:
-        retador_anterior = None
-    if retador_anterior is not None:
-        cliente.set_model_version_tag(nombre, numero, "retador_anterior", str(retador_anterior))
-    cliente.set_registered_model_alias(nombre, cfg.alias_retador, numero)
-    if retador_anterior is not None:
-        cliente.set_model_version_tag(nombre, str(retador_anterior), "reemplazada_por", numero)
-    cliente.set_tag(run_id, "registro", "ok")
-    cliente.set_tag(run_id, "registro_version", numero)
-    campeon_despues = int(cliente.get_model_version_by_alias(nombre, cfg.alias_campeon).version)
-    if campeon_despues != campeon_antes:
-        raise RuntimeError(
-            f"@{cfg.alias_campeon} cambió de v{campeon_antes} a v{campeon_despues} mientras se "
-            "registraba B. Este módulo no lo mueve: revisa el Registry antes de seguir."
-        )
+        if campeon_despues != campeon_antes:
+            raise RuntimeError(
+                f"@{cfg.alias_campeon} cambió de v{campeon_antes} a v{campeon_despues} mientras "
+                "se registraba B. Este módulo no lo mueve: revisa el Registry antes de seguir."
+            )
+        cliente.set_tag(run_id, "registro_version", numero)
+        cliente.set_tag(run_id, "registro", "ok")
+        cliente.set_model_version_tag(nombre, numero, "comprobacion", "ok")
+    except Exception as exc:
+        deshacer_cierre(cliente, cfg, numero, run_id, retador_anterior, alias_movido, exc)
+        raise ValueError(f"{nombre} v{numero} queda sin alias: {exc}") from exc
     model_uri = f"models:/{nombre}/{numero}"
     return {
         "estado": "registrado",
@@ -812,6 +886,7 @@ def ejecutar(
         raise ValueError("--forzar solo aplica con --registrar.")
     month_bounds(current_start, current_end_exclusive)
     inicio, fin_excl = pd.Timestamp(current_start), pd.Timestamp(current_end_exclusive)
+    exigir_mes_posterior_a_a(inicio)
     v = ventanas(inicio)
     ultimo = str((fin_excl - pd.Timedelta(days=1)).date())
     periodo = f"{inicio.date()}..{ultimo}"

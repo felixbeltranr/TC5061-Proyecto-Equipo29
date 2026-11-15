@@ -784,6 +784,70 @@ def test_falla_tras_register_model_deja_la_version_marcada(
     assert _aliases(cliente, cfg) == {"champion": 1}
 
 
+def _falla_al_cerrar(original):
+    def falla(self, run_id, key, value, *args, **kwargs):
+        if (key, value) == ("registro", "ok"):
+            raise RuntimeError("simulado: falla al cerrar el registro")
+        return original(self, run_id, key, value, *args, **kwargs)
+
+    return falla
+
+
+@pytest.mark.parametrize("donde", ["alias", "cierre"])
+def test_falla_al_terminar_el_registro_no_deja_ok_ni_bloquea_el_reintento(
+    ab_registrable, monkeypatch, donde
+):
+    cliente, cfg = ab_registrable["cliente"], ab_registrable["cfg"]
+    nombre = cfg.modelo_registrado
+    with monkeypatch.context() as parche:
+        if donde == "alias":
+            original = MlflowClient.set_registered_model_alias
+
+            def falla(self, name, alias, version):
+                if alias == cfg.alias_retador:
+                    raise RuntimeError("simulado: falla al asignar el alias")
+                return original(self, name, alias, version)
+
+            parche.setattr(MlflowClient, "set_registered_model_alias", falla)
+        else:
+            parche.setattr(MlflowClient, "set_tag", _falla_al_cerrar(MlflowClient.set_tag))
+        with pytest.raises(ValueError, match="queda sin alias: simulado"):
+            p1_ab.registrar_version_b(*ab_registrable["args"], autor="prueba")
+
+    v2 = cliente.get_model_version(nombre, "2")
+    assert v2.tags["comprobacion"] == "fallida"
+    assert cliente.get_run(v2.run_id).data.tags["registro"] == "fallido"
+    assert _aliases(cliente, cfg) == {"champion": 1}
+
+    # el reintento normal, sin --forzar, registra otra versión y sí termina
+    tercera = p1_ab.registrar_version_b(*ab_registrable["args"], autor="prueba")
+    assert tercera["version"] == 3
+    assert cliente.get_model_version(nombre, "3").tags["comprobacion"] == "ok"
+    assert _aliases(cliente, cfg) == {"champion": 1, "challenger": 3}
+
+
+def test_falla_al_terminar_un_registro_forzado_devuelve_el_alias_al_retador_anterior(
+    ab_registrable, monkeypatch
+):
+    cliente, cfg = ab_registrable["cliente"], ab_registrable["cfg"]
+    nombre = cfg.modelo_registrado
+    p1_ab.registrar_version_b(*ab_registrable["args"], autor="prueba")
+
+    monkeypatch.setattr(MlflowClient, "set_tag", _falla_al_cerrar(MlflowClient.set_tag))
+    with pytest.raises(ValueError, match="queda sin alias: simulado"):
+        p1_ab.registrar_version_b(*ab_registrable["args"], autor="prueba", forzar=True)
+
+    assert _aliases(cliente, cfg) == {"champion": 1, "challenger": 2}
+    assert "reemplazada_por" not in cliente.get_model_version(nombre, "2").tags
+    assert cliente.get_model_version(nombre, "3").tags["comprobacion"] == "fallida"
+
+
+def test_mes_dentro_de_la_ventana_de_a_es_error(archivos, tmp_path):
+    with pytest.raises(ValueError, match="ventana de entrenamiento de A"):
+        p1_ab.ejecutar(*archivos, "2026-04-01", "2026-05-01", tmp_path / "salida")
+    assert not (tmp_path / "salida").exists()
+
+
 def test_proteger_consola_evita_el_error_de_cp1252():
     consola = io.TextIOWrapper(io.BytesIO(), encoding="cp1252", newline="\n")
     with pytest.raises(UnicodeEncodeError):
