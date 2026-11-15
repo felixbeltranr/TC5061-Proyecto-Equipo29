@@ -213,3 +213,58 @@ def test_promocion_fallida_conserva_alias_anterior(tracking, monkeypatch, fallo)
     nueva = tracking.get_model_version(NOMBRE, str(int(anterior.version) + 1))
     assert nueva.tags["comprobacion"] == "fallida"
     assert len(registro.verificar_campeon(NOMBRE, "champion", ejemplo_prueba())) == 3
+
+
+# registrar_retador
+
+
+def registrar_campeon_de_prueba() -> None:
+    run_id, uri = entrenar_y_loguear(1)
+    campeon = registro.seleccionar_campeon(NIVEL_050, BALANCEADAS)
+    registro.registrar_campeon(NOMBRE, "champion", run_id, uri, campeon, {}, ejemplo_prueba())
+
+
+def test_registrar_retador_agrega_version_con_challenger_sin_mover_champion(tracking):
+    registrar_campeon_de_prueba()
+    run_id, uri = entrenar_y_loguear(2)
+    version = registro.registrar_retador(
+        NOMBRE,
+        "challenger",
+        "champion",
+        run_id,
+        uri,
+        "reentrenado",
+        {"origen": "x"},
+        ejemplo_prueba(),
+    )
+    assert str(version.version) == "2" and version.description == "reentrenado"
+    assert tracking.get_registered_model(NOMBRE).aliases == {"champion": 1, "challenger": 2}
+    v = tracking.get_model_version(NOMBRE, "2")
+    assert {"run_id": run_id, "origen": "x", "comprobacion": "ok"}.items() <= v.tags.items()
+    assert len(tracking.search_registered_models()) == 1
+
+
+def test_registrar_retador_rechaza_usar_el_alias_del_campeon(tracking):
+    registrar_campeon_de_prueba()
+    run_id, uri = entrenar_y_loguear(2)
+    with pytest.raises(ValueError, match="champion"):
+        registro.registrar_retador(
+            NOMBRE, "champion", "champion", run_id, uri, "x", {}, ejemplo_prueba()
+        )
+    assert tracking.get_registered_model(NOMBRE).aliases == {"champion": 1}
+
+
+def test_registrar_retador_fallido_no_pone_alias(tracking, monkeypatch):
+    registrar_campeon_de_prueba()
+    run_id, uri = entrenar_y_loguear(2)
+
+    def comprobar_roto(*args, **kwargs):
+        raise ValueError("prediccion invalida")
+
+    monkeypatch.setattr(registro, "comprobar_version", comprobar_roto)
+    with pytest.raises(ValueError, match="prediccion"):
+        registro.registrar_retador(
+            NOMBRE, "challenger", "champion", run_id, uri, "x", {}, ejemplo_prueba()
+        )
+    assert tracking.get_registered_model(NOMBRE).aliases == {"champion": 1}
+    assert tracking.get_model_version(NOMBRE, "2").tags["comprobacion"] == "fallida"

@@ -50,7 +50,6 @@ CONFIG_CHICA = {
     "muestra_importancia": 200,
     "repeticiones_importancia": 1,
 }
-CANDIDATAS_NUEVAS = ("p2_logistica_balanceada", "p2_random_forest_balanceado")
 BUSQUEDA_INI50 = {"p2_busqueda_ini50", "p2_busqueda_ini50_c1", "p2_busqueda_ini50_c2"}
 RUNS_INI50 = {
     "p2_baseline_mayoritaria_ini50",
@@ -291,6 +290,21 @@ def test_particionar_falla_si_alguna_particion_queda_vacia():
     sin_val = pd.DataFrame({"ts_objetivo": pd.date_range("2026-02-16", "2026-02-20", freq="D")})
     with pytest.raises(ValueError, match="fit"):
         t2.particionar(sin_val)
+
+
+def test_particionar_acepta_cortes_explicitos_sin_tocar_cortes():
+    df = pd.DataFrame({"ts_objetivo": pd.date_range("2026-01-01", "2026-01-10", freq="D")})
+    cortes = {
+        "train_inicio": "2026-01-01",
+        "val_inicio": "2026-01-04",
+        "test_inicio": "2026-01-07",
+        "test_fin": "2026-01-09",
+    }
+    antes = dict(t2.CORTES)
+    partes = t2.particionar(df, cortes)
+    assert len(partes["fit"]) == 3 and len(partes["val"]) == 3
+    assert len(partes["train"]) == 6 and len(partes["test"]) == 2
+    assert t2.CORTES == antes
 
 
 # metricas

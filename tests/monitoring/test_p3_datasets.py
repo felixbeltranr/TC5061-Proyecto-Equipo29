@@ -205,3 +205,12 @@ def test_tabla_drift_separa_estaciones_existentes_y_nuevas():
     assert tabla.loc["x", "distancia_existentes"] < tabla.loc["x", "distancia_nuevas"]
     assert tabla.loc["x", "media_nuevas"] == 30
     assert bool(tabla.loc["x", "drift_evidently"]) and bool(tabla.loc["x", "drift_calibrado"])
+
+
+def test_distancia_normada_ignora_faltantes():
+    distancia_normada = p3_drift.distancia_normada
+    ref = pd.Series([0.0, 1.0, 2.0, 3.0])
+    act = pd.Series([1.0, 2.0, 3.0, 4.0])
+    con_nan = pd.Series([1.0, None, 2.0, 3.0, None, 4.0])
+    assert distancia_normada(ref, con_nan) == distancia_normada(ref, act)
+    assert pd.isna(distancia_normada(ref, pd.Series([None, None], dtype=float)))

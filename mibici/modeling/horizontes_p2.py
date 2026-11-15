@@ -26,6 +26,7 @@ import pandas as pd
 from mibici import features_p2 as fp
 from mibici.config import CONFIG_P2
 from mibici.modeling import train_p2 as t2
+from mibici.tracking import configurar_experimento
 
 METRICAS = (
     "test_macro_f1",
@@ -109,12 +110,9 @@ def main(argv: list[str] | None = None) -> None:
     figs = Path(args.figuras)
     figs.mkdir(parents=True, exist_ok=True)
 
-    mlflow.set_tracking_uri(args.tracking_uri)
-    if mlflow.get_experiment_by_name(CONFIG_P2.experimento) is None:
-        mlflow.create_experiment(
-            CONFIG_P2.experimento, artifact_location=Path(args.artefactos).resolve().as_uri()
-        )
-    mlflow.set_experiment(CONFIG_P2.experimento)
+    configurar_experimento(
+        args.tracking_uri, CONFIG_P2.experimento, Path(args.artefactos).resolve().as_uri()
+    )
     panel = pd.read_parquet(args.panel)
     manifiesto = json.loads(Path(args.manifiesto).read_text())
     sha, sucio = t2.git_commit()
