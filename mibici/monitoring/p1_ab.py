@@ -586,47 +586,86 @@ def marcar_run_fallido(cliente, run_id: str, exc: BaseException) -> None:
         logger.warning(f"No se pudo marcar el run {run_id} como fallido: {otro}")
 
 
+def version_del_alias(cliente, nombre: str, alias: str) -> int | None:
+    """Versión a la que apunta el alias, o ``None`` si el alias no existe.
+
+    Solo cuenta como ausencia el error con que MLflow dice que el alias no está («... alias
+    <alias> not found»). Cualquier otro error (servidor caído, permisos, red) se propaga: no
+    permite concluir que no hay alias.
+    """
+    from mlflow.exceptions import MlflowException
+
+    try:
+        return int(cliente.get_model_version_by_alias(nombre, alias).version)
+    except MlflowException as exc:
+        ausente = exc.error_code in {"INVALID_PARAMETER_VALUE", "RESOURCE_DOES_NOT_EXIST"}
+        if ausente and "not found" in str(exc).lower():
+            return None
+        raise
+
+
 def deshacer_cierre(
     cliente,
     cfg: P1Config,
     numero: str,
     run_id: str,
     retador_anterior: int | None,
-    alias_movido: bool,
     exc: BaseException,
-) -> None:
-    """Deja una versión cuyo cierre falló como fallida, sin alias y con su run fallido.
+) -> str:
+    """Deja una versión cuyo cierre falló como fallida y con su run fallido; revierte el alias.
 
-    Si el alias del retador ya se había movido, vuelve a la versión anterior (o se borra si no
-    había) y se quita ``reemplazada_por`` de esa versión. Así la versión no cuenta como
+    No se fía de si la llamada que movía el alias devolvió éxito: lee a qué versión apunta el
+    alias del retador y, si apunta a esta, lo devuelve a la versión anterior (o lo borra si no
+    había) y quita ``reemplazada_por`` de esa versión. Así también se revierte una escritura
+    que el servidor aplicó aunque su respuesta se perdiera. La versión no cuenta como
     equivalente (:func:`version_equivalente` exige ``comprobacion=ok``) y el reintento normal
     registra otra. Cada paso es independiente: un error al deshacer solo se avisa, para no
     ocultar la excepción original. El alias del campeón no se toca.
+
+    Devuelve cómo quedó el alias del retador respecto de esta versión: ``"sin alias"`` si se
+    comprobó que no apunta a ella, o ``"con el alias sin verificar"`` si no se pudo leer.
     """
     nombre = cfg.modelo_registrado
-    pasos = [
-        lambda: cliente.set_model_version_tag(nombre, numero, "comprobacion", "fallida"),
-        lambda: cliente.set_model_version_tag(
-            nombre, numero, "comprobacion_detalle", f"{type(exc).__name__}: {exc}"[:500]
-        ),
-    ]
-    if alias_movido and retador_anterior is not None:
-        pasos += [
-            lambda: cliente.set_registered_model_alias(
-                nombre, cfg.alias_retador, str(retador_anterior)
-            ),
-            lambda: cliente.delete_model_version_tag(
-                nombre, str(retador_anterior), "reemplazada_por"
-            ),
-        ]
-    elif alias_movido:
-        pasos.append(lambda: cliente.delete_registered_model_alias(nombre, cfg.alias_retador))
-    for paso in pasos:
+
+    def intenta(paso) -> bool:
         try:
             paso()
         except Exception as otro:  # noqa: BLE001 - la excepción original es la que se propaga
             logger.warning(f"No se pudo deshacer el cierre de {nombre} v{numero}: {otro}")
+            return False
+        return True
+
+    intenta(lambda: cliente.set_model_version_tag(nombre, numero, "comprobacion", "fallida"))
+    intenta(
+        lambda: cliente.set_model_version_tag(
+            nombre, numero, "comprobacion_detalle", f"{type(exc).__name__}: {exc}"[:500]
+        )
+    )
+    estado = "con el alias sin verificar"
+    try:
+        actual = version_del_alias(cliente, nombre, cfg.alias_retador)
+        if actual == int(numero):
+            if retador_anterior is not None:
+                cliente.set_registered_model_alias(
+                    nombre, cfg.alias_retador, str(retador_anterior)
+                )
+            else:
+                cliente.delete_registered_model_alias(nombre, cfg.alias_retador)
+            actual = version_del_alias(cliente, nombre, cfg.alias_retador)
+        if actual != int(numero):
+            estado = "sin alias"
+    except Exception as otro:  # noqa: BLE001 - la excepción original es la que se propaga
+        logger.warning(f"No se pudo comprobar el alias de {nombre} v{numero}: {otro}")
+    if retador_anterior is not None:
+
+        def quitar_reemplazo() -> None:
+            previa = cliente.get_model_version(nombre, str(retador_anterior))
+            if (previa.tags or {}).get("reemplazada_por") == numero:
+                cliente.delete_model_version_tag(nombre, str(retador_anterior), "reemplazada_por")
+
+        intenta(quitar_reemplazo)
     marcar_run_fallido(cliente, run_id, exc)
+    return estado
 
 
 def registrar_version_b(
@@ -656,8 +695,10 @@ def registrar_version_b(
     apuntaba a otra versión, esa queda con ``reemplazada_por`` y la nueva con
     ``retador_anterior``. Se confirma que ``@champion`` sigue en la misma versión y, como
     última escritura, la versión pasa a ``comprobacion=ok``. Si este cierre falla en cualquier
-    punto, :func:`deshacer_cierre` deja la versión fallida, devuelve el alias del retador a
-    donde estaba y marca el run como fallido, así que el reintento normal no queda bloqueado.
+    punto, :func:`deshacer_cierre` deja la versión fallida, comprueba a qué versión apunta el
+    alias del retador y lo devuelve a donde estaba, y marca el run como fallido, así que el
+    reintento normal no queda bloqueado. Si ni siquiera puede leer el alias, el error lo dice
+    («con el alias sin verificar») en lugar de afirmar que quedó sin alias.
     El alias del campeón nunca se mueve, borra ni reasigna aquí.
     """
     from mlflow import MlflowClient
@@ -796,22 +837,17 @@ def registrar_version_b(
     # Cierre del registro. ``comprobacion=ok`` es la última escritura: una versión con esa
     # etiqueta ya tiene su alias y su run cerrado. Si algo falla antes, todo se deshace.
     retador_anterior = None
-    alias_movido = False
     try:
         cliente.set_model_version_tag(nombre, numero, "comprobacion_max_abs_dif", repr(dif))
         cliente.set_model_version_tag(nombre, numero, "comprobacion_filas", str(len(X)))
-        try:  # el alias del retador sí se reasigna; se deja constancia en las dos versiones
-            retador_anterior = int(
-                cliente.get_model_version_by_alias(nombre, cfg.alias_retador).version
-            )
-        except MlflowException:
-            retador_anterior = None
+        # el alias del retador sí se reasigna; se deja constancia en las dos versiones. Un
+        # error al leerlo no significa que no exista: se propaga y el alias no se mueve.
+        retador_anterior = version_del_alias(cliente, nombre, cfg.alias_retador)
         if retador_anterior is not None:
             cliente.set_model_version_tag(
                 nombre, numero, "retador_anterior", str(retador_anterior)
             )
         cliente.set_registered_model_alias(nombre, cfg.alias_retador, numero)
-        alias_movido = True
         if retador_anterior is not None:
             cliente.set_model_version_tag(nombre, str(retador_anterior), "reemplazada_por", numero)
         campeon_despues = int(
@@ -826,8 +862,8 @@ def registrar_version_b(
         cliente.set_tag(run_id, "registro", "ok")
         cliente.set_model_version_tag(nombre, numero, "comprobacion", "ok")
     except Exception as exc:
-        deshacer_cierre(cliente, cfg, numero, run_id, retador_anterior, alias_movido, exc)
-        raise ValueError(f"{nombre} v{numero} queda sin alias: {exc}") from exc
+        estado = deshacer_cierre(cliente, cfg, numero, run_id, retador_anterior, exc)
+        raise ValueError(f"{nombre} v{numero} queda {estado}: {exc}") from exc
     model_uri = f"models:/{nombre}/{numero}"
     return {
         "estado": "registrado",

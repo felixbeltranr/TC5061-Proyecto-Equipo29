@@ -842,6 +842,65 @@ def test_falla_al_terminar_un_registro_forzado_devuelve_el_alias_al_retador_ante
     assert cliente.get_model_version(nombre, "3").tags["comprobacion"] == "fallida"
 
 
+def test_error_al_leer_el_retador_anterior_no_mueve_el_alias(ab_registrable, monkeypatch):
+    from mlflow.exceptions import MlflowException
+    from mlflow.protos.databricks_pb2 import TEMPORARILY_UNAVAILABLE
+
+    cliente, cfg = ab_registrable["cliente"], ab_registrable["cfg"]
+    nombre = cfg.modelo_registrado
+    p1_ab.registrar_version_b(*ab_registrable["args"], autor="prueba")
+    original = MlflowClient.get_model_version_by_alias
+
+    def caido(self, name, alias):
+        if alias == cfg.alias_retador:
+            raise MlflowException("simulado: servidor no disponible", TEMPORARILY_UNAVAILABLE)
+        return original(self, name, alias)
+
+    with monkeypatch.context() as parche:
+        parche.setattr(MlflowClient, "get_model_version_by_alias", caido)
+        with pytest.raises(ValueError, match="alias sin verificar: simulado"):
+            p1_ab.registrar_version_b(*ab_registrable["args"], autor="prueba", forzar=True)
+
+    # no se sabía si había retador: el alias no se movió y v2 no quedó como reemplazada
+    assert _aliases(cliente, cfg) == {"champion": 1, "challenger": 2}
+    assert "reemplazada_por" not in cliente.get_model_version(nombre, "2").tags
+    v3 = cliente.get_model_version(nombre, "3")
+    assert v3.tags["comprobacion"] == "fallida"
+    assert cliente.get_run(v3.run_id).data.tags["registro"] == "fallido"
+
+
+@pytest.mark.parametrize("con_retador_previo", [False, True])
+def test_alias_aplicado_con_respuesta_perdida_se_revierte(
+    ab_registrable, monkeypatch, con_retador_previo
+):
+    cliente, cfg = ab_registrable["cliente"], ab_registrable["cfg"]
+    nombre = cfg.modelo_registrado
+    if con_retador_previo:
+        p1_ab.registrar_version_b(*ab_registrable["args"], autor="prueba")
+    nueva = "3" if con_retador_previo else "2"
+    original = MlflowClient.set_registered_model_alias
+    llamadas = []
+
+    def aplica_y_falla(self, name, alias, version):
+        resultado = original(self, name, alias, version)
+        llamadas.append((alias, str(version)))
+        if llamadas == [(cfg.alias_retador, nueva)]:  # solo la primera: el servidor sí lo aplicó
+            raise RuntimeError("simulado: se perdió la respuesta del servidor")
+        return resultado
+
+    monkeypatch.setattr(MlflowClient, "set_registered_model_alias", aplica_y_falla)
+    with pytest.raises(ValueError, match="queda sin alias: simulado"):
+        p1_ab.registrar_version_b(
+            *ab_registrable["args"], autor="prueba", forzar=con_retador_previo
+        )
+
+    esperado = {"champion": 1, "challenger": 2} if con_retador_previo else {"champion": 1}
+    assert _aliases(cliente, cfg) == esperado
+    assert cliente.get_model_version(nombre, nueva).tags["comprobacion"] == "fallida"
+    if con_retador_previo:
+        assert "reemplazada_por" not in cliente.get_model_version(nombre, "2").tags
+
+
 def test_mes_dentro_de_la_ventana_de_a_es_error(archivos, tmp_path):
     with pytest.raises(ValueError, match="ventana de entrenamiento de A"):
         p1_ab.ejecutar(*archivos, "2026-04-01", "2026-05-01", tmp_path / "salida")
