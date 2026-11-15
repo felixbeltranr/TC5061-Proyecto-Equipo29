@@ -1,6 +1,7 @@
 """Prueba de humo del analisis de horizontes de P2; todo lo que escribe va a tmp_path."""
 
 import json
+import os
 
 import mlflow
 from mlflow.tracking import MlflowClient
@@ -23,6 +24,8 @@ def test_main_crea_un_run_padre_con_hijos_por_horizonte_sin_registrar_modelos(
     (tmp_path / "resultados.json").write_text(json.dumps({"params_hgb": params}))
     uri = f"sqlite:///{tmp_path / 'mlflow.db'}"
     uri_previa = mlflow.get_tracking_uri()
+    registry_previo = mlflow.get_registry_uri()
+    registry_env_previo = os.environ.get("MLFLOW_REGISTRY_URI")
     try:
         hp.main(
             [
@@ -35,12 +38,17 @@ def test_main_crea_un_run_padre_con_hijos_por_horizonte_sin_registrar_modelos(
                 *("--manifiesto", str(tmp_path / "manifiesto.json")),
             ]
         )
-        cliente = MlflowClient(uri)
+        cliente = MlflowClient(tracking_uri=uri, registry_uri=uri)
         experimento = cliente.get_experiment_by_name(CONFIG_P2.experimento)
         runs = {r.info.run_name: r for r in cliente.search_runs([experimento.experiment_id])}
         modelos = cliente.search_registered_models()
     finally:
         mlflow.set_tracking_uri(uri_previa)
+        if registry_env_previo is None:
+            os.environ.pop("MLFLOW_REGISTRY_URI", None)
+            mlflow.set_registry_uri(None)
+        else:
+            mlflow.set_registry_uri(registry_previo)
     assert set(runs) == {"p2_horizontes_ini50", "p2_h1_ini50", "p2_h2_ini50"}
     padre = runs["p2_horizontes_ini50"].info.run_id
     for h in (1, 2):
