@@ -711,7 +711,9 @@ campeón y se exige que reproduzca sus predicciones, así B solo difiere de A en
 
 La métrica principal es el MAE; también se reportan RMSE, WAPE y sesgo, para todas las estaciones,
 las existentes en el entrenamiento de A y las nuevas. La diferencia B − A lleva un IC del 95 % por
-bootstrap pareado por estación (1,000 réplicas, semilla 29). Regla fijada antes de ver octubre: B
+bootstrap pareado por estación (1,000 réplicas, semilla 29). Regla, la misma que se aplicó al
+ensayo de septiembre antes de descargar octubre (consta en los registros locales de las corridas,
+no en un commit previo): B
 cumple si el IC de todas queda completo bajo 0, en ningún grupo queda completo arriba de 0 y sus
 predicciones son finitas y no negativas. Cumplir la regla permite proponer B; no la promueve.
 
@@ -736,9 +738,11 @@ Resultados de octubre de 2026, con A y B cargadas del Registry (14,508 filas de 
 MAE 7.886 con A y 7.756 con B, diferencia −0.130 (IC [−0.275, −0.024]); en las 369 existentes
 −0.168 (IC [−0.362, −0.038]) y en las 99 nuevas +0.012 (IC [−0.016, +0.040]), no concluyente.
 B cumple la regla y quedó como versión 2 `challenger` en un Registry local que parte del almacén
-de la Entrega 2 (el que siembra la API); `champion` sigue en la versión 1. La propuesta queda pendiente
-de confirmar con noviembre de 2026: una B entrenada hasta el 30 de octubre, con el mismo embargo y
-la misma regla. El MAE de mayo a septiembre (6.28) es una referencia histórica, no una prueba
+de la Entrega 2 (el que siembra la API). Decisión: `champion` sigue en la versión 1 y la versión 2
+queda como candidata; se promueve solo si en noviembre de 2026 esa misma versión, sin reentrenar,
+vuelve a cumplir la regla contra A. La mejora es pequeña (1.6 %) y cinco estaciones explican 83 %;
+con bootstrap por día el IC toca el cero con 1,000 réplicas ([−0.226, +0.0002]) y queda bajo cero
+con 10,000. El MAE de mayo a septiembre (6.28) es una referencia histórica, no una prueba
 intacta: la política de dominio se agregó después de ver ese periodo.
 
 ### P1: calidad de datos y drift calibrado (octubre de 2026)
@@ -760,7 +764,8 @@ identificador, conciliación de salidas con viajes válidos y volumen diario) y 
 estación-día (llave única, todos los días del mes, calendario y rezagos y medias recalculados con
 salidas de D−29 a D−2). Con `--estricto` termina con código 1 si falla una prueba crítica.
 
-En octubre de 2026 (14,508 filas de 468 estaciones) dio 84 pruebas aprobadas, 0 fallidas y 15
+En octubre de 2026 (14,508 filas de 468 estaciones) Evidently dio 49 pruebas aprobadas y 13
+advertencias, y la integridad propia 35 y 2; en total 84 aprobadas, 0 fallidas y 15
 advertencias, cada una explicada en el resumen. Cinco vienen de que `festivo` y `festivo_lag7` son
 constantes, porque el mes no tiene festivos. Nueve son valores arriba del máximo de la referencia:
 una fila del objetivo y una de cada rezago, todas de la estación 51 (657 salidas contra 561, debajo
