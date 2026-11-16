@@ -552,8 +552,7 @@ referencia con las del mes actual usando Evidently (`evidently==0.7.23`, fijado 
 `requirements.txt`). Genera un diagnóstico de calidad y drift, más un manifiesto con periodos,
 tamaños, nulos, versiones y SHA-256 de las entradas. No entrena ni compara modelos, no promueve
 versiones y no toma decisiones automáticas de reentrenamiento. Están implementados los adaptadores
-de P1, P2 y P3, los tres con A/B testing (ver abajo). La guía conserva el diseño, los periodos
-de los tres problemas y los detalles de la ejecución: [docs/monitoring/guia.md](docs/monitoring/guia.md).
+de P1, P2 y P3, los tres con A/B testing (ver abajo).
 
 ### Base y estructura de código
 
@@ -669,8 +668,7 @@ representan una corrida para meses posteriores.
 El cambio de distribución es una señal descriptiva, no evidencia de degradación ni una decisión
 automática de reentrenar. La comparación cubre más de un año de referencia frente a un solo mes y
 contiene observaciones repetidas por estación; cualquier decisión requiere revisar las
-distribuciones y evaluar desempeño predictivo sobre filas etiquetadas comparables. Los cortes,
-limitaciones y resultados completos se conservan en [docs/monitoring/guia.md](docs/monitoring/guia.md).
+distribuciones y evaluar desempeño predictivo sobre filas etiquetadas comparables.
 
 ### P2: drift y A/B testing (octubre de 2026)
 
@@ -1169,9 +1167,6 @@ Seguimos GitHub Flow:
 │   ├── interim        <- Paneles intermedios (p. ej. p1_panel_diario.parquet)
 │   ├── processed      <- combined_dataset.parquet
 │   └── raw            <- CSV originales de MiBici
-├── docs
-│   └── monitoring
-│       └── guia.md    <- Diseño, periodos y evidencia histórica del monitoreo
 ├── models             <- Modelos serializados (fuera de git)
 ├── notebooks          <- Exploración: número-iniciales-descripción.ipynb
 ├── pyproject.toml     <- Metadatos del paquete y configuración de Ruff
