@@ -200,3 +200,6 @@ models/*.pkl
 models/*.joblib
 .model-store/
 .env
+
+# Reportes HTML de Locust (pesan ~1 MB por etapa; los CSV y las figuras sí se versionan)
+reports/carga/*/*.html
