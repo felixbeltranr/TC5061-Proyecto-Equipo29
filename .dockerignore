@@ -11,3 +11,4 @@ mlartifacts
 mlflow.db
 models
 notebooks
+.model-store

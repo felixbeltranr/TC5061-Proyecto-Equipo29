@@ -838,6 +838,30 @@ mlflow ui --backend-store-uri sqlite:///mlflow.db
 
 Usar el mismo nombre de experimento en otro archivo SQLite no junta las corridas: para compararlas deben registrarse en el mismo almacén.
 
+## Despliegue vigente con Docker Compose
+
+> **Instrucciones anteriores desactualizadas:** la sección histórica «Despliegue inicial con MLflow y FastAPI» y las subsecciones de despliegue P1/P2/P3 que siguen conservan contexto y ejemplos de la API. Sus pasos de inicialización del Registry y de arranque ya no corresponden al Compose vigente; para desplegar, sigue esta sección.
+
+Compose inicia `registry-init`, MLflow y la API en el orden requerido. El inicializador valida una copia local del almacén de modelos y prepara los volúmenes persistentes de MLflow. La API inicia después de que MLflow esté saludable y comprueba su disponibilidad mediante `/ready`.
+
+### Requisito: almacén MLflow completo
+
+Antes del primer arranque, coloca en `.model-store\` una copia que contenga `mlflow.db` y `mlartifacts\`. Debe incluir los campeones `champion` de P1, P2 y P3, con versiones `READY` y artefactos accesibles mediante `mlflow-artifacts:/`. Además, el campeón P1 debe coincidir con `scripts/p1/campeon_api_p1.json`, incluido el SHA256 del modelo. El almacén se distribuye fuera del repositorio; no se incluye en Git ni en la imagen Docker.
+
+La ruta predeterminada es `./.model-store`. Para usar otra, define `MODEL_STORE_PATH` en el entorno de Compose antes de ejecutar el comando. Si la copia no cumple los requisitos, `registry-init` falla explícitamente y MLflow/API no continúan con un Registry incompleto.
+
+### Iniciar y comprobar
+
+Desde la raíz del repositorio, levanta el sistema con un solo comando:
+
+```powershell
+docker compose up --build -d
+```
+
+Revisa el estado con `docker compose ps`. Comprueba la API en `http://localhost:8000/live`, `http://localhost:8000/ready` y `http://localhost:8000/docs`; la interfaz de MLflow está en `http://localhost:5000` y solo se publica en la interfaz local.
+
+Si un servicio no queda listo, revisa `docker compose logs registry-init mlflow api`. Para detener los servicios sin borrar los datos persistentes, usa `docker compose down`; `docker compose down -v` también elimina los volúmenes del Registry.
+
 ## Despliegue inicial con MLflow y FastAPI
 
 Esta configuración inicial prepara una sola imagen Docker, reutilizada por dos servicios: MLflow y la API FastAPI. MLflow guarda su base de datos y artefactos en volúmenes persistentes; la API obtiene el modelo del Registry usando variables de entorno. La estructura de la API integra P1, P2 y P3, y cada modelo se carga por separado.
