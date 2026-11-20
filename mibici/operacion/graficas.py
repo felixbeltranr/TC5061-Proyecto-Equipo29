@@ -145,14 +145,20 @@ def _marcar_etapas(eje, cortes: list, alto: bool = True) -> None:
             )
 
 
+def tasa_error(datos: pd.DataFrame) -> pd.Series:
+    """Fallas por segundo entre peticiones por segundo, en porcentaje (vacío si no hubo RPS)."""
+    if datos.empty or "Failures/s" not in datos or "Requests/s" not in datos:
+        return pd.Series(dtype=float, index=datos.index)
+    rps = datos["Requests/s"].where(datos["Requests/s"] > 0)
+    return datos["Failures/s"].fillna(0) / rps * 100
+
+
 def grafica_desempeno(historiales: list[tuple[int, pd.DataFrame]], salida: Path) -> Path:
-    """RPS y latencia (p50, p95, p99) a lo largo de todas las etapas, en paneles separados."""
+    """RPS, latencia (p50, p95, p99) y tasa de error a lo largo de las etapas, un panel cada uno."""
     _estilo()
     datos, cortes = serie_continua(historiales)
-    con_fallas = not datos.empty and datos["Failures/s"].fillna(0).sum() > 0
-    filas = 3 if con_fallas else 2
-    figura, ejes = plt.subplots(filas, 1, figsize=(7.2, 2.2 * filas), sharex=True)
-    eje_rps, eje_lat = ejes[0], ejes[1]
+    figura, ejes = plt.subplots(3, 1, figsize=(7.2, 6.6), sharex=True)
+    eje_rps, eje_lat, eje_err = ejes
 
     _por_etapa(eje_rps, datos, "Requests/s", AZUL)
     eje_rps.set_title("Peticiones por segundo")
@@ -174,14 +180,28 @@ def grafica_desempeno(historiales: list[tuple[int, pd.DataFrame]], salida: Path)
     _etiquetas_sin_choque(eje_lat, finales)
     _marcar_etapas(eje_lat, cortes, alto=False)
 
-    if con_fallas:
-        eje_f = ejes[2]
-        _por_etapa(eje_f, datos, "Failures/s", NARANJA)
-        eje_f.set_title("Fallas por segundo")
-        eje_f.set_ylabel("fallas/s")
-        eje_f.set_ylim(bottom=0)
-        _marcar_etapas(eje_f, cortes, alto=False)
-    ejes[-1].set_xlabel("segundos desde el inicio de la prueba")
+    errores = datos.assign(tasa_error=tasa_error(datos))
+    sin_fallas = "Failures/s" not in datos or datos["Failures/s"].fillna(0).sum() == 0
+    if not errores.empty:
+        _por_etapa(eje_err, errores, "tasa_error", NARANJA)
+    eje_err.set_title("Tasa de error")
+    eje_err.set_ylabel("% de peticiones")
+    if sin_fallas:
+        # Sin fallas la línea queda pegada al cero: se fija una escala y se anota el resultado.
+        eje_err.set_ylim(0, 1)
+        eje_err.annotate(
+            "0.00 % de errores en todas las etapas",
+            xy=(0.5, 0.5),
+            xycoords="axes fraction",
+            ha="center",
+            va="center",
+            fontsize=9,
+            color=TEXTO_SECUNDARIO,
+        )
+    else:
+        eje_err.set_ylim(bottom=0)
+    _marcar_etapas(eje_err, cortes, alto=False)
+    eje_err.set_xlabel("segundos desde el inicio de la prueba")
     figura.tight_layout()
     return _guardar(figura, salida)
 

@@ -30,11 +30,41 @@ def _no_vacio(ruta):
     return ruta.exists() and ruta.stat().st_size > 1000
 
 
-def test_desempeno_con_y_sin_fallas(tmp_path):
+def _capturar_figura(monkeypatch):
+    """Guarda los títulos y textos de cada panel antes de que la figura se cierre."""
+    paneles = []
+    original = graficas._guardar
+
+    def guardar(figura, salida):
+        paneles.clear()
+        for eje in figura.axes:
+            # Los títulos van a la izquierda (axes.titlelocation).
+            paneles.append((eje.get_title(loc="left"), [t.get_text() for t in eje.texts]))
+        return original(figura, salida)
+
+    monkeypatch.setattr(graficas, "_guardar", guardar)
+    return paneles
+
+
+def test_desempeno_con_y_sin_fallas(tmp_path, monkeypatch):
+    paneles = _capturar_figura(monkeypatch)
     historiales = [(10, _historial(10)), (50, _historial(50))]
     assert _no_vacio(graficas.grafica_desempeno(historiales, tmp_path / "a.png"))
+    # El panel de errores aparece aunque no haya fallas, con la anotación del 0 %.
+    titulos = [titulo for titulo, _ in paneles]
+    assert titulos == ["Peticiones por segundo", "Latencia por percentil", "Tasa de error"]
+    assert "0.00 % de errores en todas las etapas" in paneles[2][1]
     historiales.append((100, _historial(100, fallas=1.0)))
     assert _no_vacio(graficas.grafica_desempeno(historiales, tmp_path / "b.png"))
+    assert len(paneles) == 3 and paneles[2][0] == "Tasa de error"
+    assert "0.00 % de errores en todas las etapas" not in paneles[2][1]
+
+
+def test_tasa_de_error_en_porcentaje():
+    datos = pd.DataFrame({"Requests/s": [0.0, 50.0, 80.0], "Failures/s": [0.0, 1.0, None]})
+    tasa = graficas.tasa_error(datos)
+    assert pd.isna(tasa.iloc[0])
+    assert tasa.iloc[1] == 2.0 and tasa.iloc[2] == 0.0
 
 
 def test_serie_continua_quita_ceros_sin_peticiones():

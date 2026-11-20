@@ -114,3 +114,16 @@ def test_capacidad_sostenida_respeta_objetivos():
     assert carga.capacidad_sostenida(etapas)["usuarios"] == 50
     assert carga.capacidad_sostenida(etapas, p95_max_ms=1000)["usuarios"] == 100
     assert carga.capacidad_sostenida(etapas, p95_max_ms=10) is None
+
+
+def test_saturacion_es_la_etapa_con_mas_rps():
+    etapas = [
+        {"usuarios": 10, "rps_sostenido": 7.8, "p95_ms": 120},
+        {"usuarios": 40, "rps_sostenido": 22.0, "p95_ms": 1300},
+        {"usuarios": 60, "rps_sostenido": 22.6, "p95_ms": 2300},
+        {"usuarios": 80, "rps_sostenido": math.nan, "p95_ms": 3000},
+    ]
+    # Aunque no cumpla el objetivo de latencia, es la saturación observada.
+    assert carga.saturacion(etapas)["usuarios"] == 60
+    assert carga.saturacion([]) is None
+    assert carga.saturacion([{"usuarios": 5, "rps_sostenido": math.nan}]) is None

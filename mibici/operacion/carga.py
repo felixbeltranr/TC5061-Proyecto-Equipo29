@@ -133,3 +133,9 @@ def capacidad_sostenida(
         and not math.isnan(r["rps_sostenido"])
     ]
     return max(validas, key=lambda r: r["rps_sostenido"]) if validas else None
+
+
+def saturacion(resumenes: list[dict]) -> dict | None:
+    """La etapa con mayor RPS sostenido, cumpla o no el objetivo: la saturación observada."""
+    medidas = [r for r in resumenes if not math.isnan(r["rps_sostenido"])]
+    return max(medidas, key=lambda r: r["rps_sostenido"]) if medidas else None

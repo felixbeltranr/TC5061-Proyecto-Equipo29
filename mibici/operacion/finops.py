@@ -5,10 +5,13 @@ inferencia es el costo del cómputo que la sostiene dividido entre las inferenci
 Con lo medido en la prueba de carga (RPS sostenido, latencia, núcleos y memoria del contenedor de
 la API) se calculan:
 
-1. **El piso**: una instancia del tamaño recomendado trabajando a su capacidad sostenida.
+1. **El piso**: una instancia del tamaño recomendado trabajando a su capacidad sostenida, que es
+   la medida (el RPS de inferencias de la etapa que cumple el objetivo de latencia), no una
+   extrapolación del RPS por núcleo.
 2. **La demanda real de MiBici**: P1 una vez al día por estación, P2 cada hora de 6 a 23 h por
    estación y P3 una vez al mes; con la instancia siempre encendida, con horario, en ARM y sin
-   servidor (Cloud Run, que cobra el tiempo activo de cada petición).
+   servidor (Cloud Run, que cobra el tiempo activo de cada petición con la latencia medida de
+   cada pregunta).
 
 La diferencia entre ambos es el costo de la capacidad ociosa, y de ahí salen las optimizaciones.
 Todas las cifras están en dólares de EE. UU. Las tarifas son de lista, sin impuestos, sin
@@ -23,6 +26,7 @@ import math
 HORAS_MES = 730.0
 DIAS_MES = 30.4
 CONSULTA = "2026-11-19"
+PREGUNTAS = ("p1", "p2", "p3")
 
 
 @dataclass(frozen=True)
@@ -153,6 +157,29 @@ def _escenario(clave: str, nombre: str, tarifa: Tarifa, vcpu: float, gb: float, 
     return fila
 
 
+def latencias_por_pregunta(capacidad: dict) -> dict[str, float]:
+    """Latencia promedio en ms de P1, P2 y P3 en la etapa, de sus endpoints (``"P1 …"``).
+
+    A la pregunta sin datos se le asigna la latencia promedio de todas las inferencias o, si
+    también falta, la del agregado.
+    """
+    respaldo = _medida(capacidad.get("promedio_inferencia_ms"), capacidad.get("promedio_ms"))
+    endpoints = capacidad.get("endpoints") or []
+    latencias = {}
+    for clave in PREGUNTAS:
+        propias = [
+            e
+            for e in endpoints
+            if str(e.get("endpoint", "")).startswith(f"{clave.upper()} ")
+            and e.get("peticiones")
+            and _es_numero(e.get("promedio_ms"))
+        ]
+        peso = sum(e["peticiones"] for e in propias)
+        suma = sum(e["promedio_ms"] * e["peticiones"] for e in propias)
+        latencias[clave] = suma / peso if peso else respaldo
+    return latencias
+
+
 def analizar(
     capacidad: dict,
     recursos_api: dict,
@@ -160,32 +187,36 @@ def analizar(
     recursos_mlflow: dict | None = None,
     demanda: Demanda | None = None,
     margen: float = 0.3,
-    utilizacion_objetivo: float = 0.7,
     horas_con_horario: float = 19.0,
     vcpu_max: float = 1.0,
-    horas_mlflow_mes: float = 4.0,
+    vcpu_medidos: float = 1.0,
+    saturacion: dict | None = None,
 ) -> dict:
     """Escenarios de costo y optimizaciones a partir de la prueba de carga.
 
     ``capacidad`` es el resumen de la etapa con más RPS que cumplió el objetivo (de
-    ``carga.capacidad_sostenida``), con ``recursos_api`` de esa misma etapa. ``lotes`` trae la
-    latencia medida de peticiones con todas las estaciones (``p2_ms``, ``p3_ms``).
-    ``vcpu_max`` son los núcleos que la API puede aprovechar: un proceso de uvicorn usa uno.
-    ``horas_mlflow_mes`` son las horas al mes que estaría encendido MLflow si sólo se enciende
-    al desplegar (una hora por semana por omisión).
+    ``carga.capacidad_sostenida``), con ``recursos_api`` de esa misma etapa; ``saturacion``, el
+    de la etapa con más RPS (``carga.saturacion``). ``lotes`` trae la latencia medida de
+    peticiones con todas las estaciones (``p2_ms``, ``p3_ms``). ``vcpu_max`` son los núcleos que
+    la API puede aprovechar (un proceso de uvicorn usa uno) y ``vcpu_medidos``, el límite de CPU
+    del contenedor de la API durante la prueba. La capacidad de la instancia recomendada es la
+    medida; sólo se escala linealmente si sus núcleos útiles difieren de los medidos.
     """
     demanda = demanda or Demanda()
     lotes = lotes or {}
+    saturacion = saturacion or {}
     rps_total = float(capacidad["rps_sostenido"])
     # Las sondas GET /live no son inferencias: se usa sólo el tráfico de los modelos.
     rps = _medida(capacidad.get("rps_inferencias"), rps_total)
     latencia_ms = _medida(capacidad.get("promedio_inferencia_ms"), capacidad.get("promedio_ms"))
+    latencias = latencias_por_pregunta(capacidad)
     cpu_promedio = float(recursos_api["cpu_nucleos_promedio"])
     rps_por_nucleo = rps / cpu_promedio if cpu_promedio > 0 else math.nan
     vcpu, gb = dimensionar(
         recursos_api["cpu_nucleos_p95"], recursos_api["memoria_mib_max"], margen, vcpu_max
     )
-    capacidad_rps = rps_por_nucleo * min(vcpu, vcpu_max) * utilizacion_objetivo
+    nucleos_utiles = min(vcpu, vcpu_max)
+    capacidad_rps = rps * nucleos_utiles / vcpu_medidos if vcpu_medidos > 0 else math.nan
     x86, arm = TARIFAS["fargate_x86"], TARIFAS["fargate_arm"]
     run = TARIFAS["cloud_run_peticion"]
     inferencias = demanda.inferencias()
@@ -235,12 +266,14 @@ def analizar(
         ),
     ]
 
-    latencia_s = latencia_ms / 1000
-    if not math.isnan(latencia_s):
-        p2_lote_s = float(lotes.get("p2_ms", math.nan)) / 1000
-        p3_lote_s = float(lotes.get("p3_ms", math.nan)) / 1000
-        costo_simple = usd_por_peticion(run, vcpu, gb, latencia_s)
-        usd_sin_lote = sin_lote["total"] * costo_simple
+    if _es_numero(*latencias.values()):
+        # Cada pregunta paga su propia latencia, redondeada a la granularidad de la tarifa.
+        costo = {
+            clave: usd_por_peticion(run, vcpu, gb, latencias[clave] / 1000) for clave in PREGUNTAS
+        }
+        p2_lote_s = _medida(lotes.get("p2_ms"), math.nan) / 1000
+        p3_lote_s = _medida(lotes.get("p3_ms"), math.nan) / 1000
+        usd_sin_lote = sum(sin_lote[clave] * costo[clave] for clave in PREGUNTAS)
         escenarios.append(
             _escenario(
                 "cloud_run",
@@ -257,7 +290,7 @@ def analizar(
         if not math.isnan(p2_lote_s):
             p3_s = p3_lote_s if not math.isnan(p3_lote_s) else p2_lote_s
             usd_con_lote = (
-                con_lote["p1"] * costo_simple
+                con_lote["p1"] * costo["p1"]
                 + con_lote["p2"] * usd_por_peticion(run, vcpu, gb, p2_lote_s)
                 + con_lote["p3"] * usd_por_peticion(run, vcpu, gb, p3_s)
             )
@@ -282,7 +315,7 @@ def analizar(
         escenarios.append(
             _escenario(
                 "mlflow",
-                "Servidor de MLflow encendido 24 x 7 (sólo se usa al desplegar)",
+                "Servidor de MLflow encendido 24 x 7 (la API carga los modelos al arrancar)",
                 x86,
                 vcpu_m,
                 gb_m,
@@ -300,11 +333,10 @@ def analizar(
             "peticiones_mes_con_lote": con_lote,
             "peticiones_mes_sin_lote": sin_lote,
             "margen": margen,
-            "utilizacion_objetivo": utilizacion_objetivo,
             "horas_mes": HORAS_MES,
             "horas_con_horario": horas_con_horario,
             "vcpu_max": vcpu_max,
-            "horas_mlflow_mes": horas_mlflow_mes,
+            "vcpu_medidos": vcpu_medidos,
         },
         "medido": {
             "usuarios": capacidad.get("usuarios"),
@@ -312,14 +344,24 @@ def analizar(
             "rps_inferencias": rps,
             "latencia_promedio_ms": capacidad.get("promedio_ms"),
             "latencia_inferencia_ms": latencia_ms,
+            "latencias_pregunta_ms": latencias,
             "p95_ms": capacidad.get("p95_ms"),
             "cpu_nucleos_promedio": cpu_promedio,
             "cpu_nucleos_p95": recursos_api["cpu_nucleos_p95"],
             "memoria_mib_max": recursos_api["memoria_mib_max"],
-            "rps_por_nucleo": rps_por_nucleo,
+            "rps_por_nucleo": rps_por_nucleo,  # sólo como dato: la capacidad no se extrapola
+            "rps_saturacion": saturacion.get("rps_sostenido"),
+            "rps_inferencias_saturacion": saturacion.get("rps_inferencias"),
+            "usuarios_saturacion": saturacion.get("usuarios"),
+            "p95_saturacion_ms": saturacion.get("p95_ms"),
             "lotes": lotes,
         },
-        "dimension_recomendada": {"vcpu": vcpu, "gb": gb, "capacidad_rps": capacidad_rps},
+        "dimension_recomendada": {
+            "vcpu": vcpu,
+            "gb": gb,
+            "capacidad_rps": capacidad_rps,
+            "nucleos_utiles": nucleos_utiles,
+        },
         "utilizacion_mibici": inferencias["total"] / (capacidad_rps * 3600 * HORAS_MES)
         if capacidad_rps > 0
         else math.nan,
@@ -367,8 +409,8 @@ def optimizaciones(resultado: dict) -> list[str]:
     if _es_numero(uso, capacidad_rps):
         frases.append(
             f"La demanda de MiBici ({_numero(supuestos['inferencias_mes']['total'])} inferencias "
-            f"al mes) ocupa el {uso:.3%} de la capacidad estimada de la instancia "
-            f"({capacidad_rps:.0f} RPS al {supuestos['utilizacion_objetivo']:.0%} de uso): de los "
+            f"al mes) ocupa el {uso:.3%} de la capacidad sostenida medida de la instancia "
+            f"({capacidad_rps:.1f} RPS de inferencias): de los "
             f"{_usd(usd_base)} USD al mes de tenerla siempre encendida, {_usd(usd_base * (1 - uso))}"
             f" pagan tiempo ocioso ({1 - uso:.1%}). Conviene escalar a cero o facturar por petición."
         )
@@ -386,8 +428,8 @@ def optimizaciones(resultado: dict) -> list[str]:
     if arm is not None and _es_numero(arm["usd_mes"], ahorro(base, arm)):
         frases.append(
             f"Con el mismo tamaño en ARM (Graviton) la instancia cuesta {_usd(arm['usd_mes'])} USD"
-            f" al mes en vez de {_usd(usd_base)}, un ahorro del {ahorro(base, arm):.1%}; sólo "
-            "requiere construir la imagen también para linux/arm64."
+            f" al mes en vez de {_usd(usd_base)}, un ahorro del {ahorro(base, arm):.1%}; requiere "
+            "validar la construcción de la imagen y el rendimiento de la API en linux/arm64."
         )
 
     run = filas.get("cloud_run")
@@ -395,8 +437,9 @@ def optimizaciones(resultado: dict) -> list[str]:
         sin_lote = supuestos["peticiones_mes_sin_lote"]["total"]
         frase = (
             f"Cloud Run con facturación por petición, una estación por petición "
-            f"({_numero(sin_lote)} peticiones al mes), cuesta {_usd(run['usd_mes'])} USD al mes,"
-            f" un ahorro del {ahorro(base, run):.1%} frente a {_usd(usd_base)} USD"
+            f"({_numero(sin_lote)} peticiones al mes, cada pregunta con su latencia medida), "
+            f"cuesta {_usd(run['usd_mes'])} USD al mes, un ahorro del {ahorro(base, run):.1%} "
+            f"frente a {_usd(usd_base)} USD"
         )
         lote = filas.get("cloud_run_lote")
         if lote is not None and _es_numero(lote["usd_mes"], ahorro(base, lote)):
@@ -406,19 +449,23 @@ def optimizaciones(resultado: dict) -> list[str]:
                 f"{_numero(sin_lote)}), baja a {_usd(lote['usd_mes'])} USD al mes, un ahorro del "
                 f"{ahorro(base, lote):.1%}"
             )
-        frases.append(frase + ". Ambos sin contar el nivel gratuito.")
+        frases.append(
+            frase + ". Ambos sin contar el nivel gratuito. Al escalar a cero, la primera petición "
+            "paga además el arranque del contenedor y la carga de los modelos desde el Registry, "
+            "que esta prueba no mide, y la facturación por petición también cobra el tiempo de "
+            "arranque y apagado de la instancia."
+        )
 
     mlflow = filas.get("mlflow")
-    horas_mlflow = supuestos.get("horas_mlflow_mes", math.nan)
-    if mlflow is not None and _es_numero(mlflow["usd_mes"], mlflow["usd_hora"], horas_mlflow):
-        al_desplegar = {"usd_mes": mlflow["usd_hora"] * horas_mlflow}
-        if _es_numero(ahorro(mlflow, al_desplegar)):
-            frases.append(
-                f"El servidor de MLflow encendido 24 x 7 cuesta {_usd(mlflow['usd_mes'])} USD al "
-                f"mes aunque sólo se consulta al desplegar; encenderlo sólo {horas_mlflow:g} h al "
-                f"mes para los despliegues cuesta {_usd(al_desplegar['usd_mes'])} USD, un ahorro "
-                f"del {ahorro(mlflow, al_desplegar):.1%}."
-            )
+    if mlflow is not None and _es_numero(mlflow["usd_mes"]):
+        frases.append(
+            f"El servidor de MLflow ({mlflow['vcpu']:g} vCPU y {mlflow['gb']:g} GB) encendido "
+            f"24 x 7 cuesta {_usd(mlflow['usd_mes'])} USD al mes. Hoy no se puede apagar: la API "
+            "resuelve el alias y carga los modelos del Registry cada vez que arranca, así que lo "
+            "necesita al escalar o reiniciarse. Para ahorrarlo habría que empaquetar el modelo "
+            "campeón en la imagen al desplegar o servir los artefactos desde almacenamiento de "
+            f"objetos; esos {_usd(mlflow['usd_mes'])} USD al mes son el ahorro máximo posible."
+        )
     return frases
 
 
@@ -451,14 +498,34 @@ def a_markdown(resultado: dict) -> str:
             f"| {_usd(fila['usd_por_1000'], 4)} |"
         )
     encabezado = (
-        f"Medido: {rps_inferencias:.1f} RPS de inferencias sostenidos con {medido['usuarios']} "
-        f"usuarios ({medido['rps_sostenido']:.1f} RPS en total con las sondas GET /live), "
-        f"p95 de {medido['p95_ms']:.0f} ms, {medido['cpu_nucleos_promedio']:.2f} núcleos en "
-        f"promedio ({medido['cpu_nucleos_p95']:.2f} en p95) y {medido['memoria_mib_max']:.0f} MiB "
-        f"de memoria máxima. Tamaño recomendado: {dimension['vcpu']:g} vCPU y "
-        f"{dimension['gb']:g} GB, con capacidad estimada de {dimension['capacidad_rps']:.0f} RPS "
-        f"al {resultado['supuestos']['utilizacion_objetivo']:.0%} de uso. La demanda de MiBici "
-        f"ocuparía el {resultado['utilizacion_mibici']:.3%} de esa capacidad."
+        f"Medido: capacidad sostenida de {rps_inferencias:.1f} RPS de inferencias "
+        f"({medido['rps_sostenido']:.1f} RPS en total con las sondas GET /live) con "
+        f"{medido['usuarios']} usuarios, p95 de {medido['p95_ms']:,.0f} ms, "
+        f"{medido['cpu_nucleos_promedio']:.2f} núcleos en promedio "
+        f"({medido['cpu_nucleos_p95']:.2f} en p95) y {medido['memoria_mib_max']:.0f} MiB de "
+        "memoria máxima."
+    )
+    if _es_numero(medido.get("rps_saturacion"), medido.get("usuarios_saturacion")):
+        inferencias_sat = medido.get("rps_inferencias_saturacion")
+        detalle = f" ({inferencias_sat:.1f} de inferencias)" if _es_numero(inferencias_sat) else ""
+        p95_sat = medido.get("p95_saturacion_ms")
+        encabezado += (
+            f" Saturación observada: {medido['rps_saturacion']:.1f} RPS{detalle} con "
+            f"{medido['usuarios_saturacion']} usuarios"
+            + (f" y p95 de {p95_sat:,.0f} ms." if _es_numero(p95_sat) else ".")
+        )
+    supuestos = resultado["supuestos"]
+    nucleos_utiles = dimension.get("nucleos_utiles", dimension["vcpu"])
+    vcpu_medidos = supuestos.get("vcpu_medidos", nucleos_utiles)
+    escala = (
+        f", escalada linealmente de {vcpu_medidos:g} a {nucleos_utiles:g} núcleos"
+        if abs(nucleos_utiles - vcpu_medidos) > 1e-9
+        else ""
+    )
+    encabezado += (
+        f" Tamaño recomendado: {dimension['vcpu']:g} vCPU y {dimension['gb']:g} GB, con esa "
+        f"capacidad medida de {dimension['capacidad_rps']:.1f} RPS de inferencias{escala}. "
+        f"La demanda de MiBici ocuparía el {resultado['utilizacion_mibici']:.3%} de esa capacidad."
     )
     frases = resultado.get("optimizaciones")
     if frases is None:
