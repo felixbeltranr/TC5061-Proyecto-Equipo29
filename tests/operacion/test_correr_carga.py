@@ -202,7 +202,7 @@ def test_opcion_vcpu_medidos(orquestador):
 
 def test_etapas_y_duracion_por_omision(orquestador):
     args = orquestador.argumentos([])
-    assert args.etapas == "10,20,30,40,60"
+    assert args.etapas == "10,15,20,30,50"
     assert args.duracion == 90
 
 

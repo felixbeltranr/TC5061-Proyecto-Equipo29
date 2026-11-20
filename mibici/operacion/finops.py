@@ -309,9 +309,12 @@ def analizar(
             )
 
     if recursos_mlflow:
-        vcpu_m, gb_m = dimensionar(
-            recursos_mlflow["cpu_nucleos_p95"], recursos_mlflow["memoria_mib_max"], margen
+        # MLflow está ocioso durante la carga: su p95 de CPU sólo refleja el proceso de Python
+        # que lanza el healthcheck cada 10 s, así que se dimensiona con el promedio.
+        cpu_mlflow = recursos_mlflow.get(
+            "cpu_nucleos_promedio", recursos_mlflow["cpu_nucleos_p95"]
         )
+        vcpu_m, gb_m = dimensionar(cpu_mlflow, recursos_mlflow["memoria_mib_max"], margen)
         escenarios.append(
             _escenario(
                 "mlflow",

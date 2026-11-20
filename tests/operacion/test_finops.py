@@ -102,6 +102,14 @@ def test_mlflow_aparte(resultado):
     assert math.isnan(fila["usd_por_1000"])
 
 
+def test_mlflow_se_dimensiona_con_su_cpu_promedio():
+    # El p95 de 0.39 núcleos son los picos del healthcheck; el servidor está ocioso.
+    mlflow = {"cpu_nucleos_promedio": 0.05, "cpu_nucleos_p95": 0.39, "memoria_mib_max": 412.0}
+    resultado = finops.analizar(CAPACIDAD, API, recursos_mlflow=mlflow)
+    fila = _fila(resultado, "Servidor de MLflow")
+    assert (fila["vcpu"], fila["gb"]) == (0.25, 1.0)
+
+
 def test_sin_lotes_no_hay_escenario_en_lote():
     resultado = finops.analizar(CAPACIDAD, API)
     nombres = [f["escenario"] for f in resultado["escenarios"]]

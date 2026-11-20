@@ -4,7 +4,7 @@ Con el sistema levantado (``docker compose up -d --wait``), desde la raíz del r
 
     python scripts/carga/correr_carga.py
 
-Por omisión corre cinco etapas de 90 segundos (10, 20, 30, 40 y 60 usuarios) y mientras tanto
+Por omisión corre cinco etapas de 90 segundos (10, 15, 20, 30 y 50 usuarios) y mientras tanto
 toma ``docker stats`` de los contenedores ``api`` y ``mlflow`` cada 2 segundos. Al final mide la
 latencia de una petición con todas las estaciones (P2 y P3 aceptan listas), y escribe en
 ``reports/carga/<fecha>/``:
@@ -55,7 +55,7 @@ def argumentos(argv: list[str] | None = None) -> argparse.Namespace:
         default="http://127.0.0.1:8000",
         help="con localhost, en Windows cada conexión nueva de Python tarda unos 2 s (IPv6)",
     )
-    p.add_argument("--etapas", default="10,20,30,40,60", help="usuarios de cada etapa")
+    p.add_argument("--etapas", default="10,15,20,30,50", help="usuarios de cada etapa")
     p.add_argument("--duracion", type=int, default=90, help="segundos por etapa")
     p.add_argument("--tasa", type=float, default=20.0, help="usuarios nuevos por segundo")
     p.add_argument("--salida", type=Path, default=None)
