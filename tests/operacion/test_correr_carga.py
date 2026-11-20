@@ -101,6 +101,84 @@ def test_sonda_de_lotes_sigue_si_un_endpoint_falla(orquestador, monkeypatch):
     assert sum("/p3/" in url for url in llamadas) == 3
 
 
+def test_primera_peticion_mide_cada_pregunta_con_modelo(orquestador, monkeypatch):
+    llamadas = []
+
+    def urlopen(peticion, timeout):
+        llamadas.append(peticion.full_url)
+        return _Respuesta()
+
+    monkeypatch.setattr(orquestador.urllib.request, "urlopen", urlopen)
+    primera = orquestador.primera_peticion("http://api", ["p1", "p3"])
+    assert llamadas == ["http://api/api/v1/predict", "http://api/api/v1/p3/predict"]
+    assert primera["p1_ms"] >= 0 and primera["p3_ms"] >= 0
+    assert "p2_ms" not in primera
+    texto = orquestador.texto_primera_peticion({"p1_ms": 120.4, "p2_ms": 2600.0})
+    assert texto.endswith("P1 120 ms, P2 2,600 ms.")
+    assert texto.startswith(
+        "Primera inferencia de cada pregunta después de que /ready responde 200"
+    )
+    assert "no incluye el arranque del contenedor ni la carga de los modelos" in texto
+    assert "en frío" not in texto
+
+
+def test_primera_peticion_guarda_el_error_y_sigue(orquestador, monkeypatch):
+    def urlopen(peticion, timeout):
+        if peticion.full_url.endswith("/api/v1/predict"):
+            raise urllib.error.URLError("conexión rechazada")
+        return _Respuesta()
+
+    monkeypatch.setattr(orquestador.urllib.request, "urlopen", urlopen)
+    primera = orquestador.primera_peticion("http://api", ["p1", "p2"])
+    assert "conexión rechazada" in primera["p1_error"]
+    assert primera["p2_ms"] >= 0
+    assert orquestador.texto_primera_peticion({"p1_error": "x"}) == ""
+
+
+def test_bloque_del_readme_incluye_la_primera_peticion(orquestador):
+    resumen = {
+        "fecha": "2026-11-19_1800",
+        "commit": "abc1234",
+        "etapas": [],
+        "duracion_s": 60,
+        "endpoints": ["p1"],
+        "p95_objetivo_ms": 500.0,
+        "capacidad": None,
+        "primera_peticion": {"p1_ms": 85.0},
+    }
+    bloque = orquestador.bloque_readme(resumen, "tabla", "reports/carga/x")
+    assert "ni la carga de los modelos): P1 85 ms." in bloque
+    sin = orquestador.bloque_readme({**resumen, "primera_peticion": {}}, "tabla", "reports/carga/x")
+    assert "Primera inferencia" not in sin
+    assert "ninguna etapa cumplió el objetivo." in sin
+    assert "![Latencia por endpoint](reports/carga/x/endpoints.png)" in bloque
+
+
+def test_bloque_del_readme_con_capacidad_y_saturacion(orquestador):
+    resumen = {
+        "fecha": "2026-11-19_1800",
+        "commit": "abc1234",
+        "etapas": [],
+        "duracion_s": 90,
+        "endpoints": ["p1", "p2", "p3"],
+        "p95_objetivo_ms": 500.0,
+        "capacidad": {
+            "usuarios": 20,
+            "rps_sostenido": 15.5,
+            "rps_inferencias": 13.9,
+            "p95_ms": 240.0,
+        },
+        "saturacion": {"usuarios": 60, "rps_sostenido": 22.6, "p95_ms": 2300.0},
+        "primera_peticion": {},
+    }
+    bloque = orquestador.bloque_readme(resumen, "tabla", "reports/carga/x")
+    assert (
+        "Capacidad sostenida con p95 menor a 500 ms: 13.9 RPS de inferencias (15.5 en total "
+        "con GET /live) con 20 usuarios y p95 de 240 ms. Saturación observada: 22.6 RPS con "
+        "60 usuarios y p95 de 2,300 ms."
+    ) in bloque
+
+
 def test_sonda_de_lotes_con_tiempo_agotado(orquestador, monkeypatch):
     def urlopen(peticion, timeout):
         raise TimeoutError("timed out")
@@ -115,6 +193,92 @@ def test_sonda_de_lotes_con_tiempo_agotado(orquestador, monkeypatch):
 def test_opcion_vcpu_max(orquestador):
     assert orquestador.argumentos([]).vcpu_max == 1.0
     assert orquestador.argumentos(["--vcpu-max", "2"]).vcpu_max == 2.0
+
+
+def test_opcion_vcpu_medidos(orquestador):
+    assert orquestador.argumentos([]).vcpu_medidos == 1.0
+    assert orquestador.argumentos(["--vcpu-medidos", "0.5"]).vcpu_medidos == 0.5
+
+
+def test_etapas_y_duracion_por_omision(orquestador):
+    args = orquestador.argumentos([])
+    assert args.etapas == "10,20,30,40,60"
+    assert args.duracion == 90
+
+
+def test_main_guarda_la_saturacion_y_la_pasa_a_finops(orquestador, monkeypatch, tmp_path):
+    def correr_etapa(args, usuarios, salida, endpoints):
+        for sufijo in ("_stats.csv", "_stats_history.csv"):
+            (salida / f"etapa_{usuarios:03d}{sufijo}").write_text("x\n", encoding="utf-8")
+        return 0.0, 1.0
+
+    def resumen_etapa(stats, historial, usuarios, duracion, descartar):
+        return {
+            "usuarios": usuarios,
+            "rps_sostenido": {20: 15.5, 60: 22.6}[usuarios],
+            "rps_inferencias": {20: 13.9, 60: 21.5}[usuarios],
+            "p50_ms": 20.0,
+            "p95_ms": {20: 240.0, 60: 2300.0}[usuarios],
+            "p99_ms": 300.0,
+            "tasa_error": 0.0,
+            "promedio_ms": 60.0,
+            "endpoints": [],
+        }
+
+    api = {"cpu_nucleos_promedio": 0.35, "cpu_nucleos_p95": 0.66, "memoria_mib_max": 245.0}
+    llamadas = {}
+    analizar = orquestador.finops.analizar
+
+    def analizar_espia(*args, **kwargs):
+        llamadas.update(kwargs)
+        return analizar(*args, **kwargs)
+
+    monkeypatch.setattr(orquestador, "endpoints_disponibles", lambda host: ["p1"])
+    monkeypatch.setattr(orquestador, "primera_peticion", lambda host, endpoints: {})
+    monkeypatch.setattr(orquestador, "correr_etapa", correr_etapa)
+    monkeypatch.setattr(orquestador, "sonda_de_lotes", lambda *a: {})
+    monkeypatch.setattr(orquestador, "_commit", lambda: "abc1234")
+    monkeypatch.setattr(orquestador.carga, "leer_stats", lambda ruta: None)
+    monkeypatch.setattr(orquestador.carga, "leer_historial", lambda ruta: {})
+    monkeypatch.setattr(orquestador.carga, "resumen_etapa", resumen_etapa)
+    class Muestreador:
+        muestras, errores = [], []
+
+        def __init__(self, *args):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return False
+
+    monkeypatch.setattr(orquestador.recursos, "Muestreador", Muestreador)
+    monkeypatch.setattr(orquestador.recursos, "en_ventana", lambda *a: [])
+    monkeypatch.setattr(orquestador.recursos, "resumir", lambda muestras: {"api-1": api})
+    monkeypatch.setattr(orquestador.recursos, "guardar_csv", lambda *a: None)
+    for figura in ("grafica_desempeno", "grafica_capacidad", "grafica_endpoints"):
+        monkeypatch.setattr(orquestador.graficas, figura, lambda *a: None)
+    monkeypatch.setattr(orquestador.finops, "analizar", analizar_espia)
+
+    codigo = orquestador.main(
+        [
+            "--contenedores",
+            "api-1",
+            "--etapas",
+            "20,60",
+            "--vcpu-medidos",
+            "0.5",
+            "--salida",
+            str(tmp_path),
+        ]
+    )
+    assert codigo == 0
+    resumen = json.loads((tmp_path / "resumen.json").read_text(encoding="utf-8"))
+    assert resumen["capacidad"]["usuarios"] == 20
+    assert resumen["saturacion"]["usuarios"] == 60
+    assert llamadas["saturacion"]["usuarios"] == 60
+    assert llamadas["vcpu_medidos"] == 0.5
 
 
 def test_sin_csv_de_locust_termina_con_codigo_2(orquestador, monkeypatch, tmp_path, capsys):
