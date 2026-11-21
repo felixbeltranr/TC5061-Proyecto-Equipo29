@@ -885,6 +885,94 @@ El pipeline tiene estos jobs:
 
 Este workflow valida y construye la imagen en GitHub Actions, pero no inicia los servicios, publica la imagen en un registry ni despliega la aplicación. Para ejecutar el sistema localmente, sigue los pasos de Docker Compose de la sección anterior.
 
+## Pruebas de carga y consumo de recursos
+
+La prueba de carga caracteriza el sistema completo bajo concurrencia: cuánto aguanta, dónde satura y cuánto cuesta operarlo. Vive en `scripts/carga/` y no depende del resto del proyecto.
+
+### Qué mide el escenario
+
+`scripts/carga/locustfile.py` simula clientes que mezclan las tres preguntas, con pesos que reflejan un uso realista:
+
+| Tarea | Peso | Inferencias por petición |
+| --- | --- | --- |
+| `P1 predict` | 10 | 1 |
+| `P2 predict x5` | 6 | 5 |
+| `P3 predict x1` | 6 | 1 |
+| `P3 predict x10` | 3 | 10 |
+| `P3 predict x100` | 1 | 100 |
+| `GET /ready` | 1 | 0 |
+
+Los lotes variables de P3 están a propósito: permiten separar el costo fijo de atender una petición del costo marginal de cada inferencia adicional, que es la entrada del análisis FinOps.
+
+Los cuerpos de las peticiones salen de los ejemplos ya versionados (`scripts/p1/campeon_api_p1.json`, `scripts/p2/ejemplo_p2.json` y `scripts/p3/ejemplo_p3.json`), y `scripts/carga/payloads.py` sólo varía lo que no rompe los validadores de `mibici/api/schemas`: en P2 se mantiene `neto_lag1 == llegadas_lag1 - salidas_lag1` y la consistencia de `fin_semana`; en P3 no se tocan las proporciones `dep_*` y `arr_*`, que deben sumar a lo más 1. Así la prueba mide el servicio y no el manejador de errores 422. Las pruebas de `tests/carga/` validan esos cuerpos contra los esquemas reales de Pydantic.
+
+### Preparación
+
+La carga se genera con Locust, que va en un archivo de dependencias aparte porque no hace falta para entrenar ni para servir:
+
+```powershell
+pip install -r requirements-carga.txt
+```
+
+El sistema tiene que estar levantado y `GET /ready` debe responder `{"status":"ready"}` antes de empezar.
+
+> **Usa `127.0.0.1` y no `localhost`.** Compose publica los puertos sólo en `127.0.0.1`, y en Windows `localhost` resuelve primero a `::1`, donde no hay nada escuchando: cada intento se cuelga unos cuatro segundos antes de fallar y la medición sale inservible.
+
+### Corrida
+
+Con interfaz web, para una prueba rápida:
+
+```powershell
+locust -f scripts/carga/locustfile.py --host http://127.0.0.1:8000
+```
+
+Para la corrida que alimenta el reporte, carga escalonada y sin interfaz. En una terminal, el muestreo de recursos:
+
+```powershell
+python scripts/carga/muestrear_recursos.py --duracion 330 --salida reports/carga/recursos.csv
+```
+
+En otra, de inmediato, la carga:
+
+```powershell
+$env:MIBICI_CARGA_FORMA = "escalonada"
+locust -f scripts/carga/locustfile.py --host http://127.0.0.1:8000 --headless --csv reports/carga/locust --csv-full-history --html reports/carga/locust.html
+```
+
+Son cinco minutos: escalones de un minuto con 10, 25, 50, 100 y 150 usuarios. Sin `MIBICI_CARGA_FORMA` no se define la forma de carga y mandan `-u` y `-r` de la línea de comandos. Los escalones se cambian con `MIBICI_CARGA_ESCALONES` (pares `usuarios:segundos` separados por comas) y la velocidad de arranque con `MIBICI_CARGA_SPAWN`.
+
+El muestreo corre más tiempo que la carga a propósito, para dejar línea base ociosa al principio y al final. Debe arrancar **antes** que Locust: si se corre después, graba una máquina en reposo.
+
+### Figuras y resumen
+
+```powershell
+python scripts/carga/graficas_carga.py --locust reports/carga/locust --recursos reports/carga/recursos.csv --salida reports/carga/figuras --filtro tc5061
+```
+
+Deja seis figuras en `reports/carga/figuras/` e imprime el resumen por endpoint y el consumo por contenedor. El `--filtro` excluye contenedores ajenos al proyecto que estén corriendo en la misma máquina; sin él se grafican todos.
+
+### Resultados de la corrida del 20 de noviembre de 2026
+
+Contra el almacén de la Entrega 2 (P1 v1, P2 v1 y P3 v1 con alias `champion`), en un equipo de 16 núcleos lógicos y 32 GiB: **2,615 peticiones equivalentes a 17,907 inferencias en 301 segundos, sin una sola falla**.
+
+| Usuarios | Peticiones/s | Mediana | p95 | CPU de la API |
+| --- | --- | --- | --- | --- |
+| 10 | 5.62 | 510 ms | 1,702 ms | 501 % |
+| 25 | 9.80 | 1,124 ms | 3,567 ms | 1,183 % |
+| 50 | 10.43 | 3,780 ms | 9,193 ms | 1,308 % |
+| 100 | 9.33 | 9,563 ms | 15,561 ms | 1,315 % |
+| 150 | 9.81 | 13,900 ms | 21,375 ms | 1,344 % |
+
+El throughput se estabiliza entre 9 y 10 peticiones por segundo a partir de los 25 usuarios y ya no crece, mientras la latencia sube proporcional a la concurrencia: el sistema no se degrada con errores sino con encolamiento, y la rodilla está entre 10 y 25 usuarios simultáneos.
+
+El contenedor de la API consumió 917 % de CPU en promedio y llegó a 1,539 %, es decir entre nueve y quince de los dieciséis núcleos, con un solo worker de uvicorn: cada inferencia de scikit-learn se paraleliza internamente sobre todos los núcleos, así que las peticiones compiten por ellos en lugar de atenderse en paralelo. La memoria no es restricción: 286 MiB de promedio. MLflow se mantuvo en 11 %, lo que confirma que no participa en la ruta de inferencia una vez cargados los modelos.
+
+![Peticiones por segundo y usuarios simultáneos](reports/carga/figuras/carga_rps_usuarios.png)
+
+![Latencia durante la corrida](reports/carga/figuras/carga_latencia.png)
+
+![CPU por contenedor](reports/carga/figuras/recursos_cpu.png)
+
 ## Despliegue inicial con MLflow y FastAPI
 
 Esta configuración inicial prepara una sola imagen Docker, reutilizada por dos servicios: MLflow y la API FastAPI. MLflow guarda su base de datos y artefactos en volúmenes persistentes; la API obtiene el modelo del Registry usando variables de entorno. La estructura de la API integra P1, P2 y P3, y cada modelo se carga por separado.
@@ -1219,8 +1307,16 @@ Seguimos GitHub Flow:
 ├── pyproject.toml     <- Metadatos del paquete y configuración de Ruff
 ├── references         <- ML Canvas del equipo, diagrama de arquitectura y manifiesto de datos
 ├── reports
+│   ├── carga          <- Resultados y figuras de la prueba de carga
 │   └── figures        <- Figuras y resultados del experimento base
 ├── requirements.txt   <- Dependencias con versión fija
+├── requirements-carga.txt <- Locust, sólo para generar carga
+├── scripts
+│   ├── carga          <- Escenario de Locust, muestreo de recursos y gráficas
+│   ├── compose        <- Inicialización del Registry para Compose
+│   ├── p1             <- Utilidades y manifiesto del campeón de P1
+│   ├── p2             <- Ejemplo de petición de P2
+│   └── p3             <- Ejemplo de petición y manifiesto del campeón de P3
 ├── tests              <- Pruebas con pytest
 └── mibici             <- Código del proyecto
     ├── config.py      <- Rutas, rango de datos, cortes y semillas
