@@ -1343,6 +1343,11 @@ Seguimos GitHub Flow:
 ├── reports
 │   └── figures        <- Figuras y resultados del experimento base
 ├── requirements.txt   <- Dependencias con versión fija
+├── scripts
+│   ├── compose        <- Inicialización del Registry para Compose
+│   ├── p1             <- Utilidades y manifiesto del campeón de P1
+│   ├── p2             <- Ejemplo de petición de P2
+│   └── p3             <- Ejemplo de petición y manifiesto del campeón de P3
 ├── tests              <- Pruebas con pytest
 └── mibici             <- Código del proyecto
     ├── config.py      <- Rutas, rango de datos, cortes y semillas

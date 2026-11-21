@@ -1,0 +1,13 @@
+{
+  "descripcion": "Campeón de P3 que sirve la API: identidad y huella del modelo serializado, para que la siembra del Registry verifique que el almacén trae esta versión y no otra.",
+  "modelo": {
+    "nombre": "mibici-equipo29-p3-grupos",
+    "alias": "champion",
+    "version": "1",
+    "run_id": "fd704e3c5ecc4bbe818a5fb17db9cb32",
+    "run_name": "p3-kmeans-uso-k3",
+    "git_commit": "42918951d913fd2a27949a7237a381536242b11e",
+    "storage_location": "mlflow-artifacts:/1/models/m-578c6f69d09c4bdf834e9cd84866ba04/artifacts",
+    "model_skops_sha256": "6b0d9ca141ab94b0070a2f1b650d5c92862f1634f4ed2e3f999d19301d33c066"
+  }
+}
