@@ -14,6 +14,7 @@ RUN pip install --no-cache-dir -r requirements-api.txt \
 COPY mibici ./mibici
 COPY scripts/compose/seed_mlflow_store.py ./scripts/compose/seed_mlflow_store.py
 COPY scripts/p1/campeon_api_p1.json ./scripts/p1/campeon_api_p1.json
+COPY scripts/p3/campeon_api_p3.json ./scripts/p3/campeon_api_p3.json
 
 USER appuser
 
