@@ -29,7 +29,9 @@ costear la diferencia.
 
 Con ``--recalcular CARPETA`` tampoco corre la carga: vuelve a calcular ``finops.json``,
 ``finops.md`` y ``resumen.md`` desde el ``resumen.json`` de esa corrida (por ejemplo, si
-cambian las tarifas) y, con ``--actualizar-readme``, reescribe el bloque del README.
+cambian las tarifas) y, con ``--actualizar-readme``, reescribe el bloque del README. Usa los
+parámetros que la corrida guardó; ``--estaciones`` y ``--vcpu-max`` sólo cuentan para una
+corrida que no los guardó, y las demás opciones de la carga no aplican.
 """
 
 from __future__ import annotations
@@ -108,7 +110,10 @@ def argumentos(argv: list[str] | None = None) -> argparse.Namespace:
         "--recalcular",
         type=Path,
         default=None,
-        help="carpeta de una corrida ya hecha: recalcula sus costos sin repetir la carga",
+        help=(
+            "carpeta de una corrida ya hecha: recalcula sus costos sin repetir la carga, con "
+            "los parámetros que guardó (--estaciones y --vcpu-max sólo si no los guardó)"
+        ),
     )
     p.add_argument("--actualizar-readme", action="store_true")
     return p.parse_args(argv)
@@ -549,10 +554,10 @@ def analisis_de_costo(resumen: dict, salida: Path, args: argparse.Namespace) -> 
     """
     capacidad = resumen.get("capacidad") or {}
     medidos = capacidad.get("recursos") or {}
-    if not capacidad:
-        finops_md = SIN_CAPACIDAD
-    elif not isinstance(medidos.get("api"), dict):
-        finops_md = SIN_RECURSOS
+    if not capacidad or not isinstance(medidos.get("api"), dict):
+        finops_md = SIN_RECURSOS if capacidad else SIN_CAPACIDAD
+        # Un finops.json de un cálculo anterior contradiría al finops.md que se escribe ahora.
+        (salida / "finops.json").unlink(missing_ok=True)
     else:
         mlflow = medidos.get("mlflow")
         resultado = finops.analizar(

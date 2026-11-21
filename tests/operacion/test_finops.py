@@ -383,3 +383,15 @@ def test_el_total_recomendado_suma_la_api_y_mlflow():
 def test_sin_mlflow_no_hay_total_recomendado():
     resultado = finops.analizar(CAPACIDAD, API, lotes=LOTES)
     assert not any(f.startswith("En conjunto") for f in resultado["optimizaciones"])
+
+
+def test_el_total_recomendado_sin_lotes_lo_dice():
+    resultado = finops.analizar(CAPACIDAD, API, recursos_mlflow=MLFLOW)
+    assert all(fila["clave"] != "cloud_run_lote" for fila in resultado["escenarios"])
+    sin_lote = _por_clave(resultado, "cloud_run")
+    mlflow = _por_clave(resultado, "mlflow")
+    frase = resultado["optimizaciones"][-1]
+    assert frase.startswith("En conjunto, la API en Cloud Run por petición sin lotes")
+    assert "con P2 y P3 en lote" not in frase
+    assert f"suman {sin_lote['usd_mes'] + mlflow['usd_mes']:,.2f} USD al mes" in frase
+    assert "a tarifa de Fargate" in frase

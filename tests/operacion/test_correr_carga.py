@@ -567,6 +567,8 @@ API = {"cpu_nucleos_promedio": 0.37, "cpu_nucleos_p95": 0.75, "memoria_mib_max":
 
 def test_sin_muestras_de_la_api_no_dice_que_falto_capacidad(orquestador, tmp_path):
     args = orquestador.argumentos([])
+    # Un costo calculado antes no debe quedarse junto al texto que dice que no se calculó.
+    (tmp_path / "finops.json").write_text("{}", encoding="utf-8")
     texto = orquestador.analisis_de_costo(_resumen_guardado({}), tmp_path, args)
     assert texto == orquestador.SIN_RECURSOS
     assert "docker stats sin datos" in texto and texto != orquestador.SIN_CAPACIDAD
@@ -575,7 +577,9 @@ def test_sin_muestras_de_la_api_no_dice_que_falto_capacidad(orquestador, tmp_pat
         tmp_path / "resumen.md"
     ).read_text(encoding="utf-8")
     sin_etapa = dict(_resumen_guardado({}), capacidad={})
+    (tmp_path / "finops.json").write_text("{}", encoding="utf-8")
     assert orquestador.analisis_de_costo(sin_etapa, tmp_path, args) == orquestador.SIN_CAPACIDAD
+    assert not (tmp_path / "finops.json").exists()
 
 
 def test_sin_recursos_no_avisa_de_limites_que_no_leyo(orquestador, monkeypatch, tmp_path, capsys):
@@ -588,7 +592,12 @@ def test_sin_recursos_no_avisa_de_limites_que_no_leyo(orquestador, monkeypatch, 
 
 def test_recalcular_regenera_los_costos_sin_correr_la_carga(orquestador, monkeypatch, tmp_path):
     mlflow = {"cpu_nucleos_promedio": 0.04, "cpu_nucleos_p95": 0.3, "memoria_mib_max": 415.0}
+    reposo = {"cpu_nucleos_promedio": 0.03, "cpu_nucleos_p95": 0.2, "memoria_mib_max": 1975.0}
     resumen = _resumen_guardado({"api": API, "mlflow": mlflow})
+    resumen["mlflow_sin_ajuste"] = reposo
+    resumen["estaciones"] = 368
+    # Una medida que faltó se guarda como null y debe volver como dato faltante.
+    resumen["etapas"][1] = dict(resumen["etapas"][1], p99_ms=None)
     orquestador._escribir_json(tmp_path / "resumen.json", resumen)
     for prohibida in ("endpoints_disponibles", "correr_etapa", "primera_peticion"):
         monkeypatch.setattr(
@@ -598,10 +607,15 @@ def test_recalcular_regenera_los_costos_sin_correr_la_carga(orquestador, monkeyp
     assert orquestador.main(["--recalcular", str(tmp_path)]) == 0
     finops_json = json.loads((tmp_path / "finops.json").read_text(encoding="utf-8"))
     claves = [fila["clave"] for fila in finops_json["escenarios"]]
-    assert claves[:4] == ["piso", "siempre_encendido", "horario", "arm"] and "mlflow" in claves
+    assert claves[:4] == ["piso", "siempre_encendido", "horario", "arm"]
+    # La medición en reposo guardada en la corrida vuelve a costearse.
+    assert claves[-2:] == ["mlflow", "mlflow_sin_ajuste"]
     assert finops_json["medido"]["usuarios"] == 15
-    # El null de p3_ms vuelve como dato faltante, no como cero ni como error.
-    assert "cloud_run_lote" in claves
+    # Los parámetros son los de la corrida, no los valores por omisión de la línea de comandos.
+    assert finops_json["supuestos"]["demanda"]["estaciones"] == 368
+    assert "| 50 | 19.2 | 20 | 2200 | nan |" in (tmp_path / "resumen.md").read_text(
+        encoding="utf-8"
+    )
     texto = (tmp_path / "finops.md").read_text(encoding="utf-8")
     assert texto == orquestador.finops.a_markdown(
         orquestador.finops.analizar(
@@ -609,9 +623,12 @@ def test_recalcular_regenera_los_costos_sin_correr_la_carga(orquestador, monkeyp
             API,
             lotes={"estaciones": 468, "p2_ms": 52.0, "p3_ms": float("nan")},
             recursos_mlflow=mlflow,
+            demanda=orquestador.finops.Demanda(estaciones=368),
             saturacion=resumen["saturacion"],
+            recursos_mlflow_sin_ajuste=reposo,
         )
     )
+    assert "Apagar el ejecutor de trabajos de MLflow" in texto
     assert texto in (tmp_path / "resumen.md").read_text(encoding="utf-8")
 
 
@@ -638,3 +655,31 @@ def test_con_nan_respeta_los_contenedores_sin_muestras(orquestador):
     assert math.isnan(vuelto["p95_ms"])
     assert vuelto["recursos"]["api"] is None
     assert math.isnan(vuelto["recursos"]["mlflow"]["cpu_nucleos_p95"])
+
+
+def test_recalcular_con_actualizar_readme_reescribe_solo_el_bloque(
+    orquestador, monkeypatch, tmp_path
+):
+    raiz = tmp_path.resolve()
+    carpeta = raiz / "reports" / "carga" / "2026-11-20_2224"
+    carpeta.mkdir(parents=True)
+    orquestador._escribir_json(carpeta / "resumen.json", _resumen_guardado({"api": API}))
+    readme = raiz / "README.md"
+    original = "\n".join(
+        ["antes", orquestador.INICIO_BLOQUE, "viejo", orquestador.FIN_BLOQUE, "después", ""]
+    )
+    readme.write_text(original, encoding="utf-8")
+    monkeypatch.setattr(orquestador, "RAIZ", raiz)
+    monkeypatch.setattr(orquestador, "README", readme)
+
+    # Sin la opción, el README no se toca.
+    assert orquestador.main(["--recalcular", str(carpeta)]) == 0
+    assert readme.read_text(encoding="utf-8") == original
+
+    assert orquestador.main(["--recalcular", str(carpeta), "--actualizar-readme"]) == 0
+    texto = readme.read_text(encoding="utf-8")
+    assert texto.startswith("antes\n") and texto.endswith("después\n")
+    assert "viejo" not in texto
+    assert "Corrida del 2026-11-20_2224 (commit `abc1234`)" in texto
+    assert "![Capacidad](reports/carga/2026-11-20_2224/capacidad.png)" in texto
+    assert (carpeta / "finops.md").read_text(encoding="utf-8").strip() in texto
