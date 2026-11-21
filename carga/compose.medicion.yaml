@@ -1,0 +1,25 @@
+# Tamaño con el que se mide la carga y se estima el costo. Se suma a compose.yaml sólo durante
+# la prueba, sin cambiar el despliegue del proyecto:
+#
+#   docker compose -f compose.yaml -f carga/compose.medicion.yaml up -d --wait
+#
+# Sin límite de CPU la capacidad medida dependería de la computadora donde corre la prueba y no
+# habría un tamaño que costear. API_CPUS, API_MEMORIA, MLFLOW_CPUS y MLFLOW_MEMORIA lo cambian.
+# El ejecutor de trabajos de MLflow no lo usa el proyecto y ocupa la mayor parte de su memoria;
+# MLFLOW_JOBS=true lo deja encendido (entonces MLFLOW_MEMORIA debe subir a 3g).
+services:
+  api:
+    deploy:
+      resources:
+        limits:
+          cpus: "${API_CPUS:-1.0}"
+          memory: ${API_MEMORIA:-1g}
+
+  mlflow:
+    environment:
+      MLFLOW_SERVER_ENABLE_JOB_EXECUTION: "${MLFLOW_JOBS:-false}"
+    deploy:
+      resources:
+        limits:
+          cpus: "${MLFLOW_CPUS:-1.0}"
+          memory: ${MLFLOW_MEMORIA:-1g}
