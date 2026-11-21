@@ -255,7 +255,8 @@ def analizar(
             vcpu,
             gb,
             usd_hora=usd_hora(x86, vcpu, gb),
-            usd_mes=usd_hora(x86, vcpu, gb) * horas_con_horario * demanda.dias_mes,
+            # La misma fracción del mes de 730 h que usa el escenario siempre encendido.
+            usd_mes=usd_hora(x86, vcpu, gb) * HORAS_MES * horas_con_horario / 24,
             inferencias_mes=inferencias["total"],
         ),
         _escenario(
@@ -509,10 +510,12 @@ def optimizaciones(resultado: dict) -> list[str]:
         modo = "con P2 y P3 en lote" if api.get("clave") == "cloud_run_lote" else "sin lotes"
         frases.append(
             f"En conjunto, la API en Cloud Run por petición {modo} ({_usd(api['usd_mes'])} USD) "
-            f"más el servidor de MLflow ({_usd(mlflow['usd_mes'])} USD) suman "
-            f"{_usd(recomendado)} USD al mes, frente a {_usd(actual)} USD con la API siempre "
-            f"encendida: un ahorro del {1 - recomendado / actual:.1%}. El servidor de MLflow pasa "
-            f"a ser el {mlflow['usd_mes'] / recomendado:.1%} de ese total."
+            f"más el servidor de MLflow ({_usd(mlflow['usd_mes'])} USD, a tarifa de Fargate) "
+            f"suman {_usd(recomendado)} USD al mes, frente a {_usd(actual)} USD con la API "
+            f"siempre encendida: un ahorro del {1 - recomendado / actual:.1%}. El servidor de "
+            f"MLflow pasa a ser el {mlflow['usd_mes'] / recomendado:.1%} de ese total. La suma "
+            "combina las tarifas de dos proveedores como referencia de precio; con todo en una "
+            "sola nube, el servidor de MLflow se cobraría con la tarifa de esa nube."
         )
     return frases
 

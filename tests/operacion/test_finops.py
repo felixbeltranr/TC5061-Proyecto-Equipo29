@@ -87,7 +87,8 @@ def test_relaciones_entre_escenarios(resultado):
     con_lote = _fila(resultado, "MiBici, Cloud Run por petición, P2")
     assert piso["usd_mes"] == pytest.approx(siempre["usd_mes"])
     assert piso["usd_por_1000"] < siempre["usd_por_1000"]
-    assert horario["usd_mes"] == pytest.approx(siempre["usd_mes"] * 19 * 30.4 / 730)
+    # Misma base de 730 h que el escenario siempre encendido: 19 de cada 24 horas.
+    assert horario["usd_mes"] == pytest.approx(siempre["usd_mes"] * 19 / 24)
     assert arm["usd_mes"] < siempre["usd_mes"]
     assert con_lote["usd_mes"] < sin_lote["usd_mes"] < siempre["usd_mes"]
     assert finops.ahorro(siempre, arm) == pytest.approx(1 - arm["usd_mes"] / siempre["usd_mes"])
@@ -155,7 +156,7 @@ def test_optimizaciones_con_cifras(resultado):
     fila = _por_clave(resultado, "horario")
     assert f"{fila['usd_mes']:,.2f} USD al mes" in horario
     assert f"{finops.ahorro(base, fila):.1%}" in horario
-    assert f"{1 - 19 * 30.4 / 730:.1%}" in horario
+    assert f"{1 - 19 / 24:.1%}" in horario
     fila = _por_clave(resultado, "arm")
     assert f"{fila['usd_mes']:,.2f} USD" in arm and f"{finops.ahorro(base, fila):.1%}" in arm
     sin_lote = _por_clave(resultado, "cloud_run")
@@ -375,6 +376,8 @@ def test_el_total_recomendado_suma_la_api_y_mlflow():
     assert "con P2 y P3 en lote" in frase
     assert f"suman {lote['usd_mes'] + mlflow['usd_mes']:,.2f} USD al mes" in frase
     assert f"frente a {base['usd_mes'] + mlflow['usd_mes']:,.2f} USD" in frase
+    # MLflow se costea con Fargate y la API con Cloud Run: el texto lo dice.
+    assert "a tarifa de Fargate" in frase and "dos proveedores" in frase
 
 
 def test_sin_mlflow_no_hay_total_recomendado():
