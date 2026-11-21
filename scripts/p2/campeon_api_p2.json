@@ -1,0 +1,13 @@
+{
+  "descripcion": "Campeón de P2 que sirve la API: identidad y huella del modelo serializado, para que la siembra del Registry verifique que el almacén trae esta versión y no otra.",
+  "modelo": {
+    "nombre": "mibici-equipo29-p2-riesgo",
+    "alias": "champion",
+    "version": "1",
+    "run_id": "48bb03f4818147b2a5cc9b893b3b823f",
+    "run_name": "p2_hgb_balanceado_ini50",
+    "git_commit": "42918951d913fd2a27949a7237a381536242b11e",
+    "storage_location": "mlflow-artifacts:/1/models/m-979cb0f7ef5a4cdaba35c5e32d892530/artifacts",
+    "model_skops_sha256": "8dc3a262b88e23cb6c88a2edd3a38fd0aada6b33679d28e8556f52840d5d0c75"
+  }
+}
