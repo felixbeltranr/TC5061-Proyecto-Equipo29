@@ -196,7 +196,8 @@ def test_opcion_vcpu_max(orquestador):
 
 
 def test_opcion_vcpu_medidos(orquestador):
-    assert orquestador.argumentos([]).vcpu_medidos == 1.0
+    # Sin la opción, el límite se lee del contenedor de la API.
+    assert orquestador.argumentos([]).vcpu_medidos is None
     assert orquestador.argumentos(["--vcpu-medidos", "0.5"]).vcpu_medidos == 0.5
 
 
@@ -238,6 +239,8 @@ def test_main_guarda_la_saturacion_y_la_pasa_a_finops(orquestador, monkeypatch, 
     monkeypatch.setattr(orquestador, "correr_etapa", correr_etapa)
     monkeypatch.setattr(orquestador, "sonda_de_lotes", lambda *a: {})
     monkeypatch.setattr(orquestador, "_commit", lambda: "abc1234")
+    limites = {"api": {"cpus": 0.5, "memoria_mib": 1024.0}}
+    monkeypatch.setattr(orquestador, "limites_de", lambda contenedores, motor: limites)
     monkeypatch.setattr(orquestador.carga, "leer_stats", lambda ruta: None)
     monkeypatch.setattr(orquestador.carga, "leer_historial", lambda ruta: {})
     monkeypatch.setattr(orquestador.carga, "resumen_etapa", resumen_etapa)
@@ -267,8 +270,6 @@ def test_main_guarda_la_saturacion_y_la_pasa_a_finops(orquestador, monkeypatch, 
             "api-1",
             "--etapas",
             "20,60",
-            "--vcpu-medidos",
-            "0.5",
             "--salida",
             str(tmp_path),
         ]
@@ -278,7 +279,11 @@ def test_main_guarda_la_saturacion_y_la_pasa_a_finops(orquestador, monkeypatch, 
     assert resumen["capacidad"]["usuarios"] == 20
     assert resumen["saturacion"]["usuarios"] == 60
     assert llamadas["saturacion"]["usuarios"] == 60
+    # El límite de CPU de la API sale del contenedor, no de un valor supuesto.
     assert llamadas["vcpu_medidos"] == 0.5
+    assert resumen["limites"] == limites
+    assert resumen["vcpu_medidos"] == 0.5
+    assert llamadas["recursos_mlflow_sin_ajuste"] is None
 
 
 def test_sin_csv_de_locust_termina_con_codigo_2(orquestador, monkeypatch, tmp_path, capsys):
@@ -290,3 +295,159 @@ def test_sin_csv_de_locust_termina_con_codigo_2(orquestador, monkeypatch, tmp_pa
     assert salida.count("no dejó los CSV de Locust") == 2
     assert "Ninguna etapa dejó resultados" in salida
     assert not (tmp_path / "resumen.json").exists()
+
+
+def test_leer_limites(orquestador):
+    con_limites = orquestador.leer_limites("1000000000 1073741824")
+    assert con_limites == {"cpus": 1.0, "memoria_mib": 1024.0}
+    assert orquestador.leer_limites("500000000 0") == {"cpus": 0.5, "memoria_mib": None}
+    # Sin límites, o si inspect no respondió, no se inventa un valor.
+    assert orquestador.leer_limites("0 0") == {"cpus": None, "memoria_mib": None}
+    assert orquestador.leer_limites("") == {"cpus": None, "memoria_mib": None}
+
+
+def test_limites_de_sin_motor_no_falla(orquestador):
+    limites = orquestador.limites_de({"api": "api-1"}, "motor-que-no-existe")
+    assert limites == {"api": {"cpus": None, "memoria_mib": None}}
+
+
+def test_texto_limites(orquestador):
+    limites = {
+        "api": {"cpus": 1.0, "memoria_mib": 1024.0},
+        "mlflow": {"cpus": None, "memoria_mib": None},
+    }
+    texto = orquestador.texto_limites(limites)
+    assert texto == (
+        "Límites durante la corrida: api con 1 vCPU y 1,024 MiB; "
+        "mlflow con CPU sin límite y memoria sin límite."
+    )
+    assert orquestador.texto_limites({}) == ""
+
+
+def test_sin_limite_de_cpu_avisa_y_toma_un_nucleo(orquestador, monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(orquestador, "endpoints_disponibles", lambda host: ["p1"])
+    monkeypatch.setattr(orquestador, "primera_peticion", lambda host, endpoints: {})
+    monkeypatch.setattr(orquestador, "correr_etapa", lambda *a: (0.0, 1.0))
+    sin_limites = {"api": {"cpus": None, "memoria_mib": None}}
+    monkeypatch.setattr(orquestador, "limites_de", lambda contenedores, motor: sin_limites)
+
+    class Muestreador:
+        muestras, errores = [], []
+
+        def __init__(self, *args):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return False
+
+    monkeypatch.setattr(orquestador.recursos, "Muestreador", Muestreador)
+    codigo = orquestador.main(
+        ["--contenedores", "api-1", "--etapas", "10", "--salida", str(tmp_path)]
+    )
+    salida = capsys.readouterr().out
+    assert codigo == 2  # la etapa simulada no deja CSV; el aviso sale antes
+    assert "api con CPU sin límite y memoria sin límite" in salida
+    assert "La API no tiene límite de CPU" in salida
+
+
+def test_tabla_preguntas(orquestador):
+    etapa = {
+        "endpoints": [
+            {
+                "endpoint": "P1 POST /api/v1/predict",
+                "peticiones": 38,
+                "promedio_ms": 91.4,
+                "p95_ms": 850.0,
+                "p99_ms": 1000.0,
+            },
+            {
+                "endpoint": "P2 POST /api/v1/p2/predict",
+                "peticiones": 1860,
+                "promedio_ms": 40.2,
+                "p95_ms": 190.0,
+                "p99_ms": 800.0,
+            },
+        ]
+    }
+    tabla = orquestador.tabla_preguntas(etapa)
+    assert "| P1 POST /api/v1/predict | 38 | 91 | 850 | 1000 |" in tabla
+    assert "| P2 POST /api/v1/p2/predict | 1,860 | 40 | 190 | 800 |" in tabla
+    assert orquestador.tabla_preguntas({"endpoints": []}) == ""
+
+
+def test_bloque_del_readme_con_limites_y_endpoints(orquestador):
+    capacidad = {
+        "usuarios": 15,
+        "rps_sostenido": 11.4,
+        "rps_inferencias": 10.9,
+        "p95_ms": 190.0,
+        "endpoints": [
+            {
+                "endpoint": "P1 POST /api/v1/predict",
+                "peticiones": 38,
+                "promedio_ms": 91.4,
+                "p95_ms": 850.0,
+                "p99_ms": 1000.0,
+            }
+        ],
+    }
+    etapa = dict(capacidad, p50_ms=25.0, p99_ms=840.0, tasa_error=0.0)
+    resumen = {
+        "fecha": "2026-11-20_2100",
+        "commit": "abc1234",
+        "duracion_s": 90,
+        "endpoints": ["p1"],
+        "p95_objetivo_ms": 500.0,
+        "limites": {"api": {"cpus": 1.0, "memoria_mib": 1024.0}},
+        "etapas": [etapa],
+        "capacidad": capacidad,
+        "saturacion": {},
+        "primera_peticion": {},
+    }
+    bloque = orquestador.bloque_readme(resumen, "FINOPS", "reports/carga/x")
+    assert "Límites durante la corrida: api con 1 vCPU y 1,024 MiB." in bloque
+    assert "Por endpoint en la etapa de capacidad (15 usuarios)" in bloque
+    assert "| P1 POST /api/v1/predict | 38 | 91 | 850 | 1000 |" in bloque
+    assert bloque.index("Límites durante") < bloque.index("| Usuarios |")
+    assert bloque.index("| Usuarios |") < bloque.index("Por endpoint") < bloque.index("FINOPS")
+
+
+def test_reposo_escribe_el_consumo_sin_carga(orquestador, monkeypatch, tmp_path):
+    medido = {"cpu_nucleos_promedio": 0.02, "cpu_nucleos_p95": 0.3, "memoria_mib_max": 1884.0}
+
+    class Muestreador:
+        muestras, errores = [], []
+
+        def __init__(self, *args):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return False
+
+    esperas = []
+    monkeypatch.setattr(orquestador.recursos, "Muestreador", Muestreador)
+    monkeypatch.setattr(orquestador.recursos, "resumir", lambda muestras: {"x-mlflow-1": medido})
+    monkeypatch.setattr(orquestador.recursos, "guardar_csv", lambda *a: None)
+    monkeypatch.setattr(orquestador, "limites_de", lambda contenedores, motor: {})
+    monkeypatch.setattr(orquestador.time, "sleep", esperas.append)
+    monkeypatch.setattr(
+        orquestador, "endpoints_disponibles", lambda host: pytest.fail("no debe tocar la API")
+    )
+
+    codigo = orquestador.main(
+        ["--reposo", "60", "--contenedores", "x-mlflow-1", "--salida", str(tmp_path)]
+    )
+    assert codigo == 0
+    assert esperas == [60]
+    reposo = json.loads((tmp_path / "reposo.json").read_text(encoding="utf-8"))
+    assert reposo["segundos"] == 60
+    assert reposo["recursos"]["mlflow"] == medido
+    # El archivo es el que después se pasa con --mlflow-sin-ajuste.
+    assert orquestador.mlflow_sin_ajuste(tmp_path / "reposo.json") == medido
+    assert orquestador.mlflow_sin_ajuste(None) is None

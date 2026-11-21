@@ -1,10 +1,13 @@
 """Prueba de carga por etapas, consumo de recursos y análisis FinOps de la API de MiBici.
 
-Con el sistema levantado (``docker compose up -d --wait``), desde la raíz del repositorio:
+Con el sistema levantado con el tamaño de la medición, desde la raíz del repositorio:
 
+    docker compose -f compose.yaml -f carga/compose.medicion.yaml up -d --wait
     python scripts/carga/correr_carga.py
 
-Por omisión corre cinco etapas de 90 segundos (10, 15, 20, 30 y 50 usuarios) y mientras tanto
+``carga/compose.medicion.yaml`` fija los límites de CPU y memoria con los que se mide y se
+costea; el orquestador los lee de los contenedores y los deja en el resumen. Por omisión corre
+cinco etapas de 90 segundos (10, 15, 20, 30 y 50 usuarios) y mientras tanto
 toma ``docker stats`` de los contenedores ``api`` y ``mlflow`` cada 2 segundos. Al final mide la
 latencia de una petición con todas las estaciones (P2 y P3 aceptan listas), y escribe en
 ``reports/carga/<fecha>/``:
@@ -18,6 +21,11 @@ latencia de una petición con todas las estaciones (P2 y P3 aceptan listas), y e
 
 Con ``--actualizar-readme`` reemplaza el bloque de resultados del README. Termina con código 0
 si al menos una etapa dejó datos; 2 si la API no está lista o ninguna etapa los dejó.
+
+Con ``--reposo SEGUNDOS`` no corre la carga: sólo toma ``docker stats`` ese tiempo y escribe
+``reposo.json`` y ``reposo_recursos.csv``. Sirve para medir MLflow tal como lo levanta
+``compose.yaml`` solo; ese ``reposo.json`` se pasa después con ``--mlflow-sin-ajuste`` para
+costear la diferencia.
 """
 
 from __future__ import annotations
@@ -77,8 +85,20 @@ def argumentos(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument(
         "--vcpu-medidos",
         type=float,
-        default=1.0,
-        help="límite de CPU del contenedor de la API durante la prueba (API_CPUS)",
+        default=None,
+        help="límite de CPU de la API durante la prueba; por omisión se lee del contenedor",
+    )
+    p.add_argument(
+        "--reposo",
+        type=int,
+        default=0,
+        help="sólo toma docker stats durante estos segundos, sin carga, y termina",
+    )
+    p.add_argument(
+        "--mlflow-sin-ajuste",
+        type=Path,
+        default=None,
+        help="reposo.json tomado con compose.yaml solo, para costear MLflow sin el ajuste",
     )
     p.add_argument("--actualizar-readme", action="store_true")
     return p.parse_args(argv)
@@ -144,6 +164,101 @@ def contenedores_del_sistema(args: argparse.Namespace) -> dict[str, str]:
         raise RuntimeError(f"{' '.join(comando)} falló: {resultado.stderr.strip()[:300]}")
     servicios = nombres_compose(resultado.stdout)
     return {s: n for s, n in servicios.items() if s in ("api", "mlflow")}
+
+
+def leer_limites(texto: str) -> dict[str, float | None]:
+    """``'1000000000 1073741824'`` (NanoCpus y Memory de ``inspect``) → núcleos y MiB.
+
+    Un cero, o un valor que no se pudo leer, significa que el contenedor no tiene ese límite.
+    """
+    partes = texto.split()
+    nano = int(partes[0]) if len(partes) > 0 and partes[0].isdigit() else 0
+    memoria = int(partes[1]) if len(partes) > 1 and partes[1].isdigit() else 0
+    return {
+        "cpus": nano / 1e9 if nano else None,
+        "memoria_mib": memoria / recursos.MIB if memoria else None,
+    }
+
+
+def limites_de(contenedores: dict[str, str], motor: str) -> dict[str, dict]:
+    """Límites de CPU y memoria de cada servicio, leídos del contenedor que está corriendo."""
+    formato = "{{.HostConfig.NanoCpus}} {{.HostConfig.Memory}}"
+    limites = {}
+    for servicio, nombre in contenedores.items():
+        try:
+            resultado = subprocess.run(
+                [motor, "inspect", "--format", formato, nombre],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                check=False,
+            )
+            salida = resultado.stdout if resultado.returncode == 0 else ""
+        except OSError:
+            salida = ""
+        limites[servicio] = leer_limites(salida)
+    return limites
+
+
+def texto_limites(limites: dict[str, dict]) -> str:
+    """``'Límites durante la corrida: api con 1 vCPU y 1,024 MiB; mlflow con CPU sin límite…'``."""
+    partes = []
+    for servicio, limite in limites.items():
+        cpus, memoria = limite.get("cpus"), limite.get("memoria_mib")
+        cpu = f"{cpus:g} vCPU" if cpus else "CPU sin límite"
+        ram = f"{memoria:,.0f} MiB" if memoria else "memoria sin límite"
+        partes.append(f"{servicio} con {cpu} y {ram}")
+    return "Límites durante la corrida: " + "; ".join(partes) + "." if partes else ""
+
+
+def medir_reposo(args: argparse.Namespace, salida: Path, fecha: str) -> int:
+    """Toma ``docker stats`` sin carga y escribe ``reposo.json`` y ``reposo_recursos.csv``."""
+    contenedores = contenedores_del_sistema(args)
+    if not contenedores:
+        print("No encontré los contenedores del sistema; uso --contenedores.")
+        return 2
+    print(f"Tomando {args.motor} stats en reposo durante {args.reposo} s…")
+    with recursos.Muestreador(
+        list(contenedores.values()), args.motor, args.intervalo
+    ) as muestreador:
+        time.sleep(args.reposo)
+    por_contenedor = recursos.resumir(muestreador.muestras)
+    recursos.guardar_csv(muestreador.muestras, salida / "reposo_recursos.csv")
+    reposo = {
+        "fecha": fecha,
+        "segundos": args.reposo,
+        "contenedores": contenedores,
+        "limites": limites_de(contenedores, args.motor),
+        "recursos": {s: por_contenedor.get(n) for s, n in contenedores.items()},
+    }
+    _escribir_json(salida / "reposo.json", reposo)
+    for servicio, medido in reposo["recursos"].items():
+        if medido:
+            print(f"  {servicio}: {medido['memoria_mib_max']:,.0f} MiB de memoria máxima")
+    return 0
+
+
+def mlflow_sin_ajuste(ruta: Path | None) -> dict | None:
+    """Consumo de MLflow guardado por ``--reposo`` con ``compose.yaml`` solo, o ``None``."""
+    if ruta is None:
+        return None
+    reposo = json.loads(ruta.read_text(encoding="utf-8"))
+    return (reposo.get("recursos") or {}).get("mlflow") or None
+
+
+def tabla_preguntas(etapa: dict) -> str:
+    """Peticiones y latencia de cada endpoint en una etapa; cadena vacía si no hay endpoints."""
+    renglones = [
+        "| Endpoint | Peticiones | Promedio (ms) | p95 (ms) | p99 (ms) |",
+        "| --- | ---: | ---: | ---: | ---: |",
+    ]
+    for e in etapa.get("endpoints") or []:
+        renglones.append(
+            f"| {e['endpoint']} | {e['peticiones']:,} | {e['promedio_ms']:.0f} "
+            f"| {e['p95_ms']:.0f} | {e['p99_ms']:.0f} |"
+        )
+    return "\n".join(renglones) if len(renglones) > 2 else ""
 
 
 def correr_etapa(args, usuarios: int, salida: Path, endpoints: list[str]) -> tuple[float, float]:
@@ -318,6 +433,13 @@ def bloque_readme(resumen: dict, finops_md: str, carpeta_relativa: str) -> str:
     capacidad = resumen.get("capacidad") or {}
     saturacion = resumen.get("saturacion") or {}
     primera = texto_primera_peticion(resumen.get("primera_peticion") or {})
+    limites = texto_limites(resumen.get("limites") or {})
+    preguntas = tabla_preguntas(capacidad)
+    if preguntas:
+        preguntas = (
+            f"Por endpoint en la etapa de capacidad ({capacidad['usuarios']} usuarios); con pocas "
+            "peticiones, el p95 y el p99 de un endpoint son poco estables:\n\n" + preguntas
+        )
     return "\n".join(
         [
             INICIO_BLOQUE,
@@ -326,8 +448,10 @@ def bloque_readme(resumen: dict, finops_md: str, carpeta_relativa: str) -> str:
             f"probados: {', '.join(resumen['endpoints'])}. Capacidad sostenida con p95 menor a "
             f"{resumen['p95_objetivo_ms']:.0f} ms: " + _texto_capacidad(capacidad, saturacion),
             "",
+            *([limites, ""] if limites else []),
             tabla_etapas(resumen["etapas"]),
             "",
+            *([preguntas, ""] if preguntas else []),
             *([primera, ""] if primera else []),
             finops_md.strip(),
             "",
@@ -372,6 +496,9 @@ def main(argv: list[str] | None = None) -> int:
     salida = args.salida or RAIZ / "reports" / "carga" / fecha
     salida.mkdir(parents=True, exist_ok=True)
 
+    if args.reposo:
+        return medir_reposo(args, salida, fecha)
+
     try:
         endpoints = endpoints_disponibles(args.host)
     except (RuntimeError, urllib.error.URLError) as error:
@@ -386,6 +513,18 @@ def main(argv: list[str] | None = None) -> int:
     if not args.sin_recursos and "api" not in contenedores:
         print("No encontré el contenedor de la API; uso --contenedores o --sin-recursos.")
         return 2
+
+    limites = limites_de(contenedores, args.motor) if contenedores else {}
+    vcpu_medidos = args.vcpu_medidos or (limites.get("api") or {}).get("cpus")
+    if texto_limites(limites):
+        print(texto_limites(limites))
+    if not vcpu_medidos:
+        print(
+            "La API no tiene límite de CPU y no se indicó --vcpu-medidos: la capacidad depende "
+            "de esta computadora. Para costear, levanta el sistema con carga/compose.medicion.yaml."
+            " Se toma 1 núcleo, el que aprovecha un proceso de uvicorn."
+        )
+        vcpu_medidos = 1.0
 
     primera = primera_peticion(args.host, endpoints)
     if texto_primera_peticion(primera):
@@ -439,6 +578,7 @@ def main(argv: list[str] | None = None) -> int:
     lotes = sonda_de_lotes(args.host, args.lote_sonda, args.repeticiones_sonda, endpoints)
     capacidad = carga.capacidad_sostenida(resumenes, args.p95_objetivo, args.error_maximo)
     saturacion = carga.saturacion(resumenes)
+    sin_ajuste = mlflow_sin_ajuste(args.mlflow_sin_ajuste)
     resumen_total = {
         "fecha": fecha,
         "commit": _commit(),
@@ -448,6 +588,9 @@ def main(argv: list[str] | None = None) -> int:
         "tasa_usuarios_s": args.tasa,
         "p95_objetivo_ms": args.p95_objetivo,
         "contenedores": contenedores,
+        "limites": limites,
+        "vcpu_medidos": vcpu_medidos,
+        "mlflow_sin_ajuste": sin_ajuste,
         "etapas": resumenes,
         "capacidad": capacidad,
         "saturacion": saturacion,
@@ -472,8 +615,9 @@ def main(argv: list[str] | None = None) -> int:
             recursos_mlflow=(capacidad.get("recursos") or {}).get("mlflow"),
             demanda=finops.Demanda(estaciones=args.estaciones),
             vcpu_max=args.vcpu_max,
-            vcpu_medidos=args.vcpu_medidos,
+            vcpu_medidos=vcpu_medidos,
             saturacion=saturacion,
+            recursos_mlflow_sin_ajuste=sin_ajuste,
         )
         _escribir_json(salida / "finops.json", resultado)
         finops_md = finops.a_markdown(resultado)
