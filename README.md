@@ -1184,6 +1184,72 @@ P2 se sirve como **inferencia en línea o por micro-lotes horarios**:
 - Los volúmenes sobreviven a `docker compose down`. No uses `docker compose down -v` salvo que quieras borrar también los datos locales de MLflow.
 - P1, P2 y P3 ya están en la API, cada uno con su ruta, esquema, servicio, variable de URI y cargador en `mibici/api/main.py`.
 
+## Prueba de carga y análisis FinOps
+
+Esta sección mide bajo carga el sistema que levanta Compose (sección «Despliegue vigente con Docker Compose») y estima con esas medidas el costo de cada inferencia.
+
+### Prueba de carga con Locust
+
+El escenario (`carga/locustfile.py`) simula a quienes consumirían la API en operación: el tablero de rebalanceo pide el riesgo de P2 (peso 18), la planeación nocturna la demanda de P1 (peso 1), planeación urbana el grupo de P3 (peso 1) y el orquestador la sonda `GET /live` (peso 1). P2 y P1 siguen la proporción de la operación que usa el análisis de costo: 18 consultas de P2 (una por hora de 6 a 23 h) por cada una de P1, por estación y día. P3, que en operación se recalcula una vez al mes, va sobrerrepresentada a propósito para ejercitar su endpoint. Es una prueba de estrés por petición individual, con una estación por petición; el envío en lote se mide aparte, con la sonda de 468 estaciones (paso 5 de abajo). Cada usuario espera de 0.5 a 2 segundos entre peticiones y cada cuerpo es distinto: `mibici/operacion/payloads.py` varía el ejemplo real de cada pregunta dentro de las reglas que valida la API, y `tests/operacion/test_payloads.py` comprueba esos cuerpos contra los esquemas de Pydantic. Una petición que no responde 200 o no trae la clave esperada cuenta como falla.
+
+Con el almacén de modelos en `.model-store\` (sección de Compose), desde la raíz del repositorio:
+
+```powershell
+docker compose -f compose.yaml -f carga/compose.medicion.yaml up -d --wait
+python -m pip install -r requirements-carga.txt
+python scripts/carga/correr_carga.py --actualizar-readme
+```
+
+`carga/compose.medicion.yaml` se suma a `compose.yaml` sólo durante la prueba y no cambia el despliegue del proyecto. Fija el tamaño con el que se mide y se costea: 1 vCPU y 1 GiB por contenedor (`API_CPUS`, `API_MEMORIA`, `MLFLOW_CPUS` y `MLFLOW_MEMORIA` lo cambian). Sin límite de CPU, la capacidad medida dependería de la computadora donde corre la prueba y no habría un tamaño al cual ponerle precio. También apaga el ejecutor de trabajos de MLflow, que el proyecto no usa y que ocupa la mayor parte de la memoria de ese servidor.
+
+El orquestador:
+
+1. revisa `/live` y `/ready` y deja fuera del escenario las preguntas sin modelo;
+2. lee de los contenedores sus límites de CPU y memoria (`docker inspect`), los escribe en el resumen y avisa si la API no tiene límite de CPU;
+3. corre cinco etapas de 90 segundos con 10, 15, 20, 30 y 50 usuarios, más finas donde la API de 1 vCPU se acerca a su límite (`--etapas` y `--duracion` las cambian);
+4. mientras tanto toma `docker stats` de `api` y `mlflow` cada 2 segundos (`--motor podman` para Podman);
+5. mide la latencia de una petición con todas las estaciones de la red en P2 y P3 (ambas aceptan listas de hasta 1000);
+6. escribe en `reports/carga/<fecha>/` las figuras, los CSV de Locust y de recursos, `resumen.json` y `finops.json`, y con `--actualizar-readme` reemplaza el bloque de resultados de abajo.
+
+La capacidad sostenida es la etapa con más peticiones por segundo cuyo p95 queda por debajo de 500 ms y cuya tasa de error es menor a 1 % (`--p95-objetivo` y `--error-maximo`); es una cifra medida, no una extrapolación. Se reporta también la saturación observada: la etapa con más peticiones por segundo aunque no cumpla el objetivo, que muestra el techo de la instancia y cuánto crece la latencia al acercarse a él. El RPS de cada etapa se calcula sin los segundos de la rampa de arranque. La figura de desempeño muestra en tres paneles las peticiones por segundo, la latencia por percentil y la tasa de error.
+
+Para comparar el servidor de MLflow tal como lo levanta `compose.yaml` solo, se mide antes en reposo y ese archivo se pasa a la corrida:
+
+```powershell
+docker compose up -d --wait
+python scripts/carga/correr_carga.py --reposo 60 --salida reports/carga/reposo
+docker compose -f compose.yaml -f carga/compose.medicion.yaml up -d --wait
+python scripts/carga/correr_carga.py --mlflow-sin-ajuste reports/carga/reposo/reposo.json --actualizar-readme
+```
+
+### Análisis FinOps
+
+`mibici/operacion/finops.py` sigue la idea de *FinOps for AI* de la FinOps Foundation: el costo unitario de una inferencia es el costo del cómputo que la sostiene entre las inferencias que atiende. Con lo medido (RPS sostenido, latencia, núcleos y memoria de la API) calcula:
+
+- **El tamaño recomendado**: la CPU en p95 y la memoria máxima de la API más un margen de 30 %, redondeados al tamaño válido de Fargate más chico. Su capacidad es la capacidad sostenida medida (el RPS de inferencias de la etapa que cumple el objetivo, sin las sondas `GET /live`), no una extrapolación del RPS por núcleo; sólo si el tamaño aprovecha un número de núcleos distinto del límite de CPU con que se midió (el que el orquestador lee del contenedor de la API; `--vcpu-medidos` lo sustituye) se escala linealmente. El RPS por núcleo queda en `finops.json` sólo como dato, junto con la saturación observada.
+- **El piso del costo**: esa instancia trabajando a su capacidad sostenida medida.
+- **La demanda real de MiBici**: P1 una vez al día por estación, P2 cada hora de 6 a 23 h por estación y P3 una vez al mes, con 468 estaciones (la red actual según el ML Canvas). Son unas 271 mil inferencias al mes, que se costean con la instancia siempre encendida, con horario de 5:00 a 24:00, en ARM (Graviton) y sin servidor en Cloud Run, que cobra el tiempo activo de cada petición, con y sin lotes. En Cloud Run cada pregunta se costea con su propia latencia promedio medida en la etapa de capacidad, redondeada a 100 ms (una petición de 124 ms se factura como 0.2 s y una de 40 ms como 0.1 s); con lotes, P1 conserva la suya y P2 y P3 usan la latencia medida de una petición con las 468 estaciones. Al escalar a cero, la primera petición paga además el arranque del contenedor y la carga de los modelos, que esta prueba no mide.
+- **El servidor de MLflow encendido 24 x 7**, dimensionado con su CPU promedio y su memoria máxima (durante la carga está ocioso; sus picos de CPU son el healthcheck). Hoy no se puede apagar: la API resuelve el alias y descarga los modelos del Registry cada vez que arranca (`lifespan` de `mibici/api/main.py`), así que lo necesita al escalar o reiniciarse. Para ahorrarlo habría que empaquetar el modelo campeón en la imagen al desplegar o servir los artefactos desde almacenamiento de objetos; su costo mensual es el ahorro máximo posible. Si se midió también en reposo con `compose.yaml` solo, se costea aparte con su ejecutor de trabajos encendido y la diferencia aparece entre las optimizaciones.
+- **El total recomendado**: la API por petición más el servidor de MLflow, frente a la API siempre encendida más el mismo servidor.
+
+Tarifas de lista en dólares, consultadas el 19 de noviembre de 2026, sin impuestos, sin descuentos por compromiso y sin nivel gratuito: [AWS Fargate](https://aws.amazon.com/fargate/pricing/) en us-east-1 (x86: USD 0.000011244 por vCPU-segundo y 0.000001235 por GB-segundo; ARM: 0.0000089944 y 0.0000009889) y [Google Cloud Run](https://cloud.google.com/run/pricing) en nivel 1 (por petición: 0.000024 por vCPU-segundo, 0.0000025 por GiB-segundo, 0.40 por millón de peticiones y redondeo a 100 ms). Están en `TARIFAS` y se pueden actualizar sin tocar el método.
+
+### Resultados
+
+<!-- resultados-carga:inicio -->
+Sin corrida registrada: `python scripts/carga/correr_carga.py --actualizar-readme` escribe aquí los resultados.
+<!-- resultados-carga:fin -->
+
+### Límites de la medición
+
+- Locust corre en la misma computadora que los contenedores y compite con ellos por CPU, así que la capacidad medida es conservadora. En Docker Desktop, además, los contenedores corren en una máquina virtual con su propio número de núcleos.
+- Las latencias incluyen la red local del host hacia los contenedores, no la de un despliegue real. El orquestador apunta a `127.0.0.1`: con `localhost`, en Windows cada conexión nueva de Python intenta primero IPv6 y tarda unos 2 segundos, lo que infla el p99.
+- Los p50, p95 y p99 de cada etapa salen del resumen final de Locust e incluyen la rampa de arranque de los usuarios; el RPS sostenido y la CPU usan sólo la ventana estable, una vez creados todos los usuarios.
+- Cada punto es una sola corrida de 90 segundos por etapa, sin repeticiones: no hay intervalo de variación entre corridas. El objetivo de latencia se evalúa sobre todas las peticiones de la etapa; P1 y P3 reciben pocas (peso 1 de 21 cada una), así que sus percentiles propios se mueven mucho de una corrida a otra y se reportan con su número de peticiones.
+- Los límites de `carga/compose.medicion.yaml` son los de la medición. `compose.yaml` no fija límites: en otra computadora, sin ese archivo, la capacidad será distinta.
+- **Qué incluye el costo**: sólo el cómputo de la API y del servidor de MLflow. Quedan fuera el almacenamiento de artefactos y de imágenes, la transferencia de datos, el balanceador, los registros y el monitoreo, y los arranques en frío de Cloud Run; no se estiman.
+- Los costos son estimaciones con tarifas de lista, sin el nivel gratuito. El de Cloud Run (180 mil vCPU-segundos, 360 mil GiB-segundos y 2 millones de peticiones al mes), con el tamaño recomendado de 1 vCPU y 2 GiB, alcanzaría para la demanda estimada de MiBici aun sin lotes (270,785 peticiones al mes) mientras cada petición facture como máximo 0.6 segundos (unos 162 mil vCPU-segundos y 325 mil GiB-segundos); con 0.7 segundos ya se pasaría del límite de vCPU-segundos.
+
 ## Flujo de trabajo con Git
 
 Seguimos GitHub Flow:
