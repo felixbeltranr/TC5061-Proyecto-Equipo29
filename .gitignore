@@ -200,4 +200,3 @@ models/*.pkl
 models/*.joblib
 .model-store/
 .env
-reports/carga/locust.html
