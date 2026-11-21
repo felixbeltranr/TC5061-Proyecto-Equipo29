@@ -191,6 +191,7 @@ def analizar(
     vcpu_max: float = 1.0,
     vcpu_medidos: float = 1.0,
     saturacion: dict | None = None,
+    recursos_mlflow_sin_ajuste: dict | None = None,
 ) -> dict:
     """Escenarios de costo y optimizaciones a partir de la prueba de carga.
 
@@ -201,6 +202,9 @@ def analizar(
     la API puede aprovechar (un proceso de uvicorn usa uno) y ``vcpu_medidos``, el límite de CPU
     del contenedor de la API durante la prueba. La capacidad de la instancia recomendada es la
     medida; sólo se escala linealmente si sus núcleos útiles difieren de los medidos.
+    ``recursos_mlflow`` es el consumo de MLflow durante la prueba y
+    ``recursos_mlflow_sin_ajuste``, el medido en reposo con ``compose.yaml`` solo, sin apagar su
+    ejecutor de trabajos.
     """
     demanda = demanda or Demanda()
     lotes = lotes or {}
@@ -308,23 +312,35 @@ def analizar(
                 )
             )
 
-    if recursos_mlflow:
+    for clave, nombre, medidos in (
+        (
+            "mlflow",
+            "Servidor de MLflow encendido 24 x 7 (la API carga los modelos al arrancar)",
+            recursos_mlflow,
+        ),
+        (
+            "mlflow_sin_ajuste",
+            "Servidor de MLflow 24 x 7 como lo levanta compose.yaml, con su ejecutor de trabajos",
+            recursos_mlflow_sin_ajuste,
+        ),
+    ):
+        if not medidos:
+            continue
         # MLflow está ocioso durante la carga: su p95 de CPU sólo refleja el proceso de Python
         # que lanza el healthcheck cada 10 s, así que se dimensiona con el promedio.
-        cpu_mlflow = recursos_mlflow.get(
-            "cpu_nucleos_promedio", recursos_mlflow["cpu_nucleos_p95"]
-        )
-        vcpu_m, gb_m = dimensionar(cpu_mlflow, recursos_mlflow["memoria_mib_max"], margen)
+        cpu_mlflow = medidos.get("cpu_nucleos_promedio", medidos["cpu_nucleos_p95"])
+        vcpu_m, gb_m = dimensionar(cpu_mlflow, medidos["memoria_mib_max"], margen)
         escenarios.append(
             _escenario(
-                "mlflow",
-                "Servidor de MLflow encendido 24 x 7 (la API carga los modelos al arrancar)",
+                clave,
+                nombre,
                 x86,
                 vcpu_m,
                 gb_m,
                 usd_hora=usd_hora(x86, vcpu_m, gb_m),
                 usd_mes=usd_hora(x86, vcpu_m, gb_m) * HORAS_MES,
                 inferencias_mes=math.nan,
+                memoria_mib_max=medidos["memoria_mib_max"],
             )
         )
 
@@ -468,6 +484,35 @@ def optimizaciones(resultado: dict) -> list[str]:
             "necesita al escalar o reiniciarse. Para ahorrarlo habría que empaquetar el modelo "
             "campeón en la imagen al desplegar o servir los artefactos desde almacenamiento de "
             f"objetos; esos {_usd(mlflow['usd_mes'])} USD al mes son el ahorro máximo posible."
+        )
+
+    sin_ajuste = filas.get("mlflow_sin_ajuste")
+    if (
+        mlflow is not None
+        and sin_ajuste is not None
+        and _es_numero(mlflow["usd_mes"], sin_ajuste["usd_mes"], ahorro(sin_ajuste, mlflow))
+        and sin_ajuste["usd_mes"] > mlflow["usd_mes"]
+    ):
+        frases.append(
+            "Apagar el ejecutor de trabajos de MLflow, que el proyecto no usa "
+            "(`MLFLOW_SERVER_ENABLE_JOB_EXECUTION=false`), baja su memoria máxima de "
+            f"{_numero(sin_ajuste['memoria_mib_max'])} a {_numero(mlflow['memoria_mib_max'])} MiB "
+            f"y su tamaño de {sin_ajuste['vcpu']:g} vCPU y {sin_ajuste['gb']:g} GB a "
+            f"{mlflow['vcpu']:g} vCPU y {mlflow['gb']:g} GB: de {_usd(sin_ajuste['usd_mes'])} a "
+            f"{_usd(mlflow['usd_mes'])} USD al mes, un ahorro del {ahorro(sin_ajuste, mlflow):.1%}."
+        )
+
+    api = filas.get("cloud_run_lote") or filas.get("cloud_run")
+    if api is not None and mlflow is not None and _es_numero(api["usd_mes"], mlflow["usd_mes"]):
+        recomendado = api["usd_mes"] + mlflow["usd_mes"]
+        actual = usd_base + mlflow["usd_mes"]
+        modo = "con P2 y P3 en lote" if api.get("clave") == "cloud_run_lote" else "sin lotes"
+        frases.append(
+            f"En conjunto, la API en Cloud Run por petición {modo} ({_usd(api['usd_mes'])} USD) "
+            f"más el servidor de MLflow ({_usd(mlflow['usd_mes'])} USD) suman "
+            f"{_usd(recomendado)} USD al mes, frente a {_usd(actual)} USD con la API siempre "
+            f"encendida: un ahorro del {1 - recomendado / actual:.1%}. El servidor de MLflow pasa "
+            f"a ser el {mlflow['usd_mes'] / recomendado:.1%} de ese total."
         )
     return frases
 

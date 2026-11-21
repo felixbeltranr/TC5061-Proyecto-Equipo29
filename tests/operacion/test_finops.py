@@ -145,8 +145,9 @@ def _por_clave(resultado, clave):
 def test_optimizaciones_con_cifras(resultado):
     frases = resultado["optimizaciones"]
     assert frases == finops.optimizaciones(resultado)
-    assert len(frases) == 5
-    uso, horario, arm, nube, mlflow = frases
+    assert len(frases) == 6
+    uso, horario, arm, nube, mlflow, conjunto = frases
+    assert conjunto.startswith("En conjunto")
     base = _por_clave(resultado, "siempre_encendido")
     usd_base = f"{base['usd_mes']:,.2f}"
     assert f"{resultado['utilizacion_mibici']:.3%}" in uso
@@ -342,3 +343,40 @@ def test_piso_usa_la_capacidad_medida(resultado):
     assert piso["inferencias_mes"] == pytest.approx(capacidad * 3600 * finops.HORAS_MES)
     total = resultado["supuestos"]["inferencias_mes"]["total"]
     assert resultado["utilizacion_mibici"] == pytest.approx(total / piso["inferencias_mes"])
+
+
+def test_mlflow_sin_ajuste_agrega_su_escenario_y_el_ahorro():
+    # Con el ejecutor de trabajos MLflow ocupa 1,884 MiB: con 30 % de margen ya no cabe en 2 GB.
+    sin_ajuste = {"cpu_nucleos_promedio": 0.02, "cpu_nucleos_p95": 0.3, "memoria_mib_max": 1884.0}
+    resultado = finops.analizar(
+        CAPACIDAD, API, lotes=LOTES, recursos_mlflow=MLFLOW, recursos_mlflow_sin_ajuste=sin_ajuste
+    )
+    ajustado = _por_clave(resultado, "mlflow")
+    fila = _por_clave(resultado, "mlflow_sin_ajuste")
+    assert (fila["vcpu"], fila["gb"]) == (0.5, 3.0)
+    assert fila["usd_mes"] > ajustado["usd_mes"]
+    frase = next(f for f in resultado["optimizaciones"] if f.startswith("Apagar el ejecutor"))
+    assert "de 1,884 a 210 MiB" in frase
+    assert f"{1 - ajustado['usd_mes'] / fila['usd_mes']:.1%}" in frase
+
+
+def test_sin_medida_en_reposo_no_hay_escenario_sin_ajuste(resultado):
+    assert all(fila["clave"] != "mlflow_sin_ajuste" for fila in resultado["escenarios"])
+    assert not any(f.startswith("Apagar el ejecutor") for f in resultado["optimizaciones"])
+
+
+def test_el_total_recomendado_suma_la_api_y_mlflow():
+    resultado = finops.analizar(CAPACIDAD, API, lotes=LOTES, recursos_mlflow=MLFLOW)
+    lote = _por_clave(resultado, "cloud_run_lote")
+    mlflow = _por_clave(resultado, "mlflow")
+    base = _por_clave(resultado, "siempre_encendido")
+    frase = resultado["optimizaciones"][-1]
+    assert frase.startswith("En conjunto")
+    assert "con P2 y P3 en lote" in frase
+    assert f"suman {lote['usd_mes'] + mlflow['usd_mes']:,.2f} USD al mes" in frase
+    assert f"frente a {base['usd_mes'] + mlflow['usd_mes']:,.2f} USD" in frase
+
+
+def test_sin_mlflow_no_hay_total_recomendado():
+    resultado = finops.analizar(CAPACIDAD, API, lotes=LOTES)
+    assert not any(f.startswith("En conjunto") for f in resultado["optimizaciones"])
