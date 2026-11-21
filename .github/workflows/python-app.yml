@@ -5,7 +5,7 @@ name: Python application
 
 on:
   push:
-    branches: [ "main", "1.10_juog-github-actions-ci-cd" ]
+    branches: [ "main" ]
   pull_request:
     branches: [ "main" ]
 
@@ -65,3 +65,49 @@ jobs:
       - name: Run data tests
         run: |
           python -m pytest -ra tests/datos
+
+  comment-pr:
+    name: PR result summary
+    if: ${{ always() && github.event_name == 'pull_request' }}
+    needs: [build, deepchecks-py311]
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Post or update PR summary
+        uses: actions/github-script@v7
+        env:
+          BUILD_RESULT: ${{ needs.build.result }}
+          DATA_TESTS_RESULT: ${{ needs.deepchecks-py311.result }}
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const issue_number = context.payload.pull_request.number;
+            const marker = "<!-- mibici-ci-summary -->";
+            const body = [
+              marker,
+              "### Resultado de CI",
+              `- Build, lint, pytest y Compose: **${process.env.BUILD_RESULT}**`,
+              `- Pruebas de datos: **${process.env.DATA_TESTS_RESULT}**`,
+              `[Ver ejecución](${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId})`,
+            ].join("\n");
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner, repo, issue_number, per_page: 100,
+            });
+            const previous = comments.find(
+              comment =>
+                comment.user?.login === "github-actions[bot]" &&
+                comment.body?.includes(marker)
+            );
+
+            if (previous) {
+              await github.rest.issues.updateComment({
+                owner, repo, comment_id: previous.id, body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner, repo, issue_number, body,
+              });
+            }

@@ -848,7 +848,16 @@ Compose inicia `registry-init`, MLflow y la API en el orden requerido. El inicia
 
 Antes del primer arranque, coloca en `.model-store\` una copia que contenga `mlflow.db` y `mlartifacts\`. Debe incluir los campeones `champion` de P1, P2 y P3, con versiones `READY` y artefactos accesibles mediante `mlflow-artifacts:/`. Además, el campeón P1 debe coincidir con `scripts/p1/campeon_api_p1.json`, incluido el SHA256 del modelo. El almacén se distribuye fuera del repositorio; no se incluye en Git ni en la imagen Docker.
 
-La ruta predeterminada es `./.model-store`. Para usar otra, define `MODEL_STORE_PATH` en el entorno de Compose antes de ejecutar el comando. Si la copia no cumple los requisitos, `registry-init` falla explícitamente y MLflow/API no continúan con un Registry incompleto.
+Obtén el archivo `almacen_mlflow_entrega2_r1.zip` del responsable de P1; no está versionado ni se descarga automáticamente. Extráelo de modo que `mlflow.db` y `mlartifacts\` queden directamente dentro de `.model-store\`. Si el almacén no incluye los tres campeones con las ubicaciones de artefactos indicadas, `registry-init` fallará explícitamente y MLflow/API no continuarán con un Registry incompleto.
+
+La ruta predeterminada es `./.model-store`. Para usar otra carpeta ya extraída, define `MODEL_STORE_PATH` en la misma terminal antes de ejecutar Compose:
+
+```powershell
+$env:MODEL_STORE_PATH = "E:\ruta\almacen_mlflow"
+docker compose up --build -d
+```
+
+En Bash, usa `export MODEL_STORE_PATH="/ruta/almacen_mlflow"`. En ambos casos, la carpeta indicada debe contener directamente `mlflow.db` y `mlartifacts/`.
 
 ### Iniciar y comprobar
 
@@ -861,6 +870,20 @@ docker compose up --build -d
 Revisa el estado con `docker compose ps`. Comprueba la API en `http://localhost:8000/live`, `http://localhost:8000/ready` y `http://localhost:8000/docs`; la interfaz de MLflow está en `http://localhost:5000` y solo se publica en la interfaz local.
 
 Si un servicio no queda listo, revisa `docker compose logs registry-init mlflow api`. Para detener los servicios sin borrar los datos persistentes, usa `docker compose down`; `docker compose down -v` también elimina los volúmenes del Registry.
+
+En el primer arranque, `registry-init` copia y valida el almacén en volúmenes nuevos. En los siguientes, valida el Registry que ya está en esos volúmenes y no lo reemplaza con el contenido de `MODEL_STORE_PATH`. Para probar una inicialización aislada sin borrar los volúmenes actuales, usa otro nombre de proyecto Compose y apunta `MODEL_STORE_PATH` al almacén; detén primero cualquier proyecto que ocupe los puertos 5000 y 8000.
+
+## CI/CD con GitHub Actions
+
+El workflow [`.github/workflows/python-app.yml`](.github/workflows/python-app.yml) se ejecuta al hacer `push` a `main` y al abrir o actualizar un pull request cuyo destino sea `main`. Un `push` a una rama de trabajo, sin PR, no dispara este workflow.
+
+El pipeline tiene estos jobs:
+
+- `build`, con Python 3.14 y caché de pip: instala las dependencias, ejecuta Flake8 y pytest (excepto `tests/datos`), valida la configuración con `docker compose config -q` y construye la imagen con `docker compose build`.
+- `deepchecks-py311`, con Python 3.11: instala `requirements-deepchecks.txt` y ejecuta `tests/datos`.
+- `comment-pr`: en pull requests, publica o actualiza un comentario con el estado de los dos jobs y el enlace a la ejecución. Los resultados detallados y los logs se consultan en **Checks** del PR. GitHub puede impedir que este comentario se publique en PRs de forks; los checks del workflow siguen siendo el lugar para revisar el resultado.
+
+Este workflow valida y construye la imagen en GitHub Actions, pero no inicia los servicios, publica la imagen en un registry ni despliega la aplicación. Para ejecutar el sistema localmente, sigue los pasos de Docker Compose de la sección anterior.
 
 ## Despliegue inicial con MLflow y FastAPI
 
