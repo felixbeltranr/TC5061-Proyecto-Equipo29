@@ -141,6 +141,39 @@ def a_markdown(filas: list[dict], tarifa: finops.Tarifa, vcpu: float, gb: float,
     return "\n".join(lineas) + "\n"
 
 
+def figura(filas: list[dict], ruta: Path) -> None:
+    """Curva del tiempo por petición y por inferencia según el tamaño del lote."""
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    estaciones = [f["estaciones"] for f in filas]
+    ejes = plt.subplots(figsize=(7.5, 4.2))[1]
+    ejes.plot(estaciones, [f["ms_peticion"] for f in filas], marker="o",
+              label="Petición completa")
+    ejes.plot(estaciones, [f["ms_por_inferencia"] for f in filas], marker="s",
+              label="Por inferencia")
+    ejes.set_xscale("log")
+    ejes.set_yscale("log")
+    # Holgura abajo: las etiquetas van debajo del punto y la del lote mayor se recorta.
+    menor = min(f["ms_por_inferencia"] for f in filas)
+    ejes.set_ylim(bottom=menor / 2.5)
+    ejes.set_xticks(estaciones)
+    ejes.set_xticklabels([str(e) for e in estaciones])
+    ejes.set_xlabel("Estaciones por petición")
+    ejes.set_ylabel("Milisegundos (escala logarítmica)")
+    ejes.set_title("P3: tiempo de servicio según el tamaño del lote")
+    ejes.grid(alpha=0.3, which="both")
+    ejes.legend()
+    for f in filas:
+        ejes.annotate(f"{f['ms_por_inferencia']:.3g}", (f["estaciones"], f["ms_por_inferencia"]),
+                      textcoords="offset points", xytext=(0, -14), ha="center", fontsize=8)
+    plt.tight_layout()
+    plt.savefig(ruta, dpi=150)
+    plt.close("all")
+
+
 def main(argv: list[str] | None = None) -> int:
     demanda = finops.Demanda()
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
@@ -205,6 +238,7 @@ def main(argv: list[str] | None = None) -> int:
         escritor = csv.DictWriter(destino, fieldnames=COLUMNAS)
         escritor.writeheader()
         escritor.writerows(filas)
+    figura(filas, salida / "lotes_p3.png")
     markdown = a_markdown(filas, tarifa, args.vcpu, args.gb, args.repeticiones,
                           demanda.inferencias()["p3"], inicializacion)
     (salida / "lotes_p3.md").write_text(markdown, encoding="utf-8")
