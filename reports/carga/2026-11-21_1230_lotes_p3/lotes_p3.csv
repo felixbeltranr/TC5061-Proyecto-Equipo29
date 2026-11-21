@@ -1,0 +1,5 @@
+estaciones,ms_peticion,ms_mediana,ms_por_inferencia,factor_vs_una,usd_1000_inferencias,peticiones_mes,usd_mes
+1,4.03,5.19,4.031,1.0,0.0033,468,0.0015
+10,4.21,5.07,0.4214,9.6,0.00033,47,0.0002
+100,5.51,6.45,0.0551,73.2,3.3e-05,5,0.0
+468,11.48,13.87,0.0245,164.3,7e-06,1,0.0

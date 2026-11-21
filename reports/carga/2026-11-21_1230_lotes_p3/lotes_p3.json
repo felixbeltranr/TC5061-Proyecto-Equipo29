@@ -1,0 +1,83 @@
+{
+  "host": "http://127.0.0.1:8000",
+  "tarifa": "cloud_run_peticion",
+  "vcpu": 1.0,
+  "gb": 2.0,
+  "repeticiones": 50,
+  "calentamiento": 10,
+  "inicializacion_ms": -0.3471000018180348,
+  "medidas": {
+    "1": {
+      "mediana": 5.1899499994760845,
+      "minimo": 4.03099999857659,
+      "maximo": 54.73519999941345,
+      "n": 50
+    },
+    "10": {
+      "mediana": 5.07130000005418,
+      "minimo": 4.214099999444443,
+      "maximo": 6.679099999018945,
+      "n": 50
+    },
+    "100": {
+      "mediana": 6.449649999922258,
+      "minimo": 5.507500000021537,
+      "maximo": 7.989800000359537,
+      "n": 50
+    },
+    "468": {
+      "mediana": 13.873200000489305,
+      "minimo": 11.482500000056461,
+      "maximo": 170.47140000067884,
+      "n": 50
+    },
+    "1_repetida": {
+      "mediana": 5.6616000001668,
+      "minimo": 4.378100000394625,
+      "maximo": 7.14719999996305,
+      "n": 50
+    }
+  },
+  "filas": [
+    {
+      "estaciones": 1,
+      "ms_peticion": 4.03,
+      "ms_mediana": 5.19,
+      "ms_por_inferencia": 4.031,
+      "factor_vs_una": 1.0,
+      "usd_1000_inferencias": 0.0033,
+      "peticiones_mes": 468,
+      "usd_mes": 0.0015
+    },
+    {
+      "estaciones": 10,
+      "ms_peticion": 4.21,
+      "ms_mediana": 5.07,
+      "ms_por_inferencia": 0.4214,
+      "factor_vs_una": 9.6,
+      "usd_1000_inferencias": 0.00033,
+      "peticiones_mes": 47,
+      "usd_mes": 0.0002
+    },
+    {
+      "estaciones": 100,
+      "ms_peticion": 5.51,
+      "ms_mediana": 6.45,
+      "ms_por_inferencia": 0.0551,
+      "factor_vs_una": 73.2,
+      "usd_1000_inferencias": 3.3e-05,
+      "peticiones_mes": 5,
+      "usd_mes": 0.0
+    },
+    {
+      "estaciones": 468,
+      "ms_peticion": 11.48,
+      "ms_mediana": 13.87,
+      "ms_por_inferencia": 0.0245,
+      "factor_vs_una": 164.3,
+      "usd_1000_inferencias": 7e-06,
+      "peticiones_mes": 1,
+      "usd_mes": 0.0
+    }
+  ]
+}
