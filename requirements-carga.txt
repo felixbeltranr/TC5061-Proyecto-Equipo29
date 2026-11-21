@@ -1,0 +1,4 @@
+# Prueba de carga del Entregable 7. Entorno aparte de requirements.txt: solo hace falta para
+# generar carga contra la API, no para entrenar ni para servir.
+# Trae gevent como dependencia; hay ruedas para CPython 3.14 en Windows, Linux y macOS.
+locust==2.47.0
