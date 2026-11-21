@@ -219,10 +219,12 @@ def limites_de(contenedores: dict[str, str], motor: str) -> dict[str, dict]:
                 errors="replace",
                 check=False,
             )
-            salida = resultado.stdout if resultado.returncode == 0 else ""
+            leido = resultado.returncode == 0
+            salida = resultado.stdout if leido else ""
         except OSError:
-            salida = ""
-        limites[servicio] = leer_limites(salida)
+            leido, salida = False, ""
+        # ``leido`` distingue «sin límite» (inspect respondió cero) de «no se pudo leer».
+        limites[servicio] = dict(leer_limites(salida), leido=leido)
     return limites
 
 
@@ -230,6 +232,9 @@ def texto_limites(limites: dict[str, dict]) -> str:
     """``'Límites durante la corrida: api con 1 vCPU y 1,024 MiB; mlflow con CPU sin límite…'``."""
     partes = []
     for servicio, limite in limites.items():
+        if limite.get("leido") is False:
+            partes.append(f"{servicio} con límites desconocidos (no se pudieron leer)")
+            continue
         cpus, memoria = limite.get("cpus"), limite.get("memoria_mib")
         cpu = f"{cpus:g} vCPU" if cpus else "CPU sin límite"
         ram = f"{memoria:,.0f} MiB" if memoria else "memoria sin límite"
@@ -249,6 +254,14 @@ def medir_reposo(args: argparse.Namespace, salida: Path, fecha: str) -> int:
     ) as muestreador:
         time.sleep(args.reposo)
     por_contenedor = recursos.resumir(muestreador.muestras)
+    sin_muestras = [s for s, nombre in contenedores.items() if not por_contenedor.get(nombre)]
+    if sin_muestras:
+        detalle = f" ({muestreador.errores[-1]})" if muestreador.errores else ""
+        print(
+            f"Sin muestras de {', '.join(sin_muestras)} en reposo{detalle}: no se escribe "
+            "reposo.json."
+        )
+        return 2
     recursos.guardar_csv(muestreador.muestras, salida / "reposo_recursos.csv")
     reposo = {
         "fecha": fecha,
@@ -269,7 +282,10 @@ def mlflow_sin_ajuste(ruta: Path | None) -> dict | None:
     if ruta is None:
         return None
     reposo = json.loads(ruta.read_text(encoding="utf-8"))
-    return (reposo.get("recursos") or {}).get("mlflow") or None
+    medido = (reposo.get("recursos") or {}).get("mlflow")
+    if not isinstance(medido, dict) or "memoria_mib_max" not in medido:
+        raise ValueError(f"{ruta} no trae la medición de MLflow en reposo")
+    return medido
 
 
 def tabla_preguntas(etapa: dict) -> str:
@@ -284,6 +300,18 @@ def tabla_preguntas(etapa: dict) -> str:
             f"| {e['p95_ms']:.0f} | {e['p99_ms']:.0f} |"
         )
     return "\n".join(renglones) if len(renglones) > 2 else ""
+
+
+def etapas_ocupadas(salida: Path, etapas: list[int]) -> list[int]:
+    """Etapas que ya tienen archivos en la carpeta (``etapa_015_stats.csv``, ``etapa_015.html``)."""
+    if not salida.is_dir():
+        return []
+    nombres = [ruta.name for ruta in salida.iterdir()]
+    return [
+        usuarios
+        for usuarios in etapas
+        if any(n.startswith((f"etapa_{usuarios:03d}_", f"etapa_{usuarios:03d}.")) for n in nombres)
+    ]
 
 
 def correr_etapa(args, usuarios: int, salida: Path, endpoints: list[str]) -> tuple[float, float]:
@@ -482,6 +510,16 @@ def bloque_readme(resumen: dict, finops_md: str, carpeta_relativa: str) -> str:
     saturacion = resumen.get("saturacion") or {}
     primera = texto_primera_peticion(resumen.get("primera_peticion") or {})
     limites = texto_limites(resumen.get("limites") or {})
+    if limites and resumen.get("vcpu_medidos_supuesto"):
+        limites += (
+            f" El costo supone {resumen.get('vcpu_medidos', 1.0):g} núcleo para la API, porque "
+            "no se leyó un límite de CPU."
+        )
+    avisos = resumen.get("avisos") or []
+    if avisos:
+        limites = (limites + " " if limites else "") + (
+            "Avisos de la corrida: " + "; ".join(avisos) + "."
+        )
     preguntas = tabla_preguntas(capacidad)
     if preguntas:
         preguntas = (
@@ -630,6 +668,21 @@ def main(argv: list[str] | None = None) -> int:
     if args.reposo:
         return medir_reposo(args, salida, fecha)
 
+    ocupadas = etapas_ocupadas(salida, etapas)
+    if ocupadas:
+        # Si Locust no llegara a escribir, los CSV de otra corrida pasarían por los de ésta.
+        cuales = "la etapa" if len(ocupadas) == 1 else "las etapas"
+        print(
+            f"{salida} ya tiene resultados de {cuales} de {', '.join(map(str, ocupadas))} "
+            "usuarios. Cada corrida necesita una carpeta propia: uso otra --salida."
+        )
+        return 2
+    try:
+        sin_ajuste = mlflow_sin_ajuste(args.mlflow_sin_ajuste)
+    except (OSError, ValueError) as error:
+        print(f"--mlflow-sin-ajuste: {error}")
+        return 2
+
     try:
         endpoints = endpoints_disponibles(args.host)
     except (RuntimeError, urllib.error.URLError) as error:
@@ -649,8 +702,15 @@ def main(argv: list[str] | None = None) -> int:
     vcpu_medidos = args.vcpu_medidos or (limites.get("api") or {}).get("cpus")
     if texto_limites(limites):
         print(texto_limites(limites))
-    if not vcpu_medidos:
-        if contenedores:
+    supuesto = not vcpu_medidos
+    if supuesto:
+        if contenedores and (limites.get("api") or {}).get("leido") is False:
+            print(
+                "No se pudieron leer los límites de la API y no se indicó --vcpu-medidos. Se "
+                "toma 1 núcleo, el que aprovecha un proceso de uvicorn, y queda anotado como "
+                "supuesto."
+            )
+        elif contenedores:
             print(
                 "La API no tiene límite de CPU y no se indicó --vcpu-medidos: la capacidad "
                 "depende de esta computadora. Para costear, levanta el sistema con "
@@ -663,7 +723,7 @@ def main(argv: list[str] | None = None) -> int:
     if texto_primera_peticion(primera):
         print(texto_primera_peticion(primera))
 
-    resumenes, historiales, muestras, cortes = [], [], [], []
+    resumenes, historiales, muestras, cortes, avisos = [], [], [], [], []
     for usuarios in etapas:
         print(f"Etapa de {usuarios} usuarios durante {args.duracion} s…")
         if contenedores:
@@ -672,11 +732,12 @@ def main(argv: list[str] | None = None) -> int:
             ) as muestreador:
                 inicio, fin = correr_etapa(args, usuarios, salida, endpoints)
             propias = muestreador.muestras
-            if muestreador.errores:
-                print(f"  avisos de {args.motor} stats: {muestreador.errores[-1]}")
+            error_stats = muestreador.errores[-1] if muestreador.errores else ""
+            if error_stats:
+                print(f"  avisos de {args.motor} stats: {error_stats}")
         else:
             inicio, fin = correr_etapa(args, usuarios, salida, endpoints)
-            propias = []
+            propias, error_stats = [], ""
         prefijo = salida / f"etapa_{usuarios:03d}"
         ruta_stats = Path(f"{prefijo}_stats.csv")
         ruta_historial = Path(f"{prefijo}_stats_history.csv")
@@ -694,6 +755,13 @@ def main(argv: list[str] | None = None) -> int:
         resumen["recursos"] = {
             servicio: por_contenedor.get(nombre) for servicio, nombre in contenedores.items()
         }
+        faltan = [servicio for servicio, medido in resumen["recursos"].items() if not medido]
+        if faltan:
+            # Sin esas muestras el servicio no entra al costo: que no pase inadvertido.
+            aviso = f"etapa de {usuarios} usuarios sin muestras de {', '.join(faltan)}"
+            aviso += f" ({error_stats})" if error_stats else ""
+            avisos.append(aviso)
+            print(f"  aviso: {aviso}")
         recursos.guardar_csv(propias, Path(f"{prefijo}_recursos.csv"))
         resumenes.append(resumen)
         historiales.append((usuarios, historial))
@@ -711,7 +779,6 @@ def main(argv: list[str] | None = None) -> int:
     lotes = sonda_de_lotes(args.host, args.lote_sonda, args.repeticiones_sonda, endpoints)
     capacidad = carga.capacidad_sostenida(resumenes, args.p95_objetivo, args.error_maximo)
     saturacion = carga.saturacion(resumenes)
-    sin_ajuste = mlflow_sin_ajuste(args.mlflow_sin_ajuste)
     resumen_total = {
         "fecha": fecha,
         "commit": _commit(),
@@ -723,6 +790,8 @@ def main(argv: list[str] | None = None) -> int:
         "contenedores": contenedores,
         "limites": limites,
         "vcpu_medidos": vcpu_medidos,
+        "vcpu_medidos_supuesto": supuesto,
+        "avisos": avisos,
         "vcpu_max": args.vcpu_max,
         "estaciones": args.estaciones,
         "mlflow_sin_ajuste": sin_ajuste,

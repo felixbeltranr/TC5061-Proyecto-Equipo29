@@ -310,7 +310,7 @@ def test_leer_limites(orquestador):
 
 def test_limites_de_sin_motor_no_falla(orquestador):
     limites = orquestador.limites_de({"api": "api-1"}, "motor-que-no-existe")
-    assert limites == {"api": {"cpus": None, "memoria_mib": None}}
+    assert limites == {"api": {"cpus": None, "memoria_mib": None, "leido": False}}
 
 
 def test_texto_limites(orquestador):
@@ -464,7 +464,7 @@ def test_limites_de_lee_inspect(orquestador, monkeypatch):
 
     monkeypatch.setattr(orquestador.subprocess, "run", run)
     limites = orquestador.limites_de({"api": "x-api-1"}, "docker")
-    assert limites == {"api": {"cpus": 0.5, "memoria_mib": 1024.0}}
+    assert limites == {"api": {"cpus": 0.5, "memoria_mib": 1024.0, "leido": True}}
     assert comandos == [
         [
             "docker",
@@ -482,7 +482,8 @@ def test_limites_de_con_inspect_fallido_no_inventa(orquestador, monkeypatch):
 
     monkeypatch.setattr(orquestador.subprocess, "run", run)
     limites = orquestador.limites_de({"api": "x-api-1"}, "docker")
-    assert limites == {"api": {"cpus": None, "memoria_mib": None}}
+    # Un inspect fallido no es lo mismo que un contenedor sin límites.
+    assert limites == {"api": {"cpus": None, "memoria_mib": None, "leido": False}}
 
 
 @pytest.mark.parametrize(
@@ -665,9 +666,7 @@ def test_recalcular_con_actualizar_readme_reescribe_solo_el_bloque(
     carpeta.mkdir(parents=True)
     orquestador._escribir_json(carpeta / "resumen.json", _resumen_guardado({"api": API}))
     readme = raiz / "README.md"
-    original = "\n".join(
-        ["antes", orquestador.INICIO_BLOQUE, "viejo", orquestador.FIN_BLOQUE, "después", ""]
-    )
+    original = f"antes\n{orquestador.INICIO_BLOQUE}\nviejo\n{orquestador.FIN_BLOQUE}\ndespués\n"
     readme.write_text(original, encoding="utf-8")
     monkeypatch.setattr(orquestador, "RAIZ", raiz)
     monkeypatch.setattr(orquestador, "README", readme)
@@ -683,3 +682,186 @@ def test_recalcular_con_actualizar_readme_reescribe_solo_el_bloque(
     assert "Corrida del 2026-11-20_2224 (commit `abc1234`)" in texto
     assert "![Capacidad](reports/carga/2026-11-20_2224/capacidad.png)" in texto
     assert (carpeta / "finops.md").read_text(encoding="utf-8").strip() in texto
+
+
+def test_no_presenta_como_nuevos_los_csv_de_otra_corrida(
+    orquestador, monkeypatch, tmp_path, capsys
+):
+    viejos = {}
+    for sufijo in ("_stats.csv", "_stats_history.csv"):
+        ruta = tmp_path / f"etapa_015{sufijo}"
+        ruta.write_text("de otra corrida", encoding="utf-8")
+        viejos[ruta] = ruta.read_bytes()
+    for prohibida in ("endpoints_disponibles", "primera_peticion", "correr_etapa"):
+        monkeypatch.setattr(
+            orquestador, prohibida, lambda *a, nombre=prohibida: pytest.fail(f"llamó a {nombre}")
+        )
+    codigo = orquestador.main(["--sin-recursos", "--etapas", "10,15", "--salida", str(tmp_path)])
+    assert codigo == 2
+    assert "ya tiene resultados de la etapa de 15 usuarios" in capsys.readouterr().out
+    assert all(ruta.read_bytes() == contenido for ruta, contenido in viejos.items())
+    assert not (tmp_path / "resumen.json").exists()
+
+
+def test_etapas_ocupadas_no_confunde_prefijos(orquestador, tmp_path):
+    (tmp_path / "etapa_1000_stats.csv").write_text("x", encoding="utf-8")
+    (tmp_path / "etapa_020.html").write_text("x", encoding="utf-8")
+    (tmp_path / "reposo.json").write_text("{}", encoding="utf-8")
+    assert orquestador.etapas_ocupadas(tmp_path, [20, 100, 1000]) == [20, 1000]
+    assert orquestador.etapas_ocupadas(tmp_path / "nueva", [20]) == []
+
+
+class _MuestreadorFalso:
+    muestras: list = []
+    errores: list = []
+
+    def __init__(self, *args):
+        pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_):
+        return False
+
+
+def _reposo_simulado(orquestador, monkeypatch, por_contenedor, errores=()):
+    class Muestreador(_MuestreadorFalso):
+        pass
+
+    Muestreador.errores = list(errores)
+    monkeypatch.setattr(orquestador.recursos, "Muestreador", Muestreador)
+    monkeypatch.setattr(orquestador.recursos, "resumir", lambda muestras: por_contenedor)
+    monkeypatch.setattr(orquestador.recursos, "guardar_csv", lambda *a: None)
+    monkeypatch.setattr(orquestador, "limites_de", lambda contenedores, motor: {})
+    monkeypatch.setattr(orquestador.time, "sleep", lambda segundos: None)
+
+
+MEDIDO = {"cpu_nucleos_promedio": 0.02, "cpu_nucleos_p95": 0.3, "memoria_mib_max": 1884.0}
+
+
+def test_reposo_sin_ninguna_muestra_falla_y_no_escribe(orquestador, monkeypatch, tmp_path, capsys):
+    _reposo_simulado(orquestador, monkeypatch, {}, ["TimeoutExpired: docker stats no respondió"])
+    argumentos = ["--reposo", "5", "--contenedores", "x-api-1,x-mlflow-1", "--salida", str(tmp_path)]
+    assert orquestador.main(argumentos) == 2
+    salida = capsys.readouterr().out
+    assert "Sin muestras de api, mlflow" in salida
+    assert "TimeoutExpired: docker stats no respondió" in salida
+    assert not (tmp_path / "reposo.json").exists()
+
+
+def test_reposo_con_muestras_solo_de_la_api_falla(orquestador, monkeypatch, tmp_path, capsys):
+    _reposo_simulado(orquestador, monkeypatch, {"x-api-1": MEDIDO})
+    argumentos = ["--reposo", "5", "--contenedores", "x-api-1,x-mlflow-1", "--salida", str(tmp_path)]
+    assert orquestador.main(argumentos) == 2
+    assert "Sin muestras de mlflow" in capsys.readouterr().out
+    assert not (tmp_path / "reposo.json").exists()
+
+
+def test_reposo_con_medicion_valida_de_mlflow(orquestador, monkeypatch, tmp_path):
+    _reposo_simulado(orquestador, monkeypatch, {"x-api-1": MEDIDO, "x-mlflow-1": MEDIDO})
+    argumentos = ["--reposo", "5", "--contenedores", "x-api-1,x-mlflow-1", "--salida", str(tmp_path)]
+    assert orquestador.main(argumentos) == 0
+    assert orquestador.mlflow_sin_ajuste(tmp_path / "reposo.json") == MEDIDO
+
+
+def test_mlflow_sin_ajuste_sin_medicion_se_rechaza_antes_de_la_carga(
+    orquestador, monkeypatch, tmp_path, capsys
+):
+    reposo = tmp_path / "reposo.json"
+    orquestador._escribir_json(reposo, {"recursos": {"api": MEDIDO, "mlflow": None}})
+    monkeypatch.setattr(
+        orquestador, "endpoints_disponibles", lambda host: pytest.fail("corrió la carga")
+    )
+    codigo = orquestador.main(
+        ["--mlflow-sin-ajuste", str(reposo), "--salida", str(tmp_path / "corrida")]
+    )
+    assert codigo == 2
+    assert "no trae la medición de MLflow" in capsys.readouterr().out
+    with pytest.raises(ValueError):
+        orquestador.mlflow_sin_ajuste(reposo)
+    assert orquestador.main(
+        ["--mlflow-sin-ajuste", str(tmp_path / "no_existe.json"), "--salida", str(tmp_path / "c2")]
+    ) == 2
+
+
+def test_limites_que_no_se_pudieron_leer_no_se_llaman_sin_limite(orquestador):
+    limites = {
+        "api": {"cpus": None, "memoria_mib": None, "leido": False},
+        "mlflow": {"cpus": None, "memoria_mib": None, "leido": True},
+    }
+    texto = orquestador.texto_limites(limites)
+    assert "api con límites desconocidos (no se pudieron leer)" in texto
+    assert "mlflow con CPU sin límite y memoria sin límite" in texto
+
+
+def _corrida_simulada(orquestador, monkeypatch, tmp_path, contenedores, por_contenedor, limites):
+    """Corre main() con una etapa simulada y devuelve (código, resumen.json o None)."""
+
+    def correr_etapa(args, usuarios, salida, endpoints):
+        for sufijo in ("_stats.csv", "_stats_history.csv"):
+            (salida / f"etapa_{usuarios:03d}{sufijo}").write_text("x", encoding="utf-8")
+        return 0.0, 1.0
+
+    def resumen_etapa(stats, historial, usuarios, duracion, descartar):
+        return _etapa(usuarios, 11.2, 260.0, {})
+
+    monkeypatch.setattr(orquestador, "endpoints_disponibles", lambda host: ["p1"])
+    monkeypatch.setattr(orquestador, "primera_peticion", lambda host, endpoints: {})
+    monkeypatch.setattr(orquestador, "correr_etapa", correr_etapa)
+    monkeypatch.setattr(orquestador, "sonda_de_lotes", lambda *a: {})
+    monkeypatch.setattr(orquestador, "_commit", lambda: "abc1234")
+    monkeypatch.setattr(orquestador, "limites_de", lambda c, motor: limites)
+    monkeypatch.setattr(orquestador.carga, "leer_stats", lambda ruta: None)
+    monkeypatch.setattr(orquestador.carga, "leer_historial", lambda ruta: {})
+    monkeypatch.setattr(orquestador.carga, "resumen_etapa", resumen_etapa)
+    monkeypatch.setattr(orquestador.recursos, "Muestreador", _MuestreadorFalso)
+    monkeypatch.setattr(orquestador.recursos, "en_ventana", lambda *a: [])
+    monkeypatch.setattr(orquestador.recursos, "resumir", lambda muestras: por_contenedor)
+    monkeypatch.setattr(orquestador.recursos, "guardar_csv", lambda *a: None)
+    for figura in ("grafica_desempeno", "grafica_capacidad", "grafica_endpoints"):
+        monkeypatch.setattr(orquestador.graficas, figura, lambda *a: None)
+    codigo = orquestador.main(
+        ["--contenedores", contenedores, "--etapas", "15", "--salida", str(tmp_path)]
+    )
+    ruta = tmp_path / "resumen.json"
+    return codigo, json.loads(ruta.read_text(encoding="utf-8")) if ruta.exists() else None
+
+
+def test_una_etapa_sin_muestras_de_mlflow_queda_avisada(orquestador, monkeypatch, tmp_path, capsys):
+    limites = {"api": {"cpus": 1.0, "memoria_mib": 1024.0, "leido": True}}
+    codigo, resumen = _corrida_simulada(
+        orquestador, monkeypatch, tmp_path, "x-api-1,x-mlflow-1", {"x-api-1": API}, limites
+    )
+    assert codigo == 0
+    assert resumen["avisos"] == ["etapa de 15 usuarios sin muestras de mlflow"]
+    assert "sin muestras de mlflow" in capsys.readouterr().out
+    bloque = orquestador.bloque_readme(resumen, "FINOPS", "reports/carga/x")
+    assert "Avisos de la corrida: etapa de 15 usuarios sin muestras de mlflow." in bloque
+
+
+def test_una_corrida_sin_avisos_no_los_menciona(orquestador, monkeypatch, tmp_path):
+    limites = {"api": {"cpus": 1.0, "memoria_mib": 1024.0, "leido": True}}
+    codigo, resumen = _corrida_simulada(
+        orquestador, monkeypatch, tmp_path, "x-api-1", {"x-api-1": API}, limites
+    )
+    assert codigo == 0 and resumen["avisos"] == []
+    assert resumen["vcpu_medidos_supuesto"] is False
+    assert "Avisos" not in orquestador.bloque_readme(resumen, "FINOPS", "reports/carga/x")
+
+
+def test_inspect_fallido_se_reporta_como_desconocido_y_el_nucleo_como_supuesto(
+    orquestador, monkeypatch, tmp_path, capsys
+):
+    limites = {"api": {"cpus": None, "memoria_mib": None, "leido": False}}
+    codigo, resumen = _corrida_simulada(
+        orquestador, monkeypatch, tmp_path, "x-api-1", {"x-api-1": API}, limites
+    )
+    salida = capsys.readouterr().out
+    assert codigo == 0
+    assert "No se pudieron leer los límites de la API" in salida
+    assert "La API no tiene límite de CPU" not in salida
+    assert resumen["vcpu_medidos"] == 1.0 and resumen["vcpu_medidos_supuesto"] is True
+    bloque = orquestador.bloque_readme(resumen, "FINOPS", "reports/carga/x")
+    assert "api con límites desconocidos (no se pudieron leer)" in bloque
+    assert "El costo supone 1 núcleo para la API" in bloque
