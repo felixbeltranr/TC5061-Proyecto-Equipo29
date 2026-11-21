@@ -13,10 +13,11 @@ BACKEND_DIR = Path("/mlflow/backend")
 ARTIFACTS_DIR = Path("/mlflow/artifacts")
 # Manifiestos por modelo: fijan version, run, ubicacion de artefactos y SHA256 del modelo
 # serializado. Sin manifiesto la validacion es solo estructural, asi que un almacen con el
-# campeon equivocado pasaria sin aviso. Falta el de P2.
+# campeon equivocado pasaria sin aviso.
 SCRIPTS_DIR = Path(__file__).resolve().parents[1]
 MANIFESTS = {
     "mibici-equipo29-p1-demanda": SCRIPTS_DIR / "p1" / "campeon_api_p1.json",
+    "mibici-equipo29-p2-riesgo": SCRIPTS_DIR / "p2" / "campeon_api_p2.json",
     "mibici-equipo29-p3-grupos": SCRIPTS_DIR / "p3" / "campeon_api_p3.json",
 }
 ARTIFACT_URI_PREFIX = "mlflow-artifacts:/"

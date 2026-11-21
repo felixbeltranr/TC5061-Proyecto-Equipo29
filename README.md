@@ -846,7 +846,7 @@ Compose inicia `registry-init`, MLflow y la API en el orden requerido. El inicia
 
 ### Requisito: almacén MLflow completo
 
-Antes del primer arranque, coloca en `.model-store\` una copia que contenga `mlflow.db` y `mlartifacts\`. Debe incluir los campeones `champion` de P1, P2 y P3, con versiones `READY` y artefactos accesibles mediante `mlflow-artifacts:/`. Además, el campeón P1 debe coincidir con `scripts/p1/campeon_api_p1.json`, incluido el SHA256 del modelo. El almacén se distribuye fuera del repositorio; no se incluye en Git ni en la imagen Docker.
+Antes del primer arranque, coloca en `.model-store\` una copia que contenga `mlflow.db` y `mlartifacts\`. Debe incluir los campeones `champion` de P1, P2 y P3, con versiones `READY` y artefactos accesibles mediante `mlflow-artifacts:/`. Además, los campeones de P1, P2 y P3 deben coincidir con `scripts/p1/campeon_api_p1.json`, `scripts/p2/campeon_api_p2.json` y `scripts/p3/campeon_api_p3.json`, incluido el SHA256 de cada modelo. El almacén se distribuye fuera del repositorio; no se incluye en Git ni en la imagen Docker.
 
 Obtén el archivo `almacen_mlflow_entrega2_r1.zip` del responsable de P1; no está versionado ni se descarga automáticamente. Extráelo de modo que `mlflow.db` y `mlartifacts\` queden directamente dentro de `.model-store\`. Si el almacén no incluye los tres campeones con las ubicaciones de artefactos indicadas, `registry-init` fallará explícitamente y MLflow/API no continuarán con un Registry incompleto.
 
@@ -1224,7 +1224,7 @@ Seguimos GitHub Flow:
 ├── scripts
 │   ├── compose        <- Inicialización del Registry para Compose
 │   ├── p1             <- Utilidades y manifiesto del campeón de P1
-│   ├── p2             <- Ejemplo de petición de P2
+│   ├── p2             <- Ejemplo de petición y manifiesto del campeón de P2
 │   └── p3             <- Ejemplo de petición y manifiesto del campeón de P3
 ├── tests              <- Pruebas con pytest
 └── mibici             <- Código del proyecto

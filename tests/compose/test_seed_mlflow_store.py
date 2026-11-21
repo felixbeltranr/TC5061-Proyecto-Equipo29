@@ -12,7 +12,7 @@ P1 = "mibici-equipo29-p1-demanda"
 P2 = "mibici-equipo29-p2-riesgo"
 P3 = "mibici-equipo29-p3-grupos"
 # Los modelos con manifiesto llevan model.skops; su contenido fija el SHA256 esperado.
-CON_MANIFIESTO = {P1: b"p1 test model", P3: b"p3 test model"}
+CON_MANIFIESTO = {P1: b"p1 test model", P2: b"p2 test model", P3: b"p3 test model"}
 
 
 def _make_store(root: Path, p2_location: str = "mlflow-artifacts:/p2/artifacts"):
