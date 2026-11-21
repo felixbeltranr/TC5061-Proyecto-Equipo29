@@ -1,0 +1,211 @@
+{
+  "supuestos": {
+    "tarifas": {
+      "fargate_x86": {
+        "clave": "fargate_x86",
+        "nombre": "AWS Fargate, Linux/x86, us-east-1",
+        "usd_vcpu_segundo": 1.1244e-05,
+        "usd_gb_segundo": 1.235e-06,
+        "usd_millon_peticiones": 0.0,
+        "granularidad_s": 1.0,
+        "fuente": "https://aws.amazon.com/fargate/pricing/",
+        "consultada": "2026-11-19"
+      },
+      "fargate_arm": {
+        "clave": "fargate_arm",
+        "nombre": "AWS Fargate, Linux/ARM (Graviton), us-east-1",
+        "usd_vcpu_segundo": 8.9944e-06,
+        "usd_gb_segundo": 9.889e-07,
+        "usd_millon_peticiones": 0.0,
+        "granularidad_s": 1.0,
+        "fuente": "https://aws.amazon.com/fargate/pricing/",
+        "consultada": "2026-11-19"
+      },
+      "cloud_run_instancia": {
+        "clave": "cloud_run_instancia",
+        "nombre": "Google Cloud Run, facturación por instancia (nivel 1)",
+        "usd_vcpu_segundo": 1.8e-05,
+        "usd_gb_segundo": 2e-06,
+        "usd_millon_peticiones": 0.0,
+        "granularidad_s": 1.0,
+        "fuente": "https://cloud.google.com/run/pricing",
+        "consultada": "2026-11-19"
+      },
+      "cloud_run_peticion": {
+        "clave": "cloud_run_peticion",
+        "nombre": "Google Cloud Run, facturación por petición (nivel 1)",
+        "usd_vcpu_segundo": 2.4e-05,
+        "usd_gb_segundo": 2.5e-06,
+        "usd_millon_peticiones": 0.4,
+        "granularidad_s": 0.1,
+        "fuente": "https://cloud.google.com/run/pricing",
+        "consultada": "2026-11-19"
+      }
+    },
+    "demanda": {
+      "estaciones": 468,
+      "horas_p2_por_dia": 18,
+      "dias_mes": 30.4,
+      "recalculos_p3_mes": 1
+    },
+    "inferencias_mes": {
+      "p1": 14227.199999999999,
+      "p2": 256089.59999999998,
+      "p3": 468,
+      "total": 270784.8
+    },
+    "peticiones_mes_con_lote": {
+      "p1": 14227.199999999999,
+      "p2": 547.1999999999999,
+      "p3": 1,
+      "total": 14775.4
+    },
+    "peticiones_mes_sin_lote": {
+      "p1": 14227.199999999999,
+      "p2": 256089.59999999998,
+      "p3": 468,
+      "total": 270784.8
+    },
+    "margen": 0.3,
+    "horas_mes": 730.0,
+    "horas_con_horario": 19.0,
+    "vcpu_max": 1.0,
+    "vcpu_medidos": 1.0
+  },
+  "medido": {
+    "usuarios": 15,
+    "rps_sostenido": 11.178282831168833,
+    "rps_inferencias": 10.657015756140234,
+    "latencia_promedio_ms": 71.07811958544588,
+    "latencia_inferencia_ms": 74.12744141299655,
+    "latencias_pregunta_ms": {
+      "p1": 75.18121860461136,
+      "p2": 75.60286922134078,
+      "p3": 51.25264000029843
+    },
+    "p95_ms": 260.0,
+    "cpu_nucleos_promedio": 0.3705025641025641,
+    "cpu_nucleos_p95": 0.75348,
+    "memoria_mib_max": 260.7,
+    "rps_por_nucleo": 28.763676121793623,
+    "rps_saturacion": 19.15772005194805,
+    "rps_inferencias_saturacion": 18.25753802541073,
+    "usuarios_saturacion": 50,
+    "p95_saturacion_ms": 2200.0,
+    "lotes": {
+      "estaciones": 468,
+      "p2_ms": 51.583550000941614,
+      "p3_ms": 32.57850000045437
+    }
+  },
+  "dimension_recomendada": {
+    "vcpu": 1.0,
+    "gb": 2.0,
+    "capacidad_rps": 10.657015756140234,
+    "nucleos_utiles": 1.0
+  },
+  "utilizacion_mibici": 0.009668593771667844,
+  "escenarios": [
+    {
+      "clave": "piso",
+      "escenario": "Piso: instancia recomendada a su capacidad sostenida",
+      "tarifa": "AWS Fargate, Linux/x86, us-east-1",
+      "vcpu": 1.0,
+      "gb": 2.0,
+      "usd_hora": 0.049370399999999995,
+      "usd_mes": 36.040392,
+      "inferencias_mes": 28006637.407136537,
+      "usd_por_1000": 0.0012868518085936418
+    },
+    {
+      "clave": "siempre_encendido",
+      "escenario": "MiBici, siempre encendido (24 x 7)",
+      "tarifa": "AWS Fargate, Linux/x86, us-east-1",
+      "vcpu": 1.0,
+      "gb": 2.0,
+      "usd_hora": 0.049370399999999995,
+      "usd_mes": 36.040392,
+      "inferencias_mes": 270784.8,
+      "usd_por_1000": 0.13309606743066818
+    },
+    {
+      "clave": "horario",
+      "escenario": "MiBici, encendido 19 h al día (5:00 a 24:00)",
+      "tarifa": "AWS Fargate, Linux/x86, us-east-1",
+      "vcpu": 1.0,
+      "gb": 2.0,
+      "usd_hora": 0.049370399999999995,
+      "usd_mes": 28.516343039999995,
+      "inferencias_mes": 270784.8,
+      "usd_por_1000": 0.10530998431226567
+    },
+    {
+      "clave": "arm",
+      "escenario": "MiBici, siempre encendido en ARM (Graviton)",
+      "tarifa": "AWS Fargate, Linux/ARM (Graviton), us-east-1",
+      "vcpu": 1.0,
+      "gb": 2.0,
+      "usd_hora": 0.03949992,
+      "usd_mes": 28.8349416,
+      "inferencias_mes": 270784.8,
+      "usd_por_1000": 0.10648655906830812
+    },
+    {
+      "clave": "cloud_run",
+      "escenario": "MiBici, Cloud Run por petición, una estación por petición",
+      "tarifa": "Google Cloud Run, facturación por petición (nivel 1)",
+      "vcpu": 1.0,
+      "gb": 2.0,
+      "usd_hora": null,
+      "usd_mes": 0.89358984,
+      "inferencias_mes": 270784.8,
+      "peticiones_mes": 270784.8,
+      "usd_por_1000": 0.0033
+    },
+    {
+      "clave": "cloud_run_lote",
+      "escenario": "MiBici, Cloud Run por petición, P2 y P3 en lote",
+      "tarifa": "Google Cloud Run, facturación por petición (nivel 1)",
+      "vcpu": 1.0,
+      "gb": 2.0,
+      "usd_hora": null,
+      "usd_mes": 0.048758819999999994,
+      "inferencias_mes": 270784.8,
+      "peticiones_mes": 14775.4,
+      "usd_por_1000": 0.00018006483377205808
+    },
+    {
+      "clave": "mlflow",
+      "escenario": "Servidor de MLflow encendido 24 x 7 (la API carga los modelos al arrancar)",
+      "tarifa": "AWS Fargate, Linux/x86, us-east-1",
+      "vcpu": 0.25,
+      "gb": 1.0,
+      "usd_hora": 0.0145656,
+      "usd_mes": 10.632888,
+      "inferencias_mes": null,
+      "memoria_mib_max": 414.9,
+      "usd_por_1000": null
+    },
+    {
+      "clave": "mlflow_sin_ajuste",
+      "escenario": "Servidor de MLflow 24 x 7 como lo levanta compose.yaml, con su ejecutor de trabajos",
+      "tarifa": "AWS Fargate, Linux/x86, us-east-1",
+      "vcpu": 0.5,
+      "gb": 3.0,
+      "usd_hora": 0.0335772,
+      "usd_mes": 24.511356000000003,
+      "inferencias_mes": null,
+      "memoria_mib_max": 1975.296,
+      "usd_por_1000": null
+    }
+  ],
+  "optimizaciones": [
+    "La demanda de MiBici (270,785 inferencias al mes) ocupa el 0.967% de la capacidad sostenida medida de la instancia (10.7 RPS de inferencias): de los 36.04 USD al mes de tenerla siempre encendida, 35.69 pagan tiempo ocioso (99.0%). Conviene escalar a cero o facturar por petición.",
+    "Encender la instancia sólo 19 h al día (5:00 a 24:00) baja el costo de 36.04 a 28.52 USD al mes, un ahorro del 20.9%.",
+    "Con el mismo tamaño en ARM (Graviton) la instancia cuesta 28.83 USD al mes en vez de 36.04, un ahorro del 20.0%; requiere validar la construcción de la imagen y el rendimiento de la API en linux/arm64.",
+    "Cloud Run con facturación por petición, una estación por petición (270,785 peticiones al mes, cada pregunta con su latencia medida), cuesta 0.89 USD al mes, un ahorro del 97.5% frente a 36.04 USD; si P2 y P3 se envían en lote (14,775 peticiones al mes en vez de 270,785), baja a 0.05 USD al mes, un ahorro del 99.9%. Ambos sin contar el nivel gratuito. Al escalar a cero, la primera petición paga además el arranque del contenedor y la carga de los modelos desde el Registry, que esta prueba no mide, y la facturación por petición también cobra el tiempo de arranque y apagado de la instancia.",
+    "El servidor de MLflow (0.25 vCPU y 1 GB) encendido 24 x 7 cuesta 10.63 USD al mes. Hoy no se puede apagar: la API resuelve el alias y carga los modelos del Registry cada vez que arranca, así que lo necesita al escalar o reiniciarse. Para ahorrarlo habría que empaquetar el modelo campeón en la imagen al desplegar o servir los artefactos desde almacenamiento de objetos; esos 10.63 USD al mes son el ahorro máximo posible.",
+    "Apagar el ejecutor de trabajos de MLflow, que el proyecto no usa (`MLFLOW_SERVER_ENABLE_JOB_EXECUTION=false`), baja su memoria máxima de 1,975 a 415 MiB y su tamaño de 0.5 vCPU y 3 GB a 0.25 vCPU y 1 GB: de 24.51 a 10.63 USD al mes, un ahorro del 56.6%.",
+    "En conjunto, la API en Cloud Run por petición con P2 y P3 en lote (0.05 USD) más el servidor de MLflow (10.63 USD) suman 10.68 USD al mes, frente a 46.67 USD con la API siempre encendida: un ahorro del 77.1%. El servidor de MLflow pasa a ser el 99.5% de ese total."
+  ]
+}

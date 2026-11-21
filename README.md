@@ -1237,66 +1237,68 @@ Tarifas de lista en dólares, consultadas el 19 de noviembre de 2026, sin impues
 ### Resultados
 
 <!-- resultados-carga:inicio -->
-Corrida del 2026-11-20_2214 (commit `cf2f471`), 5 etapas de 90 s; endpoints probados: p1, p2, p3. Capacidad sostenida con p95 menor a 500 ms: 14.2 RPS de inferencias (15.0 en total con GET /live) con 20 usuarios y p95 de 360 ms. Saturación observada: 18.6 RPS con 50 usuarios y p95 de 2,400 ms.
+Corrida del 2026-11-20_2224 (commit `67bc0a0`), 5 etapas de 90 s; endpoints probados: p1, p2, p3. Capacidad sostenida con p95 menor a 500 ms: 10.7 RPS de inferencias (11.2 en total con GET /live) con 15 usuarios y p95 de 260 ms. Saturación observada: 19.2 RPS con 50 usuarios y p95 de 2,200 ms.
 
 Límites durante la corrida: api con 1 vCPU y 1,024 MiB; mlflow con 1 vCPU y 1,024 MiB.
 
 | Usuarios | RPS sostenido | p50 (ms) | p95 (ms) | p99 (ms) | Errores | CPU API p95 (núcleos) | Memoria API máx. (MiB) |
 | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 10 | 7.8 | 23 | 170 | 480 | 0.00% | 0.48 | 265 |
-| 15 | 11.4 | 26 | 310 | 740 | 0.00% | 0.77 | 265 |
-| 20 | 15.0 | 29 | 360 | 970 | 0.00% | 0.90 | 263 |
-| 30 | 17.9 | 320 | 1100 | 1400 | 0.00% | 1.02 | 269 |
-| 50 | 18.6 | 1400 | 2400 | 2800 | 0.00% | 1.02 | 273 |
+| 10 | 7.8 | 19 | 110 | 390 | 0.00% | 0.50 | 258 |
+| 15 | 11.2 | 22 | 260 | 770 | 0.00% | 0.75 | 261 |
+| 20 | 14.1 | 78 | 770 | 1500 | 0.00% | 0.99 | 264 |
+| 30 | 18.3 | 320 | 1100 | 1600 | 0.00% | 1.02 | 266 |
+| 50 | 19.2 | 1300 | 2200 | 2600 | 0.00% | 1.02 | 271 |
 
-Por endpoint en la etapa de capacidad (20 usuarios); con pocas peticiones, el p95 y el p99 de un endpoint son poco estables:
+Por endpoint en la etapa de capacidad (15 usuarios); con pocas peticiones, el p95 y el p99 de un endpoint son poco estables:
 
 | Endpoint | Peticiones | Promedio (ms) | p95 (ms) | p99 (ms) |
 | --- | ---: | ---: | ---: | ---: |
-| GET /live | 70 | 19 | 100 | 220 |
-| P1 POST /api/v1/predict | 58 | 112 | 410 | 860 |
-| P2 POST /api/v1/p2/predict | 1,107 | 110 | 370 | 970 |
-| P3 POST /api/v1/p3/predict | 50 | 78 | 350 | 990 |
+| GET /live | 45 | 9 | 39 | 46 |
+| P1 POST /api/v1/predict | 43 | 75 | 240 | 830 |
+| P2 POST /api/v1/p2/predict | 822 | 76 | 270 | 770 |
+| P3 POST /api/v1/p3/predict | 55 | 51 | 240 | 470 |
 
-Primera inferencia de cada pregunta después de que /ready responde 200 (no incluye el arranque del contenedor ni la carga de los modelos): P1 40 ms, P2 19 ms, P3 43 ms.
+Primera inferencia de cada pregunta después de que /ready responde 200 (no incluye el arranque del contenedor ni la carga de los modelos): P1 47 ms, P2 22 ms, P3 30 ms.
 
-Medido: capacidad sostenida de 14.2 RPS de inferencias (15.0 RPS en total con las sondas GET /live) con 20 usuarios, p95 de 360 ms, 0.53 núcleos en promedio (0.90 en p95) y 263 MiB de memoria máxima. Saturación observada: 18.6 RPS (17.8 de inferencias) con 50 usuarios y p95 de 2,400 ms. Tamaño recomendado: 1 vCPU y 2 GB, con esa capacidad medida de 14.2 RPS de inferencias. La demanda de MiBici ocuparía el 0.727% de esa capacidad.
+Medido: capacidad sostenida de 10.7 RPS de inferencias (11.2 RPS en total con las sondas GET /live) con 15 usuarios, p95 de 260 ms, 0.37 núcleos en promedio (0.75 en p95) y 261 MiB de memoria máxima. Saturación observada: 19.2 RPS (18.3 de inferencias) con 50 usuarios y p95 de 2,200 ms. Tamaño recomendado: 1 vCPU y 2 GB, con esa capacidad medida de 10.7 RPS de inferencias. La demanda de MiBici ocuparía el 0.967% de esa capacidad.
 
 | Escenario | Tamaño | USD al mes | Inferencias al mes | USD por 1,000 inferencias |
 | --- | --- | ---: | ---: | ---: |
-| Piso: instancia recomendada a su capacidad sostenida | 1 vCPU, 2 GB | 36.04 | 37,266,332 | 0.000967 |
+| Piso: instancia recomendada a su capacidad sostenida | 1 vCPU, 2 GB | 36.04 | 28,006,637 | 0.001287 |
 | MiBici, siempre encendido (24 x 7) | 1 vCPU, 2 GB | 36.04 | 270,785 | 0.1331 |
 | MiBici, encendido 19 h al día (5:00 a 24:00) | 1 vCPU, 2 GB | 28.52 | 270,785 | 0.1053 |
 | MiBici, siempre encendido en ARM (Graviton) | 1 vCPU, 2 GB | 28.83 | 270,785 | 0.1065 |
-| MiBici, Cloud Run por petición, una estación por petición | 1 vCPU, 2 GB | 1.68 | 270,785 | 0.006195 |
-| MiBici, Cloud Run por petición, P2 y P3 en lote | 1 vCPU, 2 GB | 0.09 | 270,785 | 0.000332 |
+| MiBici, Cloud Run por petición, una estación por petición | 1 vCPU, 2 GB | 0.89 | 270,785 | 0.003300 |
+| MiBici, Cloud Run por petición, P2 y P3 en lote | 1 vCPU, 2 GB | 0.05 | 270,785 | 0.000180 |
 | Servidor de MLflow encendido 24 x 7 (la API carga los modelos al arrancar) | 0.25 vCPU, 1 GB | 10.63 | n/d | n/d |
 | Servidor de MLflow 24 x 7 como lo levanta compose.yaml, con su ejecutor de trabajos | 0.5 vCPU, 3 GB | 24.51 | n/d | n/d |
 
 **Optimizaciones**
 
-- La demanda de MiBici (270,785 inferencias al mes) ocupa el 0.727% de la capacidad sostenida medida de la instancia (14.2 RPS de inferencias): de los 36.04 USD al mes de tenerla siempre encendida, 35.78 pagan tiempo ocioso (99.3%). Conviene escalar a cero o facturar por petición.
+- La demanda de MiBici (270,785 inferencias al mes) ocupa el 0.967% de la capacidad sostenida medida de la instancia (10.7 RPS de inferencias): de los 36.04 USD al mes de tenerla siempre encendida, 35.69 pagan tiempo ocioso (99.0%). Conviene escalar a cero o facturar por petición.
 - Encender la instancia sólo 19 h al día (5:00 a 24:00) baja el costo de 36.04 a 28.52 USD al mes, un ahorro del 20.9%.
 - Con el mismo tamaño en ARM (Graviton) la instancia cuesta 28.83 USD al mes en vez de 36.04, un ahorro del 20.0%; requiere validar la construcción de la imagen y el rendimiento de la API en linux/arm64.
-- Cloud Run con facturación por petición, una estación por petición (270,785 peticiones al mes, cada pregunta con su latencia medida), cuesta 1.68 USD al mes, un ahorro del 95.3% frente a 36.04 USD; si P2 y P3 se envían en lote (14,775 peticiones al mes en vez de 270,785), baja a 0.09 USD al mes, un ahorro del 99.8%. Ambos sin contar el nivel gratuito. Al escalar a cero, la primera petición paga además el arranque del contenedor y la carga de los modelos desde el Registry, que esta prueba no mide, y la facturación por petición también cobra el tiempo de arranque y apagado de la instancia.
+- Cloud Run con facturación por petición, una estación por petición (270,785 peticiones al mes, cada pregunta con su latencia medida), cuesta 0.89 USD al mes, un ahorro del 97.5% frente a 36.04 USD; si P2 y P3 se envían en lote (14,775 peticiones al mes en vez de 270,785), baja a 0.05 USD al mes, un ahorro del 99.9%. Ambos sin contar el nivel gratuito. Al escalar a cero, la primera petición paga además el arranque del contenedor y la carga de los modelos desde el Registry, que esta prueba no mide, y la facturación por petición también cobra el tiempo de arranque y apagado de la instancia.
 - El servidor de MLflow (0.25 vCPU y 1 GB) encendido 24 x 7 cuesta 10.63 USD al mes. Hoy no se puede apagar: la API resuelve el alias y carga los modelos del Registry cada vez que arranca, así que lo necesita al escalar o reiniciarse. Para ahorrarlo habría que empaquetar el modelo campeón en la imagen al desplegar o servir los artefactos desde almacenamiento de objetos; esos 10.63 USD al mes son el ahorro máximo posible.
-- Apagar el ejecutor de trabajos de MLflow, que el proyecto no usa (`MLFLOW_SERVER_ENABLE_JOB_EXECUTION=false`), baja su memoria máxima de 1,975 a 412 MiB y su tamaño de 0.5 vCPU y 3 GB a 0.25 vCPU y 1 GB: de 24.51 a 10.63 USD al mes, un ahorro del 56.6%.
-- En conjunto, la API en Cloud Run por petición con P2 y P3 en lote (0.09 USD) más el servidor de MLflow (10.63 USD) suman 10.72 USD al mes, frente a 46.67 USD con la API siempre encendida: un ahorro del 77.0%. El servidor de MLflow pasa a ser el 99.2% de ese total.
+- Apagar el ejecutor de trabajos de MLflow, que el proyecto no usa (`MLFLOW_SERVER_ENABLE_JOB_EXECUTION=false`), baja su memoria máxima de 1,975 a 415 MiB y su tamaño de 0.5 vCPU y 3 GB a 0.25 vCPU y 1 GB: de 24.51 a 10.63 USD al mes, un ahorro del 56.6%.
+- En conjunto, la API en Cloud Run por petición con P2 y P3 en lote (0.05 USD) más el servidor de MLflow (10.63 USD) suman 10.68 USD al mes, frente a 46.67 USD con la API siempre encendida: un ahorro del 77.1%. El servidor de MLflow pasa a ser el 99.5% de ese total.
 
-![Desempeño por etapa](reports/carga/2026-11-20_2214/desempeno.png)
-![Capacidad](reports/carga/2026-11-20_2214/capacidad.png)
-![Latencia por endpoint](reports/carga/2026-11-20_2214/endpoints.png)
-![Recursos por contenedor](reports/carga/2026-11-20_2214/recursos.png)
+![Desempeño por etapa](reports/carga/2026-11-20_2224/desempeno.png)
+![Capacidad](reports/carga/2026-11-20_2224/capacidad.png)
+![Latencia por endpoint](reports/carga/2026-11-20_2224/endpoints.png)
+![Recursos por contenedor](reports/carga/2026-11-20_2224/recursos.png)
 
-Detalle completo en `reports/carga/2026-11-20_2214/` (CSV y HTML de Locust, muestras de `docker stats`, `resumen.json` y `finops.json`).
+Detalle completo en `reports/carga/2026-11-20_2224/` (CSV y HTML de Locust, muestras de `docker stats`, `resumen.json` y `finops.json`).
 <!-- resultados-carga:fin -->
+
+**Repetición.** La prueba se corrió dos veces seguidas con la misma configuración y arriba se reporta la corrida con menor capacidad. En la otra (`reports/carga/2026-11-20_2214/`) la etapa de 20 usuarios también cumplió el objetivo (14.2 RPS de inferencias con p95 de 360 ms); en la reportada no (13.3 RPS con p95 de 770 ms). Con 15 usuarios las dos coinciden: 10.7 y 10.9 RPS de inferencias, con p95 de 260 y 310 ms. La capacidad que se sostiene en ambas es la de 15 usuarios; la de 20 queda en el límite. Como en esa otra corrida la latencia promedio de P2 en la etapa de capacidad pasa de 100 ms, Cloud Run factura 0.2 s por petición y su costo sube a 1.68 USD al mes sin lotes y 0.09 con lotes; los demás escenarios no cambian.
 
 ### Límites de la medición
 
 - Locust corre en la misma computadora que los contenedores y compite con ellos por CPU, así que la capacidad medida es conservadora. En Docker Desktop, además, los contenedores corren en una máquina virtual con su propio número de núcleos.
 - Las latencias incluyen la red local del host hacia los contenedores, no la de un despliegue real. El orquestador apunta a `127.0.0.1`: con `localhost`, en Windows cada conexión nueva de Python intenta primero IPv6 y tarda unos 2 segundos, lo que infla el p99.
 - Los p50, p95 y p99 de cada etapa salen del resumen final de Locust e incluyen la rampa de arranque de los usuarios; el RPS sostenido y la CPU usan sólo la ventana estable, una vez creados todos los usuarios.
-- Cada punto es una sola corrida de 90 segundos por etapa, sin repeticiones: no hay intervalo de variación entre corridas. El objetivo de latencia se evalúa sobre todas las peticiones de la etapa; P1 y P3 reciben pocas (peso 1 de 21 cada una), así que sus percentiles propios se mueven mucho de una corrida a otra y se reportan con su número de peticiones.
+- Cada punto es una corrida de 90 segundos por etapa y la prueba completa se hizo sólo dos veces: hay un rango entre corridas, no un intervalo de variación. Cerca del límite ese rango es amplio (el p95 con 20 usuarios fue de 360 y 770 ms). El objetivo de latencia se evalúa sobre todas las peticiones de la etapa; P1 y P3 reciben pocas (peso 1 de 21 cada una), así que sus percentiles propios se mueven mucho de una corrida a otra y se reportan con su número de peticiones.
 - Los límites de `carga/compose.medicion.yaml` son los de la medición. `compose.yaml` no fija límites: en otra computadora, sin ese archivo, la capacidad será distinta.
 - **Qué incluye el costo**: sólo el cómputo de la API y del servidor de MLflow. Quedan fuera el almacenamiento de artefactos y de imágenes, la transferencia de datos, el balanceador, los registros y el monitoreo, y los arranques en frío de Cloud Run; no se estiman.
 - Los costos son estimaciones con tarifas de lista, sin el nivel gratuito. El de Cloud Run (180 mil vCPU-segundos, 360 mil GiB-segundos y 2 millones de peticiones al mes), con el tamaño recomendado de 1 vCPU y 2 GiB, alcanzaría para la demanda estimada de MiBici aun sin lotes (270,785 peticiones al mes) mientras cada petición facture como máximo 0.6 segundos (unos 162 mil vCPU-segundos y 325 mil GiB-segundos); con 0.7 segundos ya se pasaría del límite de vCPU-segundos.
