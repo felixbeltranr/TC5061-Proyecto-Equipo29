@@ -26,6 +26,10 @@ Con ``--reposo SEGUNDOS`` no corre la carga: sólo toma ``docker stats`` ese tie
 ``reposo.json`` y ``reposo_recursos.csv``. Sirve para medir MLflow tal como lo levanta
 ``compose.yaml`` solo; ese ``reposo.json`` se pasa después con ``--mlflow-sin-ajuste`` para
 costear la diferencia.
+
+Con ``--recalcular CARPETA`` tampoco corre la carga: vuelve a calcular ``finops.json``,
+``finops.md`` y ``resumen.md`` desde el ``resumen.json`` de esa corrida (por ejemplo, si
+cambian las tarifas) y, con ``--actualizar-readme``, reescribe el bloque del README.
 """
 
 from __future__ import annotations
@@ -100,6 +104,12 @@ def argumentos(argv: list[str] | None = None) -> argparse.Namespace:
         default=None,
         help="reposo.json tomado con compose.yaml solo, para costear MLflow sin el ajuste",
     )
+    p.add_argument(
+        "--recalcular",
+        type=Path,
+        default=None,
+        help="carpeta de una corrida ya hecha: recalcula sus costos sin repetir la carga",
+    )
     p.add_argument("--actualizar-readme", action="store_true")
     return p.parse_args(argv)
 
@@ -145,11 +155,21 @@ def nombres_compose(texto: str) -> dict[str, str]:
     return {r.get("Service", ""): r.get("Name", "") for r in registros if r.get("Name")}
 
 
+def servicio_de(nombre: str) -> str:
+    """``'proyecto-api-1'`` → ``'api'``; un nombre que no es de esos servicios se queda igual.
+
+    Decide por el final del nombre, como los nombra Compose (``<proyecto>-<servicio>-<n>``):
+    un proyecto que se llame ``mibici-api`` no convierte a su MLflow en la API.
+    """
+    encontrado = re.fullmatch(r"(?:.*[-_])?(api|mlflow)(?:[-_]\d+)?", nombre)
+    return encontrado.group(1) if encontrado else nombre
+
+
 def contenedores_del_sistema(args: argparse.Namespace) -> dict[str, str]:
     """``{'api': '<contenedor>', 'mlflow': '<contenedor>'}`` del proyecto de Compose actual."""
     if args.contenedores:
         nombres = [n.strip() for n in args.contenedores.split(",") if n.strip()]
-        return {("api" if "api" in n else "mlflow" if "mlflow" in n else n): n for n in nombres}
+        return {servicio_de(n): n for n in nombres}
     comando = [args.motor, "compose", "ps", "--format", "json"]
     resultado = subprocess.run(
         comando,
@@ -390,6 +410,28 @@ def _escribir_json(ruta: Path, datos) -> None:
     ruta.write_text(json.dumps(_sin_nan(datos), ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def _con_nan(valor, clave: str = ""):
+    """Inverso de ``_sin_nan`` para las medidas de un ``resumen.json`` ya escrito.
+
+    Los ``null`` de ``recursos`` y de sus servicios no eran medidas: significan que no hubo
+    muestras de ese contenedor, y se quedan como ``None``.
+    """
+    if valor is None:
+        return None if clave in ("recursos", "api", "mlflow") else math.nan
+    if isinstance(valor, dict):
+        return {k: _con_nan(v, k) for k, v in valor.items()}
+    if isinstance(valor, list):
+        return [_con_nan(v, clave) for v in valor]
+    return valor
+
+
+def _o_nd(valor, formato: str) -> str:
+    """El número con ese formato, o ``n/d`` si no hay medida."""
+    if not isinstance(valor, (int, float)) or math.isnan(valor):
+        return "n/d"
+    return format(valor, formato)
+
+
 def tabla_etapas(resumenes: list[dict]) -> str:
     renglones = [
         (
@@ -399,11 +441,12 @@ def tabla_etapas(resumenes: list[dict]) -> str:
         "| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
     for r in resumenes:
-        api = r.get("recursos", {}).get("api") or {}
+        api = (r.get("recursos") or {}).get("api") or {}
         renglones.append(
             f"| {r['usuarios']} | {r['rps_sostenido']:.1f} | {r['p50_ms']:.0f} | {r['p95_ms']:.0f}"
             f" | {r['p99_ms']:.0f} | {r['tasa_error']:.2%} | "
-            f"{api.get('cpu_nucleos_p95', math.nan):.2f} | {api.get('memoria_mib_max', math.nan):.0f} |"
+            f"{_o_nd(api.get('cpu_nucleos_p95'), '.2f')} | "
+            f"{_o_nd(api.get('memoria_mib_max'), '.0f')} |"
         )
     return "\n".join(renglones)
 
@@ -445,8 +488,9 @@ def bloque_readme(resumen: dict, finops_md: str, carpeta_relativa: str) -> str:
             INICIO_BLOQUE,
             f"Corrida del {resumen['fecha']} (commit `{resumen.get('commit', 'n/d')}`), "
             f"{len(resumen['etapas'])} etapas de {resumen['duracion_s']} s; endpoints "
-            f"probados: {', '.join(resumen['endpoints'])}. Capacidad sostenida con p95 menor a "
-            f"{resumen['p95_objetivo_ms']:.0f} ms: " + _texto_capacidad(capacidad, saturacion),
+            f"probados: {', '.join(resumen['endpoints'])}. Capacidad sostenida con p95 de "
+            f"{resumen['p95_objetivo_ms']:.0f} ms o menos: "
+            + _texto_capacidad(capacidad, saturacion),
             "",
             *([limites, ""] if limites else []),
             tabla_etapas(resumen["etapas"]),
@@ -461,8 +505,9 @@ def bloque_readme(resumen: dict, finops_md: str, carpeta_relativa: str) -> str:
             f"![Recursos por contenedor]({carpeta_relativa}/recursos.png)",
             "",
             (
-                f"Detalle completo en `{carpeta_relativa}/` (CSV y HTML de Locust, muestras de "
-                "`docker stats`, `resumen.json` y `finops.json`)."
+                f"Detalle completo en `{carpeta_relativa}/` (CSV de Locust, muestras de "
+                "`docker stats`, `resumen.json` y `finops.json`); los HTML de Locust se generan "
+                "en la misma carpeta y no se versionan."
             ),
             FIN_BLOQUE,
         ]
@@ -489,11 +534,92 @@ def _commit() -> str:
     return resultado.stdout.strip() or "n/d"
 
 
+SIN_CAPACIDAD = "Sin etapa que cumpla el objetivo: no se calcula el costo a capacidad."
+SIN_RECURSOS = (
+    "Sin muestras de recursos de la API (--sin-recursos o docker stats sin datos): no se "
+    "calcula el costo."
+)
+
+
+def analisis_de_costo(resumen: dict, salida: Path, args: argparse.Namespace) -> str:
+    """Escribe ``finops.json``, ``finops.md`` y ``resumen.md`` de una corrida; devuelve el texto.
+
+    Todo sale del resumen de la corrida, así que sirve igual al terminar la carga que al
+    recalcular una corrida ya hecha.
+    """
+    capacidad = resumen.get("capacidad") or {}
+    medidos = capacidad.get("recursos") or {}
+    if not capacidad:
+        finops_md = SIN_CAPACIDAD
+    elif not isinstance(medidos.get("api"), dict):
+        finops_md = SIN_RECURSOS
+    else:
+        mlflow = medidos.get("mlflow")
+        resultado = finops.analizar(
+            capacidad,
+            medidos["api"],
+            lotes=resumen.get("lotes"),
+            recursos_mlflow=mlflow if isinstance(mlflow, dict) else None,
+            demanda=finops.Demanda(estaciones=resumen.get("estaciones") or args.estaciones),
+            vcpu_max=resumen.get("vcpu_max") or args.vcpu_max,
+            vcpu_medidos=resumen.get("vcpu_medidos") or 1.0,
+            saturacion=resumen.get("saturacion"),
+            recursos_mlflow_sin_ajuste=resumen.get("mlflow_sin_ajuste"),
+        )
+        _escribir_json(salida / "finops.json", resultado)
+        finops_md = finops.a_markdown(resultado)
+    (salida / "finops.md").write_text(finops_md, encoding="utf-8")
+    partes = [
+        tabla_etapas(resumen["etapas"]),
+        texto_primera_peticion(resumen.get("primera_peticion") or {}),
+        finops_md,
+    ]
+    (salida / "resumen.md").write_text(
+        "\n\n".join(parte for parte in partes if parte), encoding="utf-8"
+    )
+    return finops_md
+
+
+def actualizar_readme(resumen: dict, finops_md: str, salida: Path) -> None:
+    relativa = salida.resolve().relative_to(RAIZ).as_posix()
+    README.write_text(
+        reemplazar_bloque(
+            README.read_text(encoding="utf-8"), bloque_readme(resumen, finops_md, relativa)
+        ),
+        encoding="utf-8",
+    )
+    print("README actualizado con los resultados.")
+
+
+def recalcular(args: argparse.Namespace, carpeta: Path) -> int:
+    """Vuelve a calcular los costos de una corrida ya hecha, sin repetir la carga."""
+    ruta = carpeta / "resumen.json"
+    if not ruta.is_file():
+        print(f"No encontré {ruta}: --recalcular necesita la carpeta de una corrida.")
+        return 2
+    resumen = json.loads(ruta.read_text(encoding="utf-8"))
+    for clave in ("etapas", "capacidad", "saturacion", "lotes"):
+        if resumen.get(clave):
+            resumen[clave] = _con_nan(resumen[clave])
+    finops_md = analisis_de_costo(resumen, carpeta, args)
+    if args.actualizar_readme:
+        actualizar_readme(resumen, finops_md, carpeta)
+    print(f"Listo. Costos recalculados en {carpeta}")
+    print(finops_md)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     args = argumentos(argv)
     etapas = [int(u) for u in args.etapas.split(",") if u.strip()]
     fecha = datetime.now().strftime("%Y-%m-%d_%H%M")
-    salida = args.salida or RAIZ / "reports" / "carga" / fecha
+    salida = args.recalcular or args.salida or RAIZ / "reports" / "carga" / fecha
+    if args.actualizar_readme and not salida.resolve().is_relative_to(RAIZ):
+        # Las figuras del README se enlazan con rutas relativas al repositorio.
+        print(f"--actualizar-readme necesita que la salida esté dentro de {RAIZ}.")
+        return 2
+    if args.recalcular:
+        return recalcular(args, args.recalcular)
     salida.mkdir(parents=True, exist_ok=True)
 
     if args.reposo:
@@ -519,11 +645,13 @@ def main(argv: list[str] | None = None) -> int:
     if texto_limites(limites):
         print(texto_limites(limites))
     if not vcpu_medidos:
-        print(
-            "La API no tiene límite de CPU y no se indicó --vcpu-medidos: la capacidad depende "
-            "de esta computadora. Para costear, levanta el sistema con carga/compose.medicion.yaml."
-            " Se toma 1 núcleo, el que aprovecha un proceso de uvicorn."
-        )
+        if contenedores:
+            print(
+                "La API no tiene límite de CPU y no se indicó --vcpu-medidos: la capacidad "
+                "depende de esta computadora. Para costear, levanta el sistema con "
+                "carga/compose.medicion.yaml. Se toma 1 núcleo, el que aprovecha un proceso de "
+                "uvicorn."
+            )
         vcpu_medidos = 1.0
 
     primera = primera_peticion(args.host, endpoints)
@@ -590,6 +718,8 @@ def main(argv: list[str] | None = None) -> int:
         "contenedores": contenedores,
         "limites": limites,
         "vcpu_medidos": vcpu_medidos,
+        "vcpu_max": args.vcpu_max,
+        "estaciones": args.estaciones,
         "mlflow_sin_ajuste": sin_ajuste,
         "etapas": resumenes,
         "capacidad": capacidad,
@@ -606,37 +736,9 @@ def main(argv: list[str] | None = None) -> int:
         nombres = {nombre: servicio for servicio, nombre in contenedores.items()}
         graficas.grafica_recursos(muestras, salida / "recursos.png", cortes, nombres)
 
-    finops_md = "Sin etapa que cumpla el objetivo: no se calcula el costo a capacidad."
-    if capacidad and (capacidad.get("recursos") or {}).get("api"):
-        resultado = finops.analizar(
-            capacidad,
-            capacidad["recursos"]["api"],
-            lotes=lotes,
-            recursos_mlflow=(capacidad.get("recursos") or {}).get("mlflow"),
-            demanda=finops.Demanda(estaciones=args.estaciones),
-            vcpu_max=args.vcpu_max,
-            vcpu_medidos=vcpu_medidos,
-            saturacion=saturacion,
-            recursos_mlflow_sin_ajuste=sin_ajuste,
-        )
-        _escribir_json(salida / "finops.json", resultado)
-        finops_md = finops.a_markdown(resultado)
-    (salida / "finops.md").write_text(finops_md, encoding="utf-8")
-    partes = [tabla_etapas(resumenes), texto_primera_peticion(primera), finops_md]
-    (salida / "resumen.md").write_text(
-        "\n\n".join(parte for parte in partes if parte), encoding="utf-8"
-    )
-
+    finops_md = analisis_de_costo(resumen_total, salida, args)
     if args.actualizar_readme:
-        relativa = salida.resolve().relative_to(RAIZ).as_posix()
-        README.write_text(
-            reemplazar_bloque(
-                README.read_text(encoding="utf-8"),
-                bloque_readme(resumen_total, finops_md, relativa),
-            ),
-            encoding="utf-8",
-        )
-        print("README actualizado con los resultados.")
+        actualizar_readme(resumen_total, finops_md, salida)
 
     print(f"Listo. Resultados en {salida}")
     print(finops_md)
