@@ -65,8 +65,11 @@ services:
       P1_MODEL_URI: "models:/mibici-equipo29-p1-demanda@champion"
       P2_MODEL_URI: "models:/mibici-equipo29-p2-riesgo@champion"
       P3_MODEL_URI: "models:/mibici-equipo29-p3-grupos@champion"
+      REDIS_URL: "redis://redis:6379/0"
     depends_on:
       mlflow:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     healthcheck:
       test:
@@ -78,6 +81,43 @@ services:
       timeout: 5s
       retries: 12
       start_period: 60s
+
+  redis:
+    image: redis:8.8-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
+  p2-worker:
+    <<: *app
+    command:
+      - rq
+      - worker
+      - --url
+      - redis://redis:6379/0
+      - --worker-class
+      - rq.worker.SimpleWorker
+      - p2
+    environment:
+      MLFLOW_TRACKING_URI: "http://mlflow:5000"
+      P2_MODEL_URI: "models:/mibici-equipo29-p2-riesgo@champion"
+    depends_on:
+      mlflow:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import sys; from redis import Redis; from rq import Worker; sys.exit(not Worker.all(connection=Redis(host='redis')))"
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
 
 volumes:
   mlflow-backend:

@@ -135,6 +135,16 @@ def test_predict_por_lotes_conserva_el_orden(cliente, p2_falso):
     assert respuesta.json()["input_count"] == 3
 
 
+def test_predict_atiende_el_lote_horario_de_468_estaciones(cliente, p2_falso):
+    ids = [str(i) for i in range(468)]
+
+    respuesta = cliente.post("/api/v1/p2/predict", json=_peticion(*[EJEMPLO_P2] * 468, ids=ids))
+
+    assert respuesta.status_code == 200
+    assert respuesta.json()["input_count"] == 468
+    assert [p["station_id"] for p in respuesta.json()["predictions"]] == ids
+
+
 def test_salida_invalida_del_modelo_responde_500_con_detalle(cliente, p2_falso):
     p2_falso.clases = ["otra"]
 

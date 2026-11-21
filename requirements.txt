@@ -19,4 +19,7 @@ mlflow==3.16.1
 mlflow-skinny==3.16.1
 mlflow-tracing==3.16.1
 evidently==0.7.23
+redis==8.1.0
+rq==3.0.0  # cola de predicciones de P2 en lote
+fakeredis==2.40.0  # Redis en memoria para las pruebas de la cola de P2
 -e .
