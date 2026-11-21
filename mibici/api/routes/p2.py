@@ -3,8 +3,8 @@ from dataclasses import asdict
 from fastapi import APIRouter, HTTPException, Request
 
 from mibici.api.schemas.common import ModelInfoResponse
-from mibici.api.schemas.p2 import P2Prediction, P2PredictionRequest, P2PredictionResponse
-from mibici.api.services.p2_inference import classify_risk
+from mibici.api.schemas.p2 import P2PredictionRequest, P2PredictionResponse
+from mibici.api.services.p2_inference import predict_response
 
 router = APIRouter()
 
@@ -30,16 +30,6 @@ def model_info(http_request: Request) -> ModelInfoResponse:
 def predict(payload: P2PredictionRequest, http_request: Request) -> P2PredictionResponse:
     model, info = _estado(http_request)
     try:
-        clases = classify_risk(model, [s.features.model_dump() for s in payload.stations])
+        return predict_response(model, info, payload.model_dump()["stations"])
     except ValueError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
-    return P2PredictionResponse(
-        predictions=[
-            P2Prediction(station_id=s.station_id, risk_class=clase)
-            for s, clase in zip(payload.stations, clases, strict=True)
-        ],
-        method="mlflow_registry",
-        input_count=len(clases),
-        model_name=info.name if info else None,
-        model_version=info.version if info else None,
-    )

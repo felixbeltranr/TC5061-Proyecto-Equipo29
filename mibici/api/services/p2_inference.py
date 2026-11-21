@@ -4,6 +4,7 @@ from mlflow.pyfunc import PyFuncModel
 import numpy as np
 import pandas as pd
 
+from mibici.api.schemas.p2 import P2Prediction, P2PredictionResponse
 from mibici.api.services.model_registry import (
     RegisteredModelInfo,
     load_registered_model_with_info,
@@ -29,3 +30,20 @@ def classify_risk(model: PyFuncModel, rows: list[dict]) -> list[str]:
     if len(etiquetas) != len(rows) or any(clase not in CLASES for clase in etiquetas):
         raise ValueError("El modelo produjo clases inválidas")
     return etiquetas
+
+
+def predict_response(
+    model: PyFuncModel, info: RegisteredModelInfo | None, stations: list[dict]
+) -> P2PredictionResponse:
+    """Respuesta de P2 para estaciones con ``station_id`` y ``features``, en el mismo orden."""
+    clases = classify_risk(model, [station["features"] for station in stations])
+    return P2PredictionResponse(
+        predictions=[
+            P2Prediction(station_id=station["station_id"], risk_class=clase)
+            for station, clase in zip(stations, clases, strict=True)
+        ],
+        method="mlflow_registry",
+        input_count=len(clases),
+        model_name=info.name if info else None,
+        model_version=info.version if info else None,
+    )
