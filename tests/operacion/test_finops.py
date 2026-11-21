@@ -357,7 +357,7 @@ def test_mlflow_sin_ajuste_agrega_su_escenario_y_el_ahorro():
     assert (fila["vcpu"], fila["gb"]) == (0.5, 3.0)
     assert fila["usd_mes"] > ajustado["usd_mes"]
     frase = next(f for f in resultado["optimizaciones"] if f.startswith("Apagar el ejecutor"))
-    assert "de 1,884 a 210 MiB" in frase
+    assert "1,884 MiB" in frase and "210 MiB" in frase
     assert f"{1 - ajustado['usd_mes'] / fila['usd_mes']:.1%}" in frase
 
 
@@ -395,3 +395,41 @@ def test_el_total_recomendado_sin_lotes_lo_dice():
     assert "con P2 y P3 en lote" not in frase
     assert f"suman {sin_lote['usd_mes'] + mlflow['usd_mes']:,.2f} USD al mes" in frase
     assert "a tarifa de Fargate" in frase
+
+
+@pytest.mark.parametrize(
+    "estaciones,peticiones",
+    [(468, 14775.4), (10, 39992.6), (1, 270784.8)],
+)
+def test_el_costo_en_lote_cuenta_las_peticiones_del_lote_medido(estaciones, peticiones):
+    # La sonda midió lotes de ese tamaño: las peticiones al mes se cuentan con ese mismo tamaño.
+    lotes = {"estaciones": estaciones, "p2_ms": 50.0, "p3_ms": 50.0}
+    resultado = finops.analizar(CAPACIDAD, API, lotes=lotes)
+    fila = _por_clave(resultado, "cloud_run_lote")
+    assert fila["estaciones_por_lote"] == estaciones
+    assert fila["peticiones_mes"] == pytest.approx(peticiones)
+    assert resultado["supuestos"]["peticiones_mes_con_lote"]["total"] == pytest.approx(peticiones)
+    # 1 vCPU y 2 GiB durante 0.1 s más la tarifa por petición.
+    assert fila["usd_mes"] == pytest.approx(peticiones * 0.0000033)
+    frase = next(f for f in resultado["optimizaciones"] if f.startswith("Cloud Run"))
+    plural = "estación" if estaciones == 1 else "estaciones"
+    assert f"en lotes de {estaciones} {plural}" in frase
+
+
+def test_sin_tamano_de_lote_se_asume_la_red_completa():
+    resultado = finops.analizar(CAPACIDAD, API, lotes={"p2_ms": 50.0, "p3_ms": 50.0})
+    fila = _por_clave(resultado, "cloud_run_lote")
+    assert fila["estaciones_por_lote"] == 468
+    assert fila["peticiones_mes"] == pytest.approx(14775.4)
+
+
+def test_la_frase_de_mlflow_compara_dos_configuraciones_sin_atribuir_la_causa():
+    sin_ajuste = {"cpu_nucleos_promedio": 0.02, "cpu_nucleos_p95": 0.3, "memoria_mib_max": 1884.0}
+    resultado = finops.analizar(
+        CAPACIDAD, API, lotes=LOTES, recursos_mlflow=MLFLOW, recursos_mlflow_sin_ajuste=sin_ajuste
+    )
+    frase = next(f for f in resultado["optimizaciones"] if f.startswith("Apagar el ejecutor"))
+    assert "llegó a 1,884 MiB en la medición en reposo" in frase
+    assert "llegó a 210 MiB durante la prueba de carga" in frase
+    assert "condiciones distintas" in frase
+    assert "baja su memoria" not in frase

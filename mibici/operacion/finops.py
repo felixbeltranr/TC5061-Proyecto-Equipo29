@@ -224,7 +224,12 @@ def analizar(
     x86, arm = TARIFAS["fargate_x86"], TARIFAS["fargate_arm"]
     run = TARIFAS["cloud_run_peticion"]
     inferencias = demanda.inferencias()
-    con_lote = demanda.peticiones(lote=1000)
+    # Las peticiones en lote se cuentan con el tamaño de lote que midió la sonda: su latencia
+    # es la de ese tamaño. Sin ese dato se asume la red completa en una petición (hasta 1000).
+    medido = lotes.get("estaciones")
+    lote = int(medido) if isinstance(medido, int | float) and medido >= 1 else 0
+    lote = min(lote or demanda.estaciones, 1000)
+    con_lote = demanda.peticiones(lote=lote)
     sin_lote = demanda.peticiones(lote=1)
 
     escenarios = [
@@ -310,6 +315,7 @@ def analizar(
                     usd_mes=usd_con_lote,
                     inferencias_mes=inferencias["total"],
                     peticiones_mes=con_lote["total"],
+                    estaciones_por_lote=lote,
                 )
             )
 
@@ -351,6 +357,7 @@ def analizar(
             "demanda": asdict(demanda),
             "inferencias_mes": inferencias,
             "peticiones_mes_con_lote": con_lote,
+            "estaciones_por_lote": lote,
             "peticiones_mes_sin_lote": sin_lote,
             "margen": margen,
             "horas_mes": HORAS_MES,
@@ -464,8 +471,15 @@ def optimizaciones(resultado: dict) -> list[str]:
         lote = filas.get("cloud_run_lote")
         if lote is not None and _es_numero(lote["usd_mes"], ahorro(base, lote)):
             con_lote = supuestos["peticiones_mes_con_lote"]["total"]
+            por_lote = lote.get("estaciones_por_lote") or supuestos.get("estaciones_por_lote")
+            tamano = (
+                f"s de {por_lote:,} {'estación' if por_lote == 1 else 'estaciones'}"
+                if por_lote
+                else ""
+            )
             frase += (
-                f"; si P2 y P3 se envían en lote ({_numero(con_lote)} peticiones al mes en vez de "
+                f"; si P2 y P3 se envían en lote{tamano} ({_numero(con_lote)} peticiones al mes "
+                "en vez de "
                 f"{_numero(sin_lote)}), baja a {_usd(lote['usd_mes'])} USD al mes, un ahorro del "
                 f"{ahorro(base, lote):.1%}"
             )
@@ -496,11 +510,16 @@ def optimizaciones(resultado: dict) -> list[str]:
     ):
         frases.append(
             "Apagar el ejecutor de trabajos de MLflow, que el proyecto no usa "
-            "(`MLFLOW_SERVER_ENABLE_JOB_EXECUTION=false`), baja su memoria máxima de "
-            f"{_numero(sin_ajuste['memoria_mib_max'])} a {_numero(mlflow['memoria_mib_max'])} MiB "
-            f"y su tamaño de {sin_ajuste['vcpu']:g} vCPU y {sin_ajuste['gb']:g} GB a "
-            f"{mlflow['vcpu']:g} vCPU y {mlflow['gb']:g} GB: de {_usd(sin_ajuste['usd_mes'])} a "
-            f"{_usd(mlflow['usd_mes'])} USD al mes, un ahorro del {ahorro(sin_ajuste, mlflow):.1%}."
+            "(`MLFLOW_SERVER_ENABLE_JOB_EXECUTION=false`), permite un servidor más chico. Con el "
+            "ejecutor, como lo levanta compose.yaml, MLflow llegó a "
+            f"{_numero(sin_ajuste['memoria_mib_max'])} MiB en la medición en reposo y le "
+            f"corresponden {sin_ajuste['vcpu']:g} vCPU y {sin_ajuste['gb']:g} GB "
+            f"({_usd(sin_ajuste['usd_mes'])} USD al mes); sin él llegó a "
+            f"{_numero(mlflow['memoria_mib_max'])} MiB durante la prueba de carga y le "
+            f"corresponden {mlflow['vcpu']:g} vCPU y {mlflow['gb']:g} GB "
+            f"({_usd(mlflow['usd_mes'])} USD al mes), un {ahorro(sin_ajuste, mlflow):.1%} menos. "
+            "Son dos configuraciones medidas en condiciones distintas, así que la diferencia de "
+            "memoria no se atribuye sólo al ejecutor."
         )
 
     api = filas.get("cloud_run_lote") or filas.get("cloud_run")
