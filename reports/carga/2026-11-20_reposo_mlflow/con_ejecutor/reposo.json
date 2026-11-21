@@ -1,0 +1,38 @@
+{
+  "fecha": "2026-11-20_2340",
+  "segundos": 90,
+  "contenedores": {
+    "api": "tc5061-carga-r2-api-1",
+    "mlflow": "tc5061-carga-r2-mlflow-1"
+  },
+  "limites": {
+    "api": {
+      "cpus": 1.0,
+      "memoria_mib": 1024.0
+    },
+    "mlflow": {
+      "cpus": 1.0,
+      "memoria_mib": 3072.0
+    }
+  },
+  "recursos": {
+    "api": {
+      "muestras": 45,
+      "cpu_nucleos_promedio": 0.03518222222222222,
+      "cpu_nucleos_p95": 0.29175999999999996,
+      "cpu_nucleos_max": 0.3064,
+      "memoria_mib_promedio": 250.4066666666667,
+      "memoria_mib_max": 263.0,
+      "limite_memoria_mib": 1024.0
+    },
+    "mlflow": {
+      "muestras": 45,
+      "cpu_nucleos_promedio": 0.034957777777777775,
+      "cpu_nucleos_p95": 0.1801999999999999,
+      "cpu_nucleos_max": 0.4422,
+      "memoria_mib_promedio": 1946.8288,
+      "memoria_mib_max": 1956.864,
+      "limite_memoria_mib": 3072.0
+    }
+  }
+}

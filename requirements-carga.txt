@@ -1,0 +1,2 @@
+# Dependencias de la prueba de carga; no van en la imagen de la API ni en la CI.
+locust==2.47.0

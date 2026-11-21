@@ -1,0 +1,595 @@
+{
+  "fecha": "2026-11-20_2224",
+  "commit": "67bc0a0",
+  "host": "http://127.0.0.1:8000",
+  "endpoints": [
+    "p1",
+    "p2",
+    "p3"
+  ],
+  "duracion_s": 90,
+  "tasa_usuarios_s": 20.0,
+  "p95_objetivo_ms": 500.0,
+  "contenedores": {
+    "api": "tc5061-carga-r2-api-1",
+    "mlflow": "tc5061-carga-r2-mlflow-1"
+  },
+  "limites": {
+    "api": {
+      "cpus": 1.0,
+      "memoria_mib": 1024.0
+    },
+    "mlflow": {
+      "cpus": 1.0,
+      "memoria_mib": 1024.0
+    }
+  },
+  "vcpu_medidos": 1.0,
+  "mlflow_sin_ajuste": {
+    "muestras": 45,
+    "cpu_nucleos_promedio": 0.032515555555555554,
+    "cpu_nucleos_p95": 0.2241799999999998,
+    "cpu_nucleos_max": 0.315,
+    "memoria_mib_promedio": 1964.2595555555554,
+    "memoria_mib_max": 1975.296,
+    "limite_memoria_mib": 48128.0
+  },
+  "etapas": [
+    {
+      "usuarios": 10,
+      "duracion_s": 90,
+      "peticiones": 677,
+      "fallas": 0,
+      "tasa_error": 0.0,
+      "rps_promedio": 7.858373673400307,
+      "rps_sostenido": 7.818944545454545,
+      "rps_inferencias": 7.518660116825567,
+      "promedio_ms": 37.96115273258018,
+      "promedio_inferencia_ms": 39.0074872503212,
+      "p50_ms": 19.0,
+      "p95_ms": 110.0,
+      "p99_ms": 390.0,
+      "max_ms": 535.6190999991668,
+      "endpoints": [
+        {
+          "endpoint": "GET /live",
+          "peticiones": 26,
+          "fallas": 0,
+          "promedio_ms": 11.762546153757004,
+          "p50_ms": 4.0,
+          "p95_ms": 50.0,
+          "p99_ms": 69.0,
+          "rps": 0.301798693513158
+        },
+        {
+          "endpoint": "P1 POST /api/v1/predict",
+          "peticiones": 26,
+          "fallas": 0,
+          "promedio_ms": 41.89096153850887,
+          "p50_ms": 23.0,
+          "p95_ms": 120.0,
+          "p99_ms": 140.0,
+          "rps": 0.301798693513158
+        },
+        {
+          "endpoint": "P2 POST /api/v1/p2/predict",
+          "peticiones": 597,
+          "fallas": 0,
+          "promedio_ms": 40.05018140697838,
+          "p50_ms": 20.0,
+          "p95_ms": 110.0,
+          "p99_ms": 480.0,
+          "rps": 6.929762308744436
+        },
+        {
+          "endpoint": "P3 POST /api/v1/p3/predict",
+          "peticiones": 28,
+          "fallas": 0,
+          "promedio_ms": 14.09824642827776,
+          "p50_ms": 10.0,
+          "p95_ms": 40.0,
+          "p99_ms": 46.0,
+          "rps": 0.3250139776295548
+        }
+      ],
+      "recursos": {
+        "api": {
+          "muestras": 38,
+          "cpu_nucleos_promedio": 0.21532105263157894,
+          "cpu_nucleos_p95": 0.503205,
+          "cpu_nucleos_max": 0.7705,
+          "memoria_mib_promedio": 249.92105263157896,
+          "memoria_mib_max": 257.9,
+          "limite_memoria_mib": 1024.0
+        },
+        "mlflow": {
+          "muestras": 38,
+          "cpu_nucleos_promedio": 0.028352631578947372,
+          "cpu_nucleos_p95": 0.2314449999999998,
+          "cpu_nucleos_max": 0.3636,
+          "memoria_mib_promedio": 401.5052631578948,
+          "memoria_mib_max": 411.0,
+          "limite_memoria_mib": 1024.0
+        }
+      }
+    },
+    {
+      "usuarios": 15,
+      "duracion_s": 90,
+      "peticiones": 965,
+      "fallas": 0,
+      "tasa_error": 0.0,
+      "rps_promedio": 11.173375521534986,
+      "rps_sostenido": 11.178282831168833,
+      "rps_inferencias": 10.657015756140234,
+      "promedio_ms": 71.07811958544588,
+      "promedio_inferencia_ms": 74.12744141299655,
+      "p50_ms": 22.0,
+      "p95_ms": 260.0,
+      "p99_ms": 770.0,
+      "max_ms": 831.1930999989272,
+      "endpoints": [
+        {
+          "endpoint": "GET /live",
+          "peticiones": 45,
+          "fallas": 0,
+          "promedio_ms": 8.736428888854183,
+          "p50_ms": 4.0,
+          "p95_ms": 39.0,
+          "p99_ms": 46.0,
+          "rps": 0.5210382367555174
+        },
+        {
+          "endpoint": "P1 POST /api/v1/predict",
+          "peticiones": 43,
+          "fallas": 0,
+          "promedio_ms": 75.18121860461136,
+          "p50_ms": 16.0,
+          "p95_ms": 240.0,
+          "p99_ms": 830.0,
+          "rps": 0.4978809817886055
+        },
+        {
+          "endpoint": "P2 POST /api/v1/p2/predict",
+          "peticiones": 822,
+          "fallas": 0,
+          "promedio_ms": 75.60286922134078,
+          "p50_ms": 23.0,
+          "p95_ms": 270.0,
+          "p99_ms": 770.0,
+          "rps": 9.517631791400786
+        },
+        {
+          "endpoint": "P3 POST /api/v1/p3/predict",
+          "peticiones": 55,
+          "fallas": 0,
+          "promedio_ms": 51.25264000029843,
+          "p50_ms": 13.0,
+          "p95_ms": 240.0,
+          "p99_ms": 470.0,
+          "rps": 0.6368245115900769
+        }
+      ],
+      "recursos": {
+        "api": {
+          "muestras": 39,
+          "cpu_nucleos_promedio": 0.3705025641025641,
+          "cpu_nucleos_p95": 0.75348,
+          "cpu_nucleos_max": 0.8668,
+          "memoria_mib_promedio": 250.78974358974358,
+          "memoria_mib_max": 260.7,
+          "limite_memoria_mib": 1024.0
+        },
+        "mlflow": {
+          "muestras": 39,
+          "cpu_nucleos_promedio": 0.0469051282051282,
+          "cpu_nucleos_p95": 0.38168,
+          "cpu_nucleos_max": 0.4372,
+          "memoria_mib_promedio": 401.8615384615385,
+          "memoria_mib_max": 414.9,
+          "limite_memoria_mib": 1024.0
+        }
+      }
+    },
+    {
+      "usuarios": 20,
+      "duracion_s": 90,
+      "peticiones": 1179,
+      "fallas": 0,
+      "tasa_error": 0.0,
+      "rps_promedio": 14.081185541661585,
+      "rps_sostenido": 14.092275133333336,
+      "rps_inferencias": 13.315347327000286,
+      "promedio_ms": 192.23719406275112,
+      "promedio_inferencia_ms": 200.58495233391977,
+      "p50_ms": 78.0,
+      "p95_ms": 770.0,
+      "p99_ms": 1500.0,
+      "max_ms": 2112.7261000001454,
+      "endpoints": [
+        {
+          "endpoint": "GET /live",
+          "peticiones": 65,
+          "fallas": 0,
+          "promedio_ms": 49.169459999953126,
+          "p50_ms": 13.0,
+          "p95_ms": 220.0,
+          "p99_ms": 710.0,
+          "rps": 0.7763164208719279
+        },
+        {
+          "endpoint": "P1 POST /api/v1/predict",
+          "peticiones": 52,
+          "fallas": 0,
+          "promedio_ms": 181.38463269245293,
+          "p50_ms": 23.0,
+          "p95_ms": 980.0,
+          "p99_ms": 1900.0,
+          "rps": 0.6210531366975424
+        },
+        {
+          "endpoint": "P2 POST /api/v1/p2/predict",
+          "peticiones": 1011,
+          "fallas": 0,
+          "promedio_ms": 204.41465182985323,
+          "p50_ms": 92.0,
+          "p95_ms": 810.0,
+          "p99_ms": 1500.0,
+          "rps": 12.074706176946448
+        },
+        {
+          "endpoint": "P3 POST /api/v1/p3/predict",
+          "peticiones": 51,
+          "fallas": 0,
+          "promedio_ms": 144.2435882352441,
+          "p50_ms": 16.0,
+          "p95_ms": 730.0,
+          "p99_ms": 1400.0,
+          "rps": 0.6091098071456665
+        }
+      ],
+      "recursos": {
+        "api": {
+          "muestras": 37,
+          "cpu_nucleos_promedio": 0.5927864864864865,
+          "cpu_nucleos_p95": 0.99168,
+          "cpu_nucleos_max": 1.0151999999999999,
+          "memoria_mib_promedio": 251.68648648648647,
+          "memoria_mib_max": 263.8,
+          "limite_memoria_mib": 1024.0
+        },
+        "mlflow": {
+          "muestras": 37,
+          "cpu_nucleos_promedio": 0.044351351351351355,
+          "cpu_nucleos_p95": 0.37624000000000046,
+          "cpu_nucleos_max": 0.5967,
+          "memoria_mib_promedio": 402.0027027027027,
+          "memoria_mib_max": 413.2,
+          "limite_memoria_mib": 1024.0
+        }
+      }
+    },
+    {
+      "usuarios": 30,
+      "duracion_s": 90,
+      "peticiones": 1580,
+      "fallas": 0,
+      "tasa_error": 0.0,
+      "rps_promedio": 18.438659876372892,
+      "rps_sostenido": 18.30595760526316,
+      "rps_inferencias": 17.460176019703532,
+      "promedio_ms": 390.8947427847965,
+      "promedio_inferencia_ms": 404.30688075645924,
+      "p50_ms": 320.0,
+      "p95_ms": 1100.0,
+      "p99_ms": 1600.0,
+      "max_ms": 1817.6009000017075,
+      "endpoints": [
+        {
+          "endpoint": "GET /live",
+          "peticiones": 73,
+          "fallas": 0,
+          "promedio_ms": 114.01677123280496,
+          "p50_ms": 50.0,
+          "p95_ms": 350.0,
+          "p99_ms": 1300.0,
+          "rps": 0.8519127664400136
+        },
+        {
+          "endpoint": "P1 POST /api/v1/predict",
+          "peticiones": 74,
+          "fallas": 0,
+          "promedio_ms": 417.8233986485056,
+          "p50_ms": 400.0,
+          "p95_ms": 940.0,
+          "p99_ms": 1200.0,
+          "rps": 0.8635828043364521
+        },
+        {
+          "endpoint": "P2 POST /api/v1/p2/predict",
+          "peticiones": 1350,
+          "fallas": 0,
+          "promedio_ms": 407.0815709629746,
+          "p50_ms": 330.0,
+          "p95_ms": 1100.0,
+          "p99_ms": 1600.0,
+          "rps": 15.754551160192031
+        },
+        {
+          "endpoint": "P3 POST /api/v1/p3/predict",
+          "peticiones": 83,
+          "fallas": 0,
+          "promedio_ms": 347.12550602384306,
+          "p50_ms": 300.0,
+          "p95_ms": 960.0,
+          "p99_ms": 1500.0,
+          "rps": 0.9686131454043988
+        }
+      ],
+      "recursos": {
+        "api": {
+          "muestras": 38,
+          "cpu_nucleos_promedio": 0.8370605263157894,
+          "cpu_nucleos_p95": 1.0196150000000002,
+          "cpu_nucleos_max": 1.0295,
+          "memoria_mib_promedio": 255.08684210526314,
+          "memoria_mib_max": 266.5,
+          "limite_memoria_mib": 1024.0
+        },
+        "mlflow": {
+          "muestras": 38,
+          "cpu_nucleos_promedio": 0.037107894736842104,
+          "cpu_nucleos_p95": 0.30156499999999997,
+          "cpu_nucleos_max": 0.3529,
+          "memoria_mib_promedio": 401.60526315789474,
+          "memoria_mib_max": 410.0,
+          "limite_memoria_mib": 1024.0
+        }
+      }
+    },
+    {
+      "usuarios": 50,
+      "duracion_s": 90,
+      "peticiones": 1660,
+      "fallas": 0,
+      "tasa_error": 0.0,
+      "rps_promedio": 19.167020319438414,
+      "rps_sostenido": 19.15772005194805,
+      "rps_inferencias": 18.25753802541073,
+      "promedio_ms": 1331.3858368073377,
+      "promedio_inferencia_ms": 1359.089077433742,
+      "p50_ms": 1300.0,
+      "p95_ms": 2200.0,
+      "p99_ms": 2600.0,
+      "max_ms": 2802.0733000012115,
+      "endpoints": [
+        {
+          "endpoint": "GET /live",
+          "peticiones": 78,
+          "fallas": 0,
+          "promedio_ms": 769.5072897436498,
+          "p50_ms": 700.0,
+          "p95_ms": 1600.0,
+          "p99_ms": 2100.0,
+          "rps": 0.9006190270579497
+        },
+        {
+          "endpoint": "P1 POST /api/v1/predict",
+          "peticiones": 69,
+          "fallas": 0,
+          "promedio_ms": 1505.1784014492864,
+          "p50_ms": 1500.0,
+          "p95_ms": 2500.0,
+          "p99_ms": 2700.0,
+          "rps": 0.7967014470128017
+        },
+        {
+          "endpoint": "P2 POST /api/v1/p2/predict",
+          "peticiones": 1422,
+          "fallas": 0,
+          "promedio_ms": 1356.7266521098138,
+          "p50_ms": 1300.0,
+          "p95_ms": 2200.0,
+          "p99_ms": 2600.0,
+          "rps": 16.418977647133392
+        },
+        {
+          "endpoint": "P3 POST /api/v1/p3/predict",
+          "peticiones": 91,
+          "fallas": 0,
+          "promedio_ms": 1285.234192307953,
+          "p50_ms": 1200.0,
+          "p95_ms": 2100.0,
+          "p99_ms": 2400.0,
+          "rps": 1.0507221982342747
+        }
+      ],
+      "recursos": {
+        "api": {
+          "muestras": 37,
+          "cpu_nucleos_promedio": 1.0088243243243245,
+          "cpu_nucleos_p95": 1.0175,
+          "cpu_nucleos_max": 1.0523,
+          "memoria_mib_promedio": 259.7162162162162,
+          "memoria_mib_max": 271.3,
+          "limite_memoria_mib": 1024.0
+        },
+        "mlflow": {
+          "muestras": 37,
+          "cpu_nucleos_promedio": 0.027481081081081084,
+          "cpu_nucleos_p95": 0.2478600000000003,
+          "cpu_nucleos_max": 0.3345,
+          "memoria_mib_promedio": 401.5972972972973,
+          "memoria_mib_max": 410.5,
+          "limite_memoria_mib": 1024.0
+        }
+      }
+    }
+  ],
+  "capacidad": {
+    "usuarios": 15,
+    "duracion_s": 90,
+    "peticiones": 965,
+    "fallas": 0,
+    "tasa_error": 0.0,
+    "rps_promedio": 11.173375521534986,
+    "rps_sostenido": 11.178282831168833,
+    "rps_inferencias": 10.657015756140234,
+    "promedio_ms": 71.07811958544588,
+    "promedio_inferencia_ms": 74.12744141299655,
+    "p50_ms": 22.0,
+    "p95_ms": 260.0,
+    "p99_ms": 770.0,
+    "max_ms": 831.1930999989272,
+    "endpoints": [
+      {
+        "endpoint": "GET /live",
+        "peticiones": 45,
+        "fallas": 0,
+        "promedio_ms": 8.736428888854183,
+        "p50_ms": 4.0,
+        "p95_ms": 39.0,
+        "p99_ms": 46.0,
+        "rps": 0.5210382367555174
+      },
+      {
+        "endpoint": "P1 POST /api/v1/predict",
+        "peticiones": 43,
+        "fallas": 0,
+        "promedio_ms": 75.18121860461136,
+        "p50_ms": 16.0,
+        "p95_ms": 240.0,
+        "p99_ms": 830.0,
+        "rps": 0.4978809817886055
+      },
+      {
+        "endpoint": "P2 POST /api/v1/p2/predict",
+        "peticiones": 822,
+        "fallas": 0,
+        "promedio_ms": 75.60286922134078,
+        "p50_ms": 23.0,
+        "p95_ms": 270.0,
+        "p99_ms": 770.0,
+        "rps": 9.517631791400786
+      },
+      {
+        "endpoint": "P3 POST /api/v1/p3/predict",
+        "peticiones": 55,
+        "fallas": 0,
+        "promedio_ms": 51.25264000029843,
+        "p50_ms": 13.0,
+        "p95_ms": 240.0,
+        "p99_ms": 470.0,
+        "rps": 0.6368245115900769
+      }
+    ],
+    "recursos": {
+      "api": {
+        "muestras": 39,
+        "cpu_nucleos_promedio": 0.3705025641025641,
+        "cpu_nucleos_p95": 0.75348,
+        "cpu_nucleos_max": 0.8668,
+        "memoria_mib_promedio": 250.78974358974358,
+        "memoria_mib_max": 260.7,
+        "limite_memoria_mib": 1024.0
+      },
+      "mlflow": {
+        "muestras": 39,
+        "cpu_nucleos_promedio": 0.0469051282051282,
+        "cpu_nucleos_p95": 0.38168,
+        "cpu_nucleos_max": 0.4372,
+        "memoria_mib_promedio": 401.8615384615385,
+        "memoria_mib_max": 414.9,
+        "limite_memoria_mib": 1024.0
+      }
+    }
+  },
+  "saturacion": {
+    "usuarios": 50,
+    "duracion_s": 90,
+    "peticiones": 1660,
+    "fallas": 0,
+    "tasa_error": 0.0,
+    "rps_promedio": 19.167020319438414,
+    "rps_sostenido": 19.15772005194805,
+    "rps_inferencias": 18.25753802541073,
+    "promedio_ms": 1331.3858368073377,
+    "promedio_inferencia_ms": 1359.089077433742,
+    "p50_ms": 1300.0,
+    "p95_ms": 2200.0,
+    "p99_ms": 2600.0,
+    "max_ms": 2802.0733000012115,
+    "endpoints": [
+      {
+        "endpoint": "GET /live",
+        "peticiones": 78,
+        "fallas": 0,
+        "promedio_ms": 769.5072897436498,
+        "p50_ms": 700.0,
+        "p95_ms": 1600.0,
+        "p99_ms": 2100.0,
+        "rps": 0.9006190270579497
+      },
+      {
+        "endpoint": "P1 POST /api/v1/predict",
+        "peticiones": 69,
+        "fallas": 0,
+        "promedio_ms": 1505.1784014492864,
+        "p50_ms": 1500.0,
+        "p95_ms": 2500.0,
+        "p99_ms": 2700.0,
+        "rps": 0.7967014470128017
+      },
+      {
+        "endpoint": "P2 POST /api/v1/p2/predict",
+        "peticiones": 1422,
+        "fallas": 0,
+        "promedio_ms": 1356.7266521098138,
+        "p50_ms": 1300.0,
+        "p95_ms": 2200.0,
+        "p99_ms": 2600.0,
+        "rps": 16.418977647133392
+      },
+      {
+        "endpoint": "P3 POST /api/v1/p3/predict",
+        "peticiones": 91,
+        "fallas": 0,
+        "promedio_ms": 1285.234192307953,
+        "p50_ms": 1200.0,
+        "p95_ms": 2100.0,
+        "p99_ms": 2400.0,
+        "rps": 1.0507221982342747
+      }
+    ],
+    "recursos": {
+      "api": {
+        "muestras": 37,
+        "cpu_nucleos_promedio": 1.0088243243243245,
+        "cpu_nucleos_p95": 1.0175,
+        "cpu_nucleos_max": 1.0523,
+        "memoria_mib_promedio": 259.7162162162162,
+        "memoria_mib_max": 271.3,
+        "limite_memoria_mib": 1024.0
+      },
+      "mlflow": {
+        "muestras": 37,
+        "cpu_nucleos_promedio": 0.027481081081081084,
+        "cpu_nucleos_p95": 0.2478600000000003,
+        "cpu_nucleos_max": 0.3345,
+        "memoria_mib_promedio": 401.5972972972973,
+        "memoria_mib_max": 410.5,
+        "limite_memoria_mib": 1024.0
+      }
+    }
+  },
+  "lotes": {
+    "estaciones": 468,
+    "p2_ms": 51.583550000941614,
+    "p3_ms": 32.57850000045437
+  },
+  "primera_peticion": {
+    "p1_ms": 47.33950000081677,
+    "p2_ms": 22.166599999764003,
+    "p3_ms": 30.12970000054338
+  }
+}
