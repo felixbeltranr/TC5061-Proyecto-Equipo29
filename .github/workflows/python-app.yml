@@ -111,3 +111,46 @@ jobs:
                 owner, repo, issue_number, body,
               });
             }
+
+  publicar-imagen:
+    name: Publicar la imagen en GHCR
+    # Solo al integrar en main: en los pull requests basta con que la imagen construya.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [build, deepchecks-py311]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Nombre de la imagen en minusculas
+        id: imagen
+        # ghcr.io exige minusculas y el repositorio tiene mayusculas.
+        run: echo "nombre=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+
+      - name: Iniciar sesion en GHCR
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "$GHCR_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Construir y publicar
+        env:
+          IMAGEN: ${{ steps.imagen.outputs.nombre }}
+        run: |
+          docker build -t "$IMAGEN:main" -t "$IMAGEN:${{ github.sha }}" .
+          docker push "$IMAGEN:main"
+          docker push "$IMAGEN:${{ github.sha }}"
+
+      - name: Resumen
+        env:
+          IMAGEN: ${{ steps.imagen.outputs.nombre }}
+        run: |
+          {
+            echo "### Imagen publicada"
+            echo ""
+            echo '```'
+            echo "docker pull $IMAGEN:main"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
