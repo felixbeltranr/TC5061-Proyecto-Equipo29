@@ -133,3 +133,10 @@ class P2PredictionResponse(BaseModel):
     input_count: int
     model_name: str | None = None
     model_version: str | None = None
+
+
+class P2JobResponse(BaseModel):
+    job_id: str
+    status: str = Field(description="Estado del trabajo en RQ: queued, started, finished o failed")
+    result: P2PredictionResponse | None = None
+    error: str | None = None

@@ -842,7 +842,7 @@ Usar el mismo nombre de experimento en otro archivo SQLite no junta las corridas
 
 > **Instrucciones anteriores desactualizadas:** la sección histórica «Despliegue inicial con MLflow y FastAPI» y las subsecciones de despliegue P1/P2/P3 que siguen conservan contexto y ejemplos de la API. Sus pasos de inicialización del Registry y de arranque ya no corresponden al Compose vigente; para desplegar, sigue esta sección.
 
-Compose inicia `registry-init`, MLflow y la API en el orden requerido. El inicializador valida una copia local del almacén de modelos y prepara los volúmenes persistentes de MLflow. La API inicia después de que MLflow esté saludable y comprueba su disponibilidad mediante `/ready`.
+Compose inicia `registry-init`, MLflow, Redis, la API y el worker de P2 (`p2-worker`) en el orden requerido. El inicializador valida una copia local del almacén de modelos y prepara los volúmenes persistentes de MLflow. La API inicia después de que MLflow esté saludable y comprueba su disponibilidad mediante `/ready`.
 
 ### Requisito: almacén MLflow completo
 
@@ -1175,6 +1175,18 @@ P2 se sirve como **inferencia en línea o por micro-lotes horarios**:
 - La misma API responde en línea a una estación a la vez, por ejemplo para consultar el riesgo de una estación concreta al abrir un tablero.
 - No tiene sentido invocarla por cada viaje: las características son horarias y el horizonte publicado es de 1 hora.
 - Para cambiar de versión, el entrenamiento de P2 registra versiones nuevas y sólo mueve `champion` después de cargar cada una y comprobar su predicción; luego se reinicia el servicio `api`. Para volver atrás se fija `P2_MODEL_URI` a la versión anterior en `compose.yaml`.
+
+#### 5. Predicción asíncrona en lote con Redis y RQ
+
+El lote horario de P2 también se puede encolar. `POST /api/v1/p2/jobs` recibe el mismo cuerpo que `/api/v1/p2/predict`, lo valida, lo deja en la cola `p2` de Redis y responde 202 con el `job_id`. El servicio `p2-worker` de `compose.yaml` atiende la cola con `rq worker --worker-class rq.worker.SimpleWorker p2`: carga el campeón de P2 en el primer trabajo y lo reusa en los siguientes. `GET /api/v1/p2/jobs/{job_id}` devuelve `queued`, `started`, `finished` con el mismo `result` que daría `/predict`, o `failed` con el error; un id desconocido responde 404 y, sin `REDIS_URL`, los dos endpoints responden 503. RQ conserva el resultado 500 segundos.
+
+```bash
+docker compose up --build -d --wait
+curl -s -X POST http://localhost:8000/api/v1/p2/jobs -H "Content-Type: application/json" -d @lote.json
+curl -s http://localhost:8000/api/v1/p2/jobs/<job_id>
+```
+
+Para ver la cola y el worker: `docker compose exec p2-worker rq info --url redis://redis:6379/0`. Las pruebas (`tests/api/test_p2_cola.py`) usan `fakeredis` y un `SimpleWorker` en modo `burst`, sin Docker.
 
 ### Consideraciones
 
