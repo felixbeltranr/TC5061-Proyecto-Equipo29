@@ -883,7 +883,15 @@ El pipeline tiene estos jobs:
 - `deepchecks-py311`, con Python 3.11: instala `requirements-deepchecks.txt` y ejecuta `tests/datos`.
 - `comment-pr`: en pull requests, publica o actualiza un comentario con el estado de los dos jobs y el enlace a la ejecución. Los resultados detallados y los logs se consultan en **Checks** del PR. GitHub puede impedir que este comentario se publique en PRs de forks; los checks del workflow siguen siendo el lugar para revisar el resultado.
 
-Este workflow valida y construye la imagen en GitHub Actions, pero no inicia los servicios, publica la imagen en un registry ni despliega la aplicación. Para ejecutar el sistema localmente, sigue los pasos de Docker Compose de la sección anterior.
+- `publicar-imagen`: sólo al integrar en `main`, construye la imagen y la publica en GitHub Container Registry con dos etiquetas, `main` y el SHA del commit. Usa el token que GitHub Actions inyecta, así que no hay secretos que configurar.
+
+Una vez publicada, la imagen se descarga sin construirla:
+
+```powershell
+docker pull ghcr.io/felixbeltranr/tc5061-proyecto-equipo29:main
+```
+
+El workflow no levanta los servicios ni despliega la aplicación: el arranque depende del almacén de modelos, que no está en el repositorio. Para ejecutar el sistema localmente, sigue los pasos de Docker Compose de la sección anterior.
 
 ## Despliegue inicial con MLflow y FastAPI
 
