@@ -5,8 +5,23 @@ x-app: &app
   image: mibici-service:local
 
 services:
+  registry-init:
+    <<: *app
+    command: ["python", "/app/scripts/compose/seed_mlflow_store.py"]
+    volumes:
+      - type: bind
+        source: ${MODEL_STORE_PATH:-./.model-store}
+        target: /seed
+        read_only: true
+      - mlflow-backend:/mlflow/backend
+      - mlflow-artifacts:/mlflow/artifacts
+    restart: "no"
+
   mlflow:
     <<: *app
+    depends_on:
+      registry-init:
+        condition: service_completed_successfully
     command:
       - mlflow
       - server
@@ -53,6 +68,16 @@ services:
     depends_on:
       mlflow:
         condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready', timeout=3)"
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 60s
 
 volumes:
   mlflow-backend:

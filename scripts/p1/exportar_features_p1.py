@@ -31,7 +31,7 @@ from validar_panel_p1 import SPEC, contract, sha256
 BASE_REVISION = "d2bec0502daaed12762da790ae6d29523124ad32"
 # config.py lo comparten P1, P2 y P3: sólo se fijan la clase P1Config y la instancia CONFIG_P1.
 SOURCE_SHA256 = {
-    "mibici/config.py::P1Config,CONFIG_P1": "c2420646acac270783243aff51c7e65d076725f068ec4b8c7fcf6ec88f096f6d",
+    "mibici/config.py::P1Config,CONFIG_P1": "0049bfcde77e8a38d901b0f3ffa77eec01b68250d76fadeff3a2f28731aa9599",
     "mibici/features.py": "5f4ed26b6945a9ed3c22719f6b707f4373b94e647433a03552ec5f334f9cbefd",
     "mibici/modeling/train_p1.py": "5882a96a132a5cce0887739a9d05bd259c6e936f52d0ae8fd90bf13ad66d5b10",
 }

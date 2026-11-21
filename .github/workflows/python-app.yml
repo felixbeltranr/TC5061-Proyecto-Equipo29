@@ -1,0 +1,113 @@
+# This workflow will install Python dependencies, run tests and lint with a single version of Python
+# For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-python
+
+name: Python application
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up Python 3.14
+      uses: actions/setup-python@v7
+      with:
+        python-version: "3.14"
+        cache: pip
+        cache-dependency-path: requirements.txt
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install flake8 pytest
+        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+    - name: Lint with flake8
+      run: |
+        # stop the build if there are Python syntax errors or undefined names
+        flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+        # exit-zero treats all errors as warnings. The GitHub editor is 127 chars wide
+        flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+    - name: Test with pytest
+      run: |
+        python -m pytest -ra --ignore=tests/datos
+    - name : Validate Compose
+      run: |
+        docker compose config -q
+    - name : Build image
+      run: |
+        docker compose build
+
+  deepchecks-py311:
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements-deepchecks.txt
+
+      - name: Install DeepChecks dependencies
+        run: |
+          python -m pip install -r requirements-deepchecks.txt
+
+      - name: Run data tests
+        run: |
+          python -m pytest -ra tests/datos
+
+  comment-pr:
+    name: PR result summary
+    if: ${{ always() && github.event_name == 'pull_request' }}
+    needs: [build, deepchecks-py311]
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Post or update PR summary
+        uses: actions/github-script@v7
+        env:
+          BUILD_RESULT: ${{ needs.build.result }}
+          DATA_TESTS_RESULT: ${{ needs.deepchecks-py311.result }}
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const issue_number = context.payload.pull_request.number;
+            const marker = "<!-- mibici-ci-summary -->";
+            const body = [
+              marker,
+              "### Resultado de CI",
+              `- Build, lint, pytest y Compose: **${process.env.BUILD_RESULT}**`,
+              `- Pruebas de datos: **${process.env.DATA_TESTS_RESULT}**`,
+              `[Ver ejecución](${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId})`,
+            ].join("\n");
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner, repo, issue_number, per_page: 100,
+            });
+            const previous = comments.find(
+              comment =>
+                comment.user?.login === "github-actions[bot]" &&
+                comment.body?.includes(marker)
+            );
+
+            if (previous) {
+              await github.rest.issues.updateComment({
+                owner, repo, comment_id: previous.id, body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner, repo, issue_number, body,
+              });
+            }
