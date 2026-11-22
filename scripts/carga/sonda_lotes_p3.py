@@ -121,7 +121,7 @@ def a_markdown(filas: list[dict], tarifa: finops.Tarifa, vcpu: float, gb: float,
         f"al mes.",
         "",
         "| Estaciones por petición | Mínimo (ms) | Mediana (ms) | ms por inferencia "
-        "| Veces más barato | USD por 1,000 inferencias | Peticiones al mes | USD al mes |",
+        "| Veces menos tiempo por inferencia | USD por 1,000 inferencias | Peticiones al mes | USD al mes |",
         "| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
     for f in filas:
