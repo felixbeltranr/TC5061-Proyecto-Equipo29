@@ -11,7 +11,15 @@ import sys
 MODEL_STORE_DIR = Path(os.environ.get("MODEL_STORE_DIR", "/seed"))
 BACKEND_DIR = Path("/mlflow/backend")
 ARTIFACTS_DIR = Path("/mlflow/artifacts")
-P1_MANIFEST = Path(__file__).resolve().parents[1] / "p1" / "campeon_api_p1.json"
+# Manifiestos por modelo: fijan version, run, ubicacion de artefactos y SHA256 del modelo
+# serializado. Sin manifiesto la validacion es solo estructural, asi que un almacen con el
+# campeon equivocado pasaria sin aviso.
+SCRIPTS_DIR = Path(__file__).resolve().parents[1]
+MANIFESTS = {
+    "mibici-equipo29-p1-demanda": SCRIPTS_DIR / "p1" / "campeon_api_p1.json",
+    "mibici-equipo29-p2-riesgo": SCRIPTS_DIR / "p2" / "campeon_api_p2.json",
+    "mibici-equipo29-p3-grupos": SCRIPTS_DIR / "p3" / "campeon_api_p3.json",
+}
 ARTIFACT_URI_PREFIX = "mlflow-artifacts:/"
 REQUIRED_MODELS = (
     ("mibici-equipo29-p1-demanda", "champion"),
@@ -43,13 +51,33 @@ def artifact_path(storage_location: str, artifact_root: Path) -> Path:
     return resolved
 
 
-def validate_store(database: Path, artifact_root: Path, p1_manifest: Path) -> None:
+def check_manifest(expected: dict, name: str, alias: str, version: str, run_id: str,
+                   storage_location: str, directory: Path) -> None:
+    """Compara la version registrada contra su manifiesto, incluida la huella del modelo."""
+    if (
+        alias != expected["alias"]
+        or version != expected["version"]
+        or run_id != expected["run_id"]
+        or storage_location != expected["storage_location"]
+    ):
+        raise ValueError(f"El campeón de {name} no coincide con su manifiesto")
+    model_file = directory / "model.skops"
+    if not model_file.is_file():
+        raise ValueError(f"Falta el modelo serializado de {name}: {model_file}")
+    if sha256(model_file) != expected["model_skops_sha256"]:
+        raise ValueError(f"El SHA256 de model.skops no coincide con el manifiesto de {name}")
+
+
+def validate_store(database: Path, artifact_root: Path, manifests: dict) -> None:
     if not database.is_file():
         raise ValueError(f"Falta {database}")
     if not artifact_root.is_dir():
         raise ValueError(f"Falta {artifact_root}")
 
-    expected_p1 = json.loads(p1_manifest.read_text(encoding="utf-8"))["modelo"]
+    expected = {
+        name: json.loads(ruta.read_text(encoding="utf-8"))["modelo"]
+        for name, ruta in manifests.items()
+    }
     database_uri = f"{database.resolve().as_uri()}?mode=ro"
     connection = sqlite3.connect(database_uri, uri=True)
     try:
@@ -75,19 +103,9 @@ def validate_store(database: Path, artifact_root: Path, p1_manifest: Path) -> No
             if not (directory / "MLmodel").is_file():
                 raise ValueError(f"Falta MLmodel para {name}@{alias}: {directory}")
 
-            if name == expected_p1["nombre"]:
-                if (
-                    alias != expected_p1["alias"]
-                    or version != expected_p1["version"]
-                    or run_id != expected_p1["run_id"]
-                    or storage_location != expected_p1["storage_location"]
-                ):
-                    raise ValueError("El campeón P1 no coincide con campeon_api_p1.json")
-                model_file = directory / "model.skops"
-                if not model_file.is_file():
-                    raise ValueError(f"Falta el modelo serializado de P1: {model_file}")
-                if sha256(model_file) != expected_p1["model_skops_sha256"]:
-                    raise ValueError("El SHA256 de model.skops no coincide con el manifiesto P1")
+            if name in expected:
+                check_manifest(expected[name], name, alias, version, run_id,
+                               storage_location, directory)
     finally:
         connection.close()
 
@@ -103,17 +121,17 @@ def seed() -> None:
     ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
 
     if not _is_empty(BACKEND_DIR, ARTIFACTS_DIR):
-        validate_store(BACKEND_DIR / "mlflow.db", ARTIFACTS_DIR, P1_MANIFEST)
+        validate_store(BACKEND_DIR / "mlflow.db", ARTIFACTS_DIR, MANIFESTS)
         print("El Registry existente es válido; no se modificaron sus volúmenes.")
         return
 
-    validate_store(source_database, source_artifacts, P1_MANIFEST)
+    validate_store(source_database, source_artifacts, MANIFESTS)
     shutil.copytree(source_artifacts, ARTIFACTS_DIR, dirs_exist_ok=True)
     temporary_database = BACKEND_DIR / ".mlflow.db.seed"
     shutil.copy2(source_database, temporary_database)
     temporary_database.replace(BACKEND_DIR / "mlflow.db")
 
-    validate_store(BACKEND_DIR / "mlflow.db", ARTIFACTS_DIR, P1_MANIFEST)
+    validate_store(BACKEND_DIR / "mlflow.db", ARTIFACTS_DIR, MANIFESTS)
     print("Registry P1/P2/P3 inicializado y verificado.")
 
 
