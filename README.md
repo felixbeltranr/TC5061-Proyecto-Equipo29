@@ -16,6 +16,8 @@ Diseñar, como equipo, una propuesta de solución de Machine Learning para un co
 
 Los ML Canvas de cada pregunta están en `references/`.
 
+Los tres modelos están documentados en [docs/model_card.md](docs/model_card.md): uso previsto y fuera de alcance, datos y procedencia, métricas, desempeño desagregado por estaciones nuevas, limitaciones y gobernanza.
+
 ## Datos
 
 - Fuente: [Datos abiertos MiBici](https://mibici.net/es/datos-abiertos/): viajes mensuales (`datos_abiertos_AAAA_MM.csv`) y nomenclatura de estaciones (`nomenclatura_AAAA_MM.csv`). Las condiciones de uso son las publicadas en ese portal.
@@ -1284,6 +1286,7 @@ Seguimos GitHub Flow:
 │   ├── interim        <- Paneles intermedios (p. ej. p1_panel_diario.parquet)
 │   ├── processed      <- combined_dataset.parquet
 │   └── raw            <- CSV originales de MiBici
+├── docs               <- Model Card, chequeos de seguridad y validación de datos
 ├── models             <- Modelos serializados (fuera de git)
 ├── notebooks          <- Exploración: número-iniciales-descripción.ipynb
 ├── pyproject.toml     <- Metadatos del paquete y configuración de Ruff
