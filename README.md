@@ -384,11 +384,11 @@ Resultado del 1 de noviembre de 2026 en Windows, con el entorno del proyecto (Py
 
 ```bash
 python -m pytest
-ruff check .
-ruff format --check .
+ruff check . --select E,W,F,C901 --line-length 127
+ruff format --check mibici
 ```
 
-La configuración de Ruff en `pyproject.toml` revisa `mibici/`.
+Por decisión del equipo, Ruff reemplaza a Flake8 como herramienta de lint. El chequeo bloquea si encuentra errores E/W/F o funciones con complejidad ciclomática mayor a 10; usa un límite de 127 caracteres e incluye los errores que Flake8 detenía en el CI. Ruff revisa los archivos Python del repositorio, incluidos `mibici/`, `tests/` y `scripts/`; el chequeo de formato se limita a `mibici/`.
 
 ### Validación de datos con DeepChecks
 
@@ -879,7 +879,7 @@ El workflow [`.github/workflows/python-app.yml`](.github/workflows/python-app.ym
 
 El pipeline tiene estos jobs:
 
-- `build`, con Python 3.14 y caché de pip: instala las dependencias, ejecuta Flake8 y pytest (excepto `tests/datos`), valida la configuración con `docker compose config -q` y construye la imagen con `docker compose build`.
+- `build`, con Python 3.14 y caché de pip: instala las dependencias, ejecuta Ruff y pytest (excepto `tests/datos`), valida la configuración con `docker compose config -q` y construye la imagen con `docker compose build`.
 - `deepchecks-py311`, con Python 3.11: instala `requirements-deepchecks.txt` y ejecuta `tests/datos`.
 - `comment-pr`: en pull requests, publica o actualiza un comentario con el estado de los dos jobs y el enlace a la ejecución. Los resultados detallados y los logs se consultan en **Checks** del PR. GitHub puede impedir que este comentario se publique en PRs de forks; los checks del workflow siguen siendo el lugar para revisar el resultado.
 

@@ -41,13 +41,9 @@ def make_tabular_pipeline(
 
     transformers = []
     if groups["numerical"]:
-        transformers.append(
-            ("numerical", numerical_transformer, list(groups["numerical"]))
-        )
+        transformers.append(("numerical", numerical_transformer, list(groups["numerical"])))
     if groups["categorical"]:
-        transformers.append(
-            ("categorical", categorical_transformer, list(groups["categorical"]))
-        )
+        transformers.append(("categorical", categorical_transformer, list(groups["categorical"])))
     if groups["passthrough"]:
         transformers.append(("passthrough", "passthrough", list(groups["passthrough"])))
 

@@ -24,16 +24,16 @@ from types import SimpleNamespace
 sys.dont_write_bytecode = True
 os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
 os.environ["PYTHON_DOTENV_DISABLED"] = "1"
-import numpy as np
-import pandas as pd
-from validar_panel_p1 import SPEC, contract, sha256
+import numpy as np  # noqa: E402
+import pandas as pd  # noqa: E402
+from validar_panel_p1 import SPEC, contract, sha256  # noqa: E402
 
 BASE_REVISION = "d2bec0502daaed12762da790ae6d29523124ad32"
 # config.py lo comparten P1, P2 y P3: sólo se fijan la clase P1Config y la instancia CONFIG_P1.
 SOURCE_SHA256 = {
     "mibici/config.py::P1Config,CONFIG_P1": "0049bfcde77e8a38d901b0f3ffa77eec01b68250d76fadeff3a2f28731aa9599",
     "mibici/features.py": "5f4ed26b6945a9ed3c22719f6b707f4373b94e647433a03552ec5f334f9cbefd",
-    "mibici/modeling/train_p1.py": "5882a96a132a5cce0887739a9d05bd259c6e936f52d0ae8fd90bf13ad66d5b10",
+    "mibici/modeling/train_p1.py": "25a2873293a2a55f103ff8733eda5b423bd1741109f71692e38203a1ce6caaeb",
 }
 CATEGORICAL = {"p1": ["dia_semana", "festivo", "festivo_lag7"]}
 # Tupla con nombre: ruff (objetivo 3.14) quitaría los paréntesis de un except con dos tipos,
@@ -63,8 +63,20 @@ def assignment(path, name):
     raise ValueError(f"Asignación literal ausente: {name}")
 
 
-def original_functions(path, names, namespace):
-    """Compile exact selected function ASTs; never execute module imports/main."""
+def _function_end_line(tokens, start):
+    depth, entered = 0, False
+    for token in tokens[start + 1 :]:
+        if token.type == tokenize.INDENT:
+            depth += 1
+            entered = True
+        elif token.type == tokenize.DEDENT:
+            depth -= 1
+            if entered and depth == 0:
+                return token.start[0] - 1
+    raise ValueError("No se localizó el límite de una función original")
+
+
+def _selected_function_nodes(path, names):
     source = path.read_text(encoding="utf-8")
     lines = source.splitlines(keepends=True)
     decoradas = {
@@ -82,24 +94,19 @@ def original_functions(path, names, namespace):
         if tokens[i + 1].string not in names:
             continue
         start = token.start[0]
-        depth, entered, end = (0, False, None)
-        for later in tokens[i + 1 :]:
-            if later.type == tokenize.INDENT:
-                depth += 1
-                entered = True
-            elif later.type == tokenize.DEDENT:
-                depth -= 1
-                if entered and depth == 0:
-                    end = later.start[0] - 1
-                    break
-        if end is None:
-            raise ValueError("No se localizó el límite de una función original")
+        end = _function_end_line(tokens, i)
         block = "".join(lines[start - 1 : end])
         node = ast.parse(block).body[0]
         ast.increment_lineno(node, start - 1)
         selected.append(node)
     if {n.name for n in selected} != set(names):
         raise ValueError(f"Funciones ausentes en {path.name}")
+    return selected
+
+
+def original_functions(path, names, namespace):
+    """Compile exact selected function ASTs; never execute module imports/main."""
+    selected = _selected_function_nodes(path, names)
     future = ast.ImportFrom(module="__future__", names=[ast.alias(name="annotations")], level=0)
     module = ast.fix_missing_locations(ast.Module(body=[future, *selected], type_ignores=[]))
     # Sólo funciones puras elegidas por AST de fuentes con hash verificado.
@@ -107,7 +114,7 @@ def original_functions(path, names, namespace):
     return namespace
 
 
-def load_functions(repo: Path, pipeline: str, mode: str):
+def _p1_config_values(repo):
     class_name = "P1Config"
     cfg_names = [
         "hora_emision",
@@ -132,54 +139,69 @@ def load_functions(repo: Path, pipeline: str, mode: str):
         )
     values = {k: literal_field(repo, class_name, k) for k in cfg_names}
     cuts = {k: values[k] for k in ["train_inicio", "val_inicio", "test_inicio", "test_fin"]}
-    feature_path = repo / "mibici" / "features.py"
-    if mode == "native":
-        if sys.version_info[:2] != (3, 14):
-            raise RuntimeError(
-                "native requiere el entorno principal Python 3.14; no instalar nada automáticamente"
-            )
-        sys.path.insert(0, str(repo))
-        feature = importlib.import_module("mibici.features")
-        if Path(feature.__file__).resolve() != feature_path:
-            raise RuntimeError(
-                "Se importó otra copia de mibici; detener para evitar evidencia ambigua"
-            )
-        for name, module in list(sys.modules.items()):
-            filename = getattr(module, "__file__", None)
-            if (name == "mibici" or name.startswith("mibici.")) and filename:
-                path = Path(filename).resolve()
-                if not path.is_relative_to(repo):
-                    raise RuntimeError(f"Módulo de otra copia: {name}: {path}")
-                rel = path.relative_to(repo).as_posix()
-                for clave, esperado in SOURCE_SHA256.items():
-                    if clave.partition("::")[0] == rel and (
-                        source_fingerprint(repo, clave) != esperado
-                    ):
-                        raise RuntimeError(f"Fuente importada distinta a la revisada: {clave}")
-    else:
-        ns = {"np": np, "pd": pd, "date": date}
-        ns["FEATURES"] = assignment(feature_path, "FEATURES")
-        ns.update(
-            {
-                "HORA_EMISION": values["hora_emision"],
-                "RETRASO_CONTEO_MIN": values["retraso_conteo_min"],
-            }
+    return values, cuts
+
+
+def _native_features(repo: Path, feature_path: Path):
+    if sys.version_info[:2] != (3, 14):
+        raise RuntimeError(
+            "native requiere el entorno principal Python 3.14; no instalar nada automáticamente"
         )
-        for key in ["LAGS_SEMANALES", "VENTANA_CORTA", "VENTANA_LARGA"]:
-            ns[key] = assignment(feature_path, key)
-        names = [
-            "emision",
-            "disponible_desde",
-            "_lag_minimo",
-            "ultimo_dia_conocido",
-            "pascua",
-            "_lunes_n",
-            "festivos",
-            "construir_features",
-        ]
-        original_functions(feature_path, names, ns)
-        ns["LAG_MINIMO"] = ns["_lag_minimo"]()
-        feature = SimpleNamespace(**ns)
+    sys.path.insert(0, str(repo))
+    feature = importlib.import_module("mibici.features")
+    if Path(feature.__file__).resolve() != feature_path:
+        raise RuntimeError(
+            "Se importó otra copia de mibici; detener para evitar evidencia ambigua"
+        )
+    for name, module in list(sys.modules.items()):
+        filename = getattr(module, "__file__", None)
+        if (name == "mibici" or name.startswith("mibici.")) and filename:
+            path = Path(filename).resolve()
+            if not path.is_relative_to(repo):
+                raise RuntimeError(f"Módulo de otra copia: {name}: {path}")
+            rel = path.relative_to(repo).as_posix()
+            for clave, esperado in SOURCE_SHA256.items():
+                if clave.partition("::")[0] == rel and (
+                    source_fingerprint(repo, clave) != esperado
+                ):
+                    raise RuntimeError(f"Fuente importada distinta a la revisada: {clave}")
+    return feature
+
+
+def _isolated_features(feature_path: Path, values: dict):
+    ns = {"np": np, "pd": pd, "date": date}
+    ns["FEATURES"] = assignment(feature_path, "FEATURES")
+    ns.update(
+        {
+            "HORA_EMISION": values["hora_emision"],
+            "RETRASO_CONTEO_MIN": values["retraso_conteo_min"],
+        }
+    )
+    for key in ["LAGS_SEMANALES", "VENTANA_CORTA", "VENTANA_LARGA"]:
+        ns[key] = assignment(feature_path, key)
+    names = [
+        "emision",
+        "disponible_desde",
+        "_lag_minimo",
+        "ultimo_dia_conocido",
+        "pascua",
+        "_lunes_n",
+        "festivos",
+        "construir_features",
+    ]
+    original_functions(feature_path, names, ns)
+    ns["LAG_MINIMO"] = ns["_lag_minimo"]()
+    return SimpleNamespace(**ns)
+
+
+def load_functions(repo: Path, pipeline: str, mode: str):
+    values, cuts = _p1_config_values(repo)
+    feature_path = repo / "mibici" / "features.py"
+    feature = (
+        _native_features(repo, feature_path)
+        if mode == "native"
+        else _isolated_features(feature_path, values)
+    )
     ns = {"pd": pd, "CORTES": cuts, "fe": feature}
     original_functions(repo / "mibici/modeling" / f"train_{pipeline}.py", ["particionar"], ns)
     return (feature, ns["particionar"], cuts)
@@ -236,23 +258,19 @@ def source_fingerprint(repo, clave):
     return hashlib.sha256("".join(partes).encode("utf-8")).hexdigest()
 
 
-def export(repo, source, output, pipeline, mode="native"):
-    repo, source, output = (
-        repo.resolve(strict=True),
-        source.resolve(strict=True),
-        output.resolve(),
-    )
-    if output.is_relative_to(repo) or output == source.parent or output.exists():
-        raise ValueError("Use una carpeta nueva fuera del repo y separada de la entrada")
+def _git_head(repo: Path) -> str:
     git = ["git", "-c", f"safe.directory={repo.as_posix()}", "-C", str(repo), "rev-parse"]
     try:
         raiz = Path(subprocess.check_output([*git, "--show-toplevel"], text=True).strip())
         head = subprocess.check_output([*git, "HEAD"], text=True).strip()
     except ERRORES_GIT as exc:
         raise ValueError("--repo debe ser la raíz de un checkout git con su .git") from exc
-    # Sin esto, una copia sin .git dentro de otro repositorio tomaría el commit de ese otro.
     if raiz.resolve() != repo:
         raise ValueError("--repo debe ser la raíz de un checkout git con su .git")
+    return head
+
+
+def _verify_source_hashes(repo: Path) -> dict:
     source_hashes = {}
     for rel, expected in SOURCE_SHA256.items():
         actual = source_fingerprint(repo, rel)
@@ -261,6 +279,46 @@ def export(repo, source, output, pipeline, mode="native"):
                 f"Fuente distinta a la base revisada: {rel}; revisar antes de cambiar hashes"
             )
         source_hashes[rel] = actual
+    return source_hashes
+
+
+def _validate_export_split(train, test, feature) -> None:
+    key = ["estacion", "fecha"]
+    if train.duplicated(key).any() or test.duplicated(key).any():
+        raise ValueError("Claves duplicadas en las exportaciones")
+    if not train[key].merge(test[key], on=key).empty:
+        raise ValueError("Hay claves compartidas entre entrenamiento y prueba")
+    if not train[key[1]].max() < test[key[1]].min():
+        raise ValueError("Orden temporal entre conjuntos inválido")
+    if test[key[1]].min() - train[key[1]].max() < pd.Timedelta(days=feature.LAG_MINIMO):
+        raise ValueError("Embargo entre entrenamiento y prueba menor al rezago mínimo")
+
+
+def _write_export_tables(output, manifest, train, test, key, features) -> None:
+    for name, df in [("train", train), ("test", test)]:
+        path = output / f"{name}.parquet"
+        df.to_parquet(path, index=False)
+        manifest["tables"][name] = {
+            "file": path.name,
+            "sha256": sha256(path),
+            "rows": len(df),
+            "stations": int(df["estacion"].nunique()),
+            "min_time": str(df[key[1]].min()),
+            "max_time": str(df[key[1]].max()),
+            "nulls": {c: int(n) for c, n in df[features].isna().sum().items()},
+        }
+
+
+def export(repo, source, output, pipeline, mode="native"):
+    repo, source, output = (
+        repo.resolve(strict=True),
+        source.resolve(strict=True),
+        output.resolve(),
+    )
+    if output.is_relative_to(repo) or output == source.parent or output.exists():
+        raise ValueError("Use una carpeta nueva fuera del repo y separada de la entrada")
+    head = _git_head(repo)
+    source_hashes = _verify_source_hashes(repo)
     data = pd.read_parquet(source, columns=SPEC[pipeline]["columns"])
     checked = contract(data, pipeline)
     if checked["failures"]:
@@ -273,16 +331,10 @@ def export(repo, source, output, pipeline, mode="native"):
     train, test = prepare(data, pipeline, f, partition)
     del data
     key = ["estacion", "fecha"]
-    columns = key + list(f.FEATURES)
+    features = list(f.FEATURES)
+    columns = key + features
     train, test = (train[columns].copy(), test[columns].copy())
-    if train.duplicated(key).any() or test.duplicated(key).any():
-        raise ValueError("Claves duplicadas en las exportaciones")
-    if not train[key].merge(test[key], on=key).empty:
-        raise ValueError("Hay claves compartidas entre entrenamiento y prueba")
-    if not train[key[1]].max() < test[key[1]].min():
-        raise ValueError("Orden temporal entre conjuntos inválido")
-    if test[key[1]].min() - train[key[1]].max() < pd.Timedelta(days=f.LAG_MINIMO):
-        raise ValueError("Embargo entre entrenamiento y prueba menor al rezago mínimo")
+    _validate_export_split(train, test, f)
     mlflow_after = {name for name in sys.modules if name == "mlflow" or name.startswith("mlflow.")}
     mlflow_introduced = sorted(mlflow_after - mlflow_before)
     if mlflow_introduced:
@@ -301,7 +353,7 @@ def export(repo, source, output, pipeline, mode="native"):
         "input_name": source.name,
         "input_sha256": sha256(source),
         "input_rows": input_rows,
-        "features": list(f.FEATURES),
+        "features": features,
         "categorical": CATEGORICAL[pipeline],
         "key": key,
         "cuts": cuts,
@@ -311,18 +363,7 @@ def export(repo, source, output, pipeline, mode="native"):
         "mlflow_modules_introduced": mlflow_introduced,
         "tables": {},
     }
-    for name, df in [("train", train), ("test", test)]:
-        p = output / f"{name}.parquet"
-        df.to_parquet(p, index=False)
-        manifest["tables"][name] = {
-            "file": p.name,
-            "sha256": sha256(p),
-            "rows": len(df),
-            "stations": int(df["estacion"].nunique()),
-            "min_time": str(df[key[1]].min()),
-            "max_time": str(df[key[1]].max()),
-            "nulls": {c: int(n) for c, n in df[f.FEATURES].isna().sum().items()},
-        }
+    _write_export_tables(output, manifest, train, test, key, features)
     manifest["station_populations"] = {
         "common": len(set(train.estacion) & set(test.estacion)),
         "test_only": len(set(test.estacion) - set(train.estacion)),

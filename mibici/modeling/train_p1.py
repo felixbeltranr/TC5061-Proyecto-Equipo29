@@ -711,112 +711,77 @@ def resolver_registro(
     )
 
 
-def main(argv: list[str] | None = None) -> dict:
-    """Punto de entrada: python -m mibici.modeling.train_p1."""
-    ap = argparse.ArgumentParser(description="Experimento base P1 en MLflow")
-    ap.add_argument("--panel", default=str(CONFIG_P1.panel_path))
-    ap.add_argument("--semilla", type=int, default=CONFIG_P1.semilla)
-    ap.add_argument("--tracking-uri", default=tracking.TRACKING_URI)
-    ap.add_argument("--artefactos", default=str(CONFIG_P1.artefactos_dir))
-    ap.add_argument("--figuras", default=str(CONFIG.reports_dir / "figures"))
-    ap.add_argument("--manifiesto", default=str(tracking.MANIFIESTO))
-    ap.add_argument("--autor", default=None, help="por defecto, git config user.name")
-    ap.add_argument(
-        "--no-registrar",
-        action="store_true",
-        help="omite el Model Registry; por omision se promueve el ganador desplegable",
-    )
-    ap.add_argument(
-        "--model",
-        choices=("auto", *CANDIDATOS),
-        default=CONFIG_P1.model,
-        help="auto compara los modelos configurados; un modelo específico restringe la comparación",
-    )
-    ap.add_argument("--hyperparameters", default="{}")
-    ap.add_argument(
-        "--sin-afinar", action="store_true", help="usa la primera configuracion de cada rejilla"
-    )
-    args = ap.parse_args(argv)
+def _hiperparametros(parser: argparse.ArgumentParser, raw: str) -> dict:
     try:
-        hyperparameters = json.loads(args.hyperparameters)
+        parametros = json.loads(raw)
     except json.JSONDecodeError as exc:
-        ap.error(f"--hyperparameters must be valid JSON: {exc}")
-    if not isinstance(hyperparameters, dict):
-        ap.error("--hyperparameters must be a JSON object")
+        parser.error(f"--hyperparameters must be valid JSON: {exc}")
+    if not isinstance(parametros, dict):
+        parser.error("--hyperparameters must be a JSON object")
+    return parametros
 
-    tracking.configurar(args.tracking_uri, Path(args.artefactos))
-    data_version = tracking.version_datos(Path(args.manifiesto))
-    ruta_resumen = Path(args.panel).with_suffix(".json")
-    resumen = json.loads(ruta_resumen.read_text())
-    df = fe.construir_features(pd.read_parquet(args.panel))
-    partes = particionar(df[df["elegible"]])
-    val, test = partes["val"], partes["test"]
-    figs = Path(args.figuras)
-    figs.mkdir(parents=True, exist_ok=True)
-    rango_datos = f"{resumen['primer_dia_panel'][:7]}..{resumen['ultimo_dia_panel'][:7]}"
-    tags_base = tracking.etiquetas_base(
-        "P1", args.autor or tracking.autor_git(), args.semilla, rango_datos, data_version
-    )
 
-    r = predecir(
-        partes,
-        args.semilla,
-        completo=not args.sin_afinar,
-        model=args.model,
-        hyperparameters=hyperparameters,
-        tags_base=tags_base,
-    )
+def _metricas_validacion(predicciones: dict, val: pd.DataFrame) -> tuple[dict, dict]:
     metricas_modelo = {}
     elegibilidad = {}
-    # La elegibilidad y la seleccion quedan cerradas con validacion antes de calcular
-    # cualquier metrica o diagnostico de prueba.
-    for nombre, pred in r["pred_val"].items():
-        m = metricas(val["objetivo"], pred, "val")
+    for nombre, pred in predicciones.items():
+        metricas_modelo_item = metricas(val["objetivo"], pred, "val")
         if nombre in CANDIDATOS:
             diagnostico = diagnostico_dominio(pred)
             elegibilidad[nombre] = diagnostico
-            m |= {
+            metricas_modelo_item |= {
                 "val_pred_negative_n": diagnostico["negative_n"],
                 "val_pred_nonfinite_n": diagnostico["nonfinite_n"],
                 "val_domain_eligible": float(diagnostico["eligible"]),
             }
             if diagnostico["prediction_min"] is not None:
-                m["val_pred_min"] = diagnostico["prediction_min"]
-        metricas_modelo[nombre] = m
-    seleccionado = seleccionar(
-        {k: v["val_mae"] for k, v in metricas_modelo.items()},
-        {k: bool(v["eligible"]) for k, v in elegibilidad.items()},
-    )
-    logger.info("Modelo seleccionado en validacion: {}", seleccionado)
+                metricas_modelo_item["val_pred_min"] = diagnostico["prediction_min"]
+        metricas_modelo[nombre] = metricas_modelo_item
+    return metricas_modelo, elegibilidad
 
+
+def _metricas_prueba(
+    r: dict,
+    partes: dict,
+    metricas_modelo: dict,
+) -> None:
+    test = partes["test"]
     segmento_test = segmentos(partes["train"], test)
-    # Prueba se observa solo despues de cerrar seleccion y elegibilidad.
     for nombre, pred in r["pred_test"].items():
-        m = metricas(test["objetivo"], pred, "test")
-        m |= metricas_segmentos(test, pred, segmento_test, "test")
-        m |= metricas_mensuales(test, pred, "test")
+        medidas = metricas(test["objetivo"], pred, "test")
+        medidas |= metricas_segmentos(test, pred, segmento_test, "test")
+        medidas |= metricas_mensuales(test, pred, "test")
         if nombre in r["costos"]:
-            m |= r["costos"][nombre]
-        metricas_modelo[nombre] |= m
+            medidas |= r["costos"][nombre]
+        metricas_modelo[nombre] |= medidas
     for nombre in CANDIDATOS:
-        if nombre in metricas_modelo:
-            metricas_modelo[nombre]["val_mejora_mae_vs_semana_previa"] = (
-                metricas_modelo["semana_previa"]["val_mae"] - metricas_modelo[nombre]["val_mae"]
-            )
-            metricas_modelo[nombre]["test_mejora_mae_vs_semana_previa"] = (
-                metricas_modelo["semana_previa"]["test_mae"] - metricas_modelo[nombre]["test_mae"]
-            )
+        if nombre not in metricas_modelo:
+            continue
+        metricas_modelo[nombre]["val_mejora_mae_vs_semana_previa"] = (
+            metricas_modelo["semana_previa"]["val_mae"] - metricas_modelo[nombre]["val_mae"]
+        )
+        metricas_modelo[nombre]["test_mejora_mae_vs_semana_previa"] = (
+            metricas_modelo["semana_previa"]["test_mae"] - metricas_modelo[nombre]["test_mae"]
+        )
 
-    params_comunes = parametros_comunes(partes, df, resumen, args.semilla, data_version)
-    ruta_rejilla = figs / "p1_rejilla_validacion.json"
-    ruta_rejilla.write_text(json.dumps(r["rejilla"], indent=2))
-    ruta_coef = None
-    if r["modelo_poisson"] is not None:
-        ruta_coef = figs / "p1_poisson_coeficientes.csv"
-        coeficientes_poisson(r["modelo_poisson"]).to_csv(ruta_coef, index=False)
 
-    # La figura cubre validacion y prueba. Solo las candidatas entrenadas guardan modelo,
-    # datasets y configuracion; los baselines siguen siendo referencias no desplegables.
+def _registrar_runs(
+    args,
+    r,
+    partes,
+    val,
+    test,
+    figs,
+    data_version,
+    tags_base,
+    params_comunes,
+    metricas_modelo,
+    elegibilidad,
+    seleccionado,
+    ruta_rejilla,
+    ruta_resumen,
+    ruta_coef,
+) -> tuple[dict, dict]:
     val_test = pd.concat([val, test])
     runs = {}
     modelos_logueados = {}
@@ -862,7 +827,6 @@ def main(argv: list[str] | None = None) -> dict:
                 (Path(args.manifiesto), "data"),
                 (ruta_resumen, "data"),
             ]
-
             dentro = contenido_candidata(nombre, dict(params_modelo))
         if nombre == "poisson" and ruta_coef is not None:
             artefactos.append((ruta_coef, "data"))
@@ -870,9 +834,7 @@ def main(argv: list[str] | None = None) -> dict:
         tags = (
             tags_base
             | etiquetas_modelo(etiqueta, FAMILIAS[nombre], etapa)
-            | {
-                "seleccionado_validacion": "si" if nombre == seleccionado else "no",
-            }
+            | {"seleccionado_validacion": "si" if nombre == seleccionado else "no"}
         )
         if nombre in CANDIDATOS:
             diagnostico = elegibilidad[nombre]
@@ -892,6 +854,96 @@ def main(argv: list[str] | None = None) -> dict:
         runs[nombre] = run_id
         if nombre in modelos_logueados:
             modelos_logueados[nombre]["run_id"] = run_id
+    return runs, modelos_logueados
+
+
+def main(argv: list[str] | None = None) -> dict:
+    """Punto de entrada: python -m mibici.modeling.train_p1."""
+    ap = argparse.ArgumentParser(description="Experimento base P1 en MLflow")
+    ap.add_argument("--panel", default=str(CONFIG_P1.panel_path))
+    ap.add_argument("--semilla", type=int, default=CONFIG_P1.semilla)
+    ap.add_argument("--tracking-uri", default=tracking.TRACKING_URI)
+    ap.add_argument("--artefactos", default=str(CONFIG_P1.artefactos_dir))
+    ap.add_argument("--figuras", default=str(CONFIG.reports_dir / "figures"))
+    ap.add_argument("--manifiesto", default=str(tracking.MANIFIESTO))
+    ap.add_argument("--autor", default=None, help="por defecto, git config user.name")
+    ap.add_argument(
+        "--no-registrar",
+        action="store_true",
+        help="omite el Model Registry; por omision se promueve el ganador desplegable",
+    )
+    ap.add_argument(
+        "--model",
+        choices=("auto", *CANDIDATOS),
+        default=CONFIG_P1.model,
+        help="auto compara los modelos configurados; un modelo específico restringe la comparación",
+    )
+    ap.add_argument("--hyperparameters", default="{}")
+    ap.add_argument(
+        "--sin-afinar", action="store_true", help="usa la primera configuracion de cada rejilla"
+    )
+    args = ap.parse_args(argv)
+    hyperparameters = _hiperparametros(ap, args.hyperparameters)
+
+    tracking.configurar(args.tracking_uri, Path(args.artefactos))
+    data_version = tracking.version_datos(Path(args.manifiesto))
+    ruta_resumen = Path(args.panel).with_suffix(".json")
+    resumen = json.loads(ruta_resumen.read_text())
+    df = fe.construir_features(pd.read_parquet(args.panel))
+    partes = particionar(df[df["elegible"]])
+    val, test = partes["val"], partes["test"]
+    figs = Path(args.figuras)
+    figs.mkdir(parents=True, exist_ok=True)
+    rango_datos = f"{resumen['primer_dia_panel'][:7]}..{resumen['ultimo_dia_panel'][:7]}"
+    tags_base = tracking.etiquetas_base(
+        "P1", args.autor or tracking.autor_git(), args.semilla, rango_datos, data_version
+    )
+
+    r = predecir(
+        partes,
+        args.semilla,
+        completo=not args.sin_afinar,
+        model=args.model,
+        hyperparameters=hyperparameters,
+        tags_base=tags_base,
+    )
+    # La elegibilidad y la seleccion quedan cerradas con validacion antes de calcular
+    # cualquier metrica o diagnostico de prueba.
+    metricas_modelo, elegibilidad = _metricas_validacion(r["pred_val"], val)
+    seleccionado = seleccionar(
+        {k: v["val_mae"] for k, v in metricas_modelo.items()},
+        {k: bool(v["eligible"]) for k, v in elegibilidad.items()},
+    )
+    logger.info("Modelo seleccionado en validacion: {}", seleccionado)
+
+    # Prueba se observa solo despues de cerrar seleccion y elegibilidad.
+    _metricas_prueba(r, partes, metricas_modelo)
+
+    params_comunes = parametros_comunes(partes, df, resumen, args.semilla, data_version)
+    ruta_rejilla = figs / "p1_rejilla_validacion.json"
+    ruta_rejilla.write_text(json.dumps(r["rejilla"], indent=2))
+    ruta_coef = None
+    if r["modelo_poisson"] is not None:
+        ruta_coef = figs / "p1_poisson_coeficientes.csv"
+        coeficientes_poisson(r["modelo_poisson"]).to_csv(ruta_coef, index=False)
+
+    runs, modelos_logueados = _registrar_runs(
+        args,
+        r,
+        partes,
+        val,
+        test,
+        figs,
+        data_version,
+        tags_base,
+        params_comunes,
+        metricas_modelo,
+        elegibilidad,
+        seleccionado,
+        ruta_rejilla,
+        ruta_resumen,
+        ruta_coef,
+    )
 
     registry = resolver_registro(
         args.model,
