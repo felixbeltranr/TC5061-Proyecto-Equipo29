@@ -154,9 +154,11 @@ def nombres_compose(texto: str) -> dict[str, str]:
     texto = texto.strip()
     if not texto:
         return {}
-    registros = json.loads(texto) if texto.startswith("[") else [
-        json.loads(renglon) for renglon in texto.splitlines() if renglon.strip()
-    ]
+    registros = (
+        json.loads(texto)
+        if texto.startswith("[")
+        else [json.loads(renglon) for renglon in texto.splitlines() if renglon.strip()]
+    )
     return {r.get("Service", ""): r.get("Name", "") for r in registros if r.get("Name")}
 
 
@@ -652,52 +654,37 @@ def recalcular(args: argparse.Namespace, carpeta: Path) -> int:
     return 0
 
 
-def main(argv: list[str] | None = None) -> int:
-    args = argumentos(argv)
-    etapas = [int(u) for u in args.etapas.split(",") if u.strip()]
-    fecha = datetime.now().strftime("%Y-%m-%d_%H%M")
-    salida = args.recalcular or args.salida or RAIZ / "reports" / "carga" / fecha
-    if args.actualizar_readme and not salida.resolve().is_relative_to(RAIZ):
-        # Las figuras del README se enlazan con rutas relativas al repositorio.
-        print(f"--actualizar-readme necesita que la salida esté dentro de {RAIZ}.")
-        return 2
-    if args.recalcular:
-        return recalcular(args, args.recalcular)
-    salida.mkdir(parents=True, exist_ok=True)
-
-    if args.reposo:
-        return medir_reposo(args, salida, fecha)
-
+def _validar_preparacion(args, salida, etapas):
     ocupadas = etapas_ocupadas(salida, etapas)
     if ocupadas:
-        # Si Locust no llegara a escribir, los CSV de otra corrida pasarían por los de ésta.
         cuales = "la etapa" if len(ocupadas) == 1 else "las etapas"
         print(
             f"{salida} ya tiene resultados de {cuales} de {', '.join(map(str, ocupadas))} "
             "usuarios. Cada corrida necesita una carpeta propia: uso otra --salida."
         )
-        return 2
+        return None
     try:
         sin_ajuste = mlflow_sin_ajuste(args.mlflow_sin_ajuste)
     except (OSError, ValueError) as error:
         print(f"--mlflow-sin-ajuste: {error}")
-        return 2
-
+        return None
     try:
         endpoints = endpoints_disponibles(args.host)
     except (RuntimeError, urllib.error.URLError) as error:
         print(f"La API no está lista: {error}")
-        return 2
+        return None
     if not endpoints:
         print("Ningún modelo está cargado (/ready). Siembra el Registry antes de la prueba.")
-        return 2
+        return None
     print(f"Endpoints con modelo: {', '.join(endpoints)}")
+    return {"sin_ajuste": sin_ajuste, "endpoints": endpoints}
 
+
+def _preparar_recursos(args):
     contenedores = {} if args.sin_recursos else contenedores_del_sistema(args)
     if not args.sin_recursos and "api" not in contenedores:
         print("No encontré el contenedor de la API; uso --contenedores o --sin-recursos.")
-        return 2
-
+        return None
     limites = limites_de(contenedores, args.motor) if contenedores else {}
     vcpu_medidos = args.vcpu_medidos or (limites.get("api") or {}).get("cpus")
     if texto_limites(limites):
@@ -718,64 +705,88 @@ def main(argv: list[str] | None = None) -> int:
                 "uvicorn."
             )
         vcpu_medidos = 1.0
+    return {
+        "contenedores": contenedores,
+        "limites": limites,
+        "vcpu_medidos": vcpu_medidos,
+        "vcpu_medidos_supuesto": supuesto,
+    }
 
-    primera = primera_peticion(args.host, endpoints)
-    if texto_primera_peticion(primera):
-        print(texto_primera_peticion(primera))
 
-    resumenes, historiales, muestras, cortes, avisos = [], [], [], [], []
-    for usuarios in etapas:
-        print(f"Etapa de {usuarios} usuarios durante {args.duracion} s…")
-        if contenedores:
-            with recursos.Muestreador(
-                list(contenedores.values()), args.motor, args.intervalo
-            ) as muestreador:
-                inicio, fin = correr_etapa(args, usuarios, salida, endpoints)
-            propias = muestreador.muestras
-            error_stats = muestreador.errores[-1] if muestreador.errores else ""
-            if error_stats:
-                print(f"  avisos de {args.motor} stats: {error_stats}")
-        else:
+def _medir_etapa(args, usuarios, salida, endpoints, contenedores):
+    print(f"Etapa de {usuarios} usuarios durante {args.duracion} s…")
+    if contenedores:
+        with recursos.Muestreador(
+            list(contenedores.values()), args.motor, args.intervalo
+        ) as muestreador:
             inicio, fin = correr_etapa(args, usuarios, salida, endpoints)
-            propias, error_stats = [], ""
-        prefijo = salida / f"etapa_{usuarios:03d}"
-        ruta_stats = Path(f"{prefijo}_stats.csv")
-        ruta_historial = Path(f"{prefijo}_stats_history.csv")
-        if not (ruta_stats.exists() and ruta_historial.exists()):
-            print(f"  la etapa de {usuarios} usuarios no dejó los CSV de Locust; la salto.")
-            continue
-        stats = carga.leer_stats(ruta_stats)
-        historial = carga.leer_historial(ruta_historial)
-        descartar = max(10.0, usuarios / args.tasa + 5)
-        resumen = carga.resumen_etapa(stats, historial, usuarios, args.duracion, descartar)
-        # CPU y RPS con la misma ventana: sin el arranque de Locust, la rampa ni el cierre.
-        marcas = historial["Timestamp"].tolist() if "Timestamp" in historial else []
-        estables = recursos.en_ventana(propias, marcas, descartar, inicio, fin)
-        por_contenedor = recursos.resumir(estables)
-        resumen["recursos"] = {
-            servicio: por_contenedor.get(nombre) for servicio, nombre in contenedores.items()
-        }
-        faltan = [servicio for servicio, medido in resumen["recursos"].items() if not medido]
-        if faltan:
-            # Sin esas muestras el servicio no entra al costo: que no pase inadvertido.
-            aviso = f"etapa de {usuarios} usuarios sin muestras de {', '.join(faltan)}"
-            aviso += f" ({error_stats})" if error_stats else ""
-            avisos.append(aviso)
-            print(f"  aviso: {aviso}")
-        recursos.guardar_csv(propias, Path(f"{prefijo}_recursos.csv"))
-        resumenes.append(resumen)
-        historiales.append((usuarios, historial))
-        muestras.extend(propias)
-        cortes.append((inicio, usuarios))
-        print(
-            f"  {resumen['rps_sostenido']:.1f} RPS, p95 {resumen['p95_ms']:.0f} ms, "
-            f"errores {resumen['tasa_error']:.2%}"
-        )
+        propias = muestreador.muestras
+        error_stats = muestreador.errores[-1] if muestreador.errores else ""
+        if error_stats:
+            print(f"  avisos de {args.motor} stats: {error_stats}")
+    else:
+        inicio, fin = correr_etapa(args, usuarios, salida, endpoints)
+        propias, error_stats = [], ""
+    prefijo = salida / f"etapa_{usuarios:03d}"
+    ruta_stats = Path(f"{prefijo}_stats.csv")
+    ruta_historial = Path(f"{prefijo}_stats_history.csv")
+    if not (ruta_stats.exists() and ruta_historial.exists()):
+        print(f"  la etapa de {usuarios} usuarios no dejó los CSV de Locust; la salto.")
+        return None
+    stats = carga.leer_stats(ruta_stats)
+    historial = carga.leer_historial(ruta_historial)
+    descartar = max(10.0, usuarios / args.tasa + 5)
+    resumen = carga.resumen_etapa(stats, historial, usuarios, args.duracion, descartar)
+    marcas = historial["Timestamp"].tolist() if "Timestamp" in historial else []
+    estables = recursos.en_ventana(propias, marcas, descartar, inicio, fin)
+    por_contenedor = recursos.resumir(estables)
+    resumen["recursos"] = {
+        servicio: por_contenedor.get(nombre) for servicio, nombre in contenedores.items()
+    }
+    faltan = [servicio for servicio, medido in resumen["recursos"].items() if not medido]
+    if faltan:
+        aviso = f"etapa de {usuarios} usuarios sin muestras de {', '.join(faltan)}"
+        aviso += f" ({error_stats})" if error_stats else ""
+        print(f"  aviso: {aviso}")
+    recursos.guardar_csv(propias, Path(f"{prefijo}_recursos.csv"))
+    print(
+        f"  {resumen['rps_sostenido']:.1f} RPS, p95 {resumen['p95_ms']:.0f} ms, "
+        f"errores {resumen['tasa_error']:.2%}"
+    )
+    return {
+        "resumen": resumen,
+        "historial": (usuarios, historial),
+        "muestras": propias,
+        "corte": (inicio, usuarios),
+        "aviso": aviso if faltan else None,
+    }
 
-    if not resumenes:
+
+def _ejecutar_etapas(args, etapas, salida, endpoints, contenedores):
+    resultados = []
+    for usuarios in etapas:
+        resultado = _medir_etapa(args, usuarios, salida, endpoints, contenedores)
+        if resultado is not None:
+            resultados.append(resultado)
+    if not resultados:
         print("Ninguna etapa dejó resultados de Locust; revisa que Locust esté instalado y corra.")
-        return 2
+        return None
+    return {
+        "resumenes": [resultado["resumen"] for resultado in resultados],
+        "historiales": [resultado["historial"] for resultado in resultados],
+        "muestras": [muestra for resultado in resultados for muestra in resultado["muestras"]],
+        "cortes": [resultado["corte"] for resultado in resultados],
+        "avisos": [resultado["aviso"] for resultado in resultados if resultado["aviso"]],
+    }
 
+
+def _guardar_resultados(
+    args, fecha, salida, endpoints, preparacion, medicion, etapas, primera_peticion_resultado
+):
+    resumenes = etapas["resumenes"]
+    historiales = etapas["historiales"]
+    muestras = etapas["muestras"]
+    cortes = etapas["cortes"]
     lotes = sonda_de_lotes(args.host, args.lote_sonda, args.repeticiones_sonda, endpoints)
     capacidad = carga.capacidad_sostenida(resumenes, args.p95_objetivo, args.error_maximo)
     saturacion = carga.saturacion(resumenes)
@@ -787,36 +798,76 @@ def main(argv: list[str] | None = None) -> int:
         "duracion_s": args.duracion,
         "tasa_usuarios_s": args.tasa,
         "p95_objetivo_ms": args.p95_objetivo,
-        "contenedores": contenedores,
-        "limites": limites,
-        "vcpu_medidos": vcpu_medidos,
-        "vcpu_medidos_supuesto": supuesto,
-        "avisos": avisos,
+        "contenedores": medicion["contenedores"],
+        "limites": medicion["limites"],
+        "vcpu_medidos": medicion["vcpu_medidos"],
+        "vcpu_medidos_supuesto": medicion["vcpu_medidos_supuesto"],
+        "avisos": etapas["avisos"],
         "vcpu_max": args.vcpu_max,
         "estaciones": args.estaciones,
-        "mlflow_sin_ajuste": sin_ajuste,
+        "mlflow_sin_ajuste": preparacion["sin_ajuste"],
         "etapas": resumenes,
         "capacidad": capacidad,
         "saturacion": saturacion,
         "lotes": lotes,
-        "primera_peticion": primera,
+        "primera_peticion": primera_peticion_resultado,
     }
     _escribir_json(salida / "resumen.json", resumen_total)
-
     graficas.grafica_desempeno(historiales, salida / "desempeno.png")
     graficas.grafica_capacidad(resumenes, salida / "capacidad.png", args.p95_objetivo)
-    graficas.grafica_endpoints(capacidad or resumenes[0], salida / "endpoints.png")
+    graficas.grafica_endpoints(
+        resumen_total["capacidad"] or resumenes[0], salida / "endpoints.png"
+    )
     if muestras:
-        nombres = {nombre: servicio for servicio, nombre in contenedores.items()}
+        nombres = {nombre: servicio for servicio, nombre in medicion["contenedores"].items()}
         graficas.grafica_recursos(muestras, salida / "recursos.png", cortes, nombres)
-
     finops_md = analisis_de_costo(resumen_total, salida, args)
     if args.actualizar_readme:
         actualizar_readme(resumen_total, finops_md, salida)
-
     print(f"Listo. Resultados en {salida}")
     print(finops_md)
     return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = argumentos(argv)
+    etapas = [int(u) for u in args.etapas.split(",") if u.strip()]
+    fecha = datetime.now().strftime("%Y-%m-%d_%H%M")
+    salida = args.recalcular or args.salida or RAIZ / "reports" / "carga" / fecha
+    if args.actualizar_readme and not salida.resolve().is_relative_to(RAIZ):
+        # Las figuras del README se enlazan con rutas relativas al repositorio.
+        print(f"--actualizar-readme necesita que la salida esté dentro de {RAIZ}.")
+        return 2
+    if args.recalcular:
+        return recalcular(args, args.recalcular)
+    salida.mkdir(parents=True, exist_ok=True)
+
+    if args.reposo:
+        return medir_reposo(args, salida, fecha)
+    preparacion = _validar_preparacion(args, salida, etapas)
+    if preparacion is None:
+        return 2
+    medicion = _preparar_recursos(args)
+    if medicion is None:
+        return 2
+    primera = primera_peticion(args.host, preparacion["endpoints"])
+    if texto_primera_peticion(primera):
+        print(texto_primera_peticion(primera))
+    resultados = _ejecutar_etapas(
+        args, etapas, salida, preparacion["endpoints"], medicion["contenedores"]
+    )
+    if resultados is None:
+        return 2
+    return _guardar_resultados(
+        args,
+        fecha,
+        salida,
+        preparacion["endpoints"],
+        preparacion,
+        medicion,
+        resultados,
+        primera,
+    )
 
 
 if __name__ == "__main__":

@@ -668,51 +668,8 @@ def deshacer_cierre(
     return estado
 
 
-def registrar_version_b(
-    modelo_b,
-    train_b: pd.DataFrame,
-    filas: pd.DataFrame,
-    pred_a: np.ndarray,
-    pred_b: np.ndarray,
-    resumen: dict,
-    archivos: list[Path],
-    tracking_uri: str,
-    cfg: P1Config = CONFIG_P1,
-    autor: str | None = None,
-    forzar: bool = False,
-) -> dict:
-    """Registra B como nueva versión del modelo de P1 y le asigna el alias del retador.
-
-    Orden: (1) lee la versión de ``@champion`` y exige que sus predicciones sean las de A en
-    las filas evaluadas, antes de escribir nada; (2) sin ``forzar``, se detiene si ya hay una
-    versión equivalente (:func:`version_equivalente`); (3) crea un run con etiquetas,
-    parámetros, métricas y archivos del A/B (``registro=pendiente``), y guarda B con
-    ``train_p1.registrar_modelo``; si algo falla ahí, el run queda con ``registro=fallido``;
-    (4) registra la versión con etiquetas de linaje y ``comprobacion=pendiente``; (5) carga esa
-    versión con pyfunc, predice todas las filas evaluadas y exige la misma predicción que B en
-    memoria y dominio válido. Si la descripción o la comprobación fallan, la versión queda con
-    ``comprobacion=fallida`` y sin alias. (6) Solo si pasa se asigna ``cfg.alias_retador``; si
-    apuntaba a otra versión, esa queda con ``reemplazada_por`` y la nueva con
-    ``retador_anterior``. Se confirma que ``@champion`` sigue en la misma versión y, como
-    última escritura, la versión pasa a ``comprobacion=ok``. Si este cierre falla en cualquier
-    punto, :func:`deshacer_cierre` deja la versión fallida, comprueba a qué versión apunta el
-    alias del retador y lo devuelve a donde estaba, y marca el run como fallido, así que el
-    reintento normal no queda bloqueado. Si ni siquiera puede leer el alias, el error lo dice
-    («con el alias sin verificar») en lugar de afirmar que quedó sin alias.
-    El alias del campeón nunca se mueve, borra ni reasigna aquí.
-    """
-    from mlflow import MlflowClient
+def _validar_campeon(cliente, nombre, cfg, tracking_uri, X, pred_a):
     from mlflow.exceptions import MlflowException
-
-    from mibici import registro_p1, tracking
-
-    if cfg.alias_retador == cfg.alias_campeon:
-        raise ValueError("El alias del retador no puede ser el del campeón.")
-    nombre = cfg.modelo_registrado
-    mlflow.set_tracking_uri(tracking_uri)
-    mlflow.set_registry_uri(tracking_uri)
-    cliente = MlflowClient(tracking_uri=tracking_uri, registry_uri=tracking_uri)
-    X = filas[fe.FEATURES].astype("float64")
 
     try:
         campeon_antes = int(cliente.get_model_version_by_alias(nombre, cfg.alias_campeon).version)
@@ -729,11 +686,27 @@ def registrar_version_b(
             f"difieren hasta {dif_campeon} (inf = longitudes distintas o valores no finitos). "
             "El A/B no se hizo contra el campeón; B no se registra."
         )
+    return campeon_antes, dif_campeon
 
+
+def _crear_version_b(
+    cliente,
+    tracking,
+    modelo_b,
+    train_b,
+    filas,
+    resumen,
+    archivos,
+    tracking_uri,
+    cfg,
+    autor,
+    forzar,
+    campeon_antes,
+):
+    nombre = cfg.modelo_registrado
     inicio_b, fin_b = resumen["B"]["entrenamiento"]
     periodo = resumen["ab_periodo"]
     equivalente_previa = exigir_sin_equivalente(cliente, cfg, periodo, fin_b, forzar)
-
     tracking.configurar_experimento(
         tracking_uri, cfg.experimento, cfg.artefactos_dir.resolve().as_uri()
     )
@@ -804,17 +777,34 @@ def registrar_version_b(
         if run_id is not None:
             marcar_run_fallido(cliente, run_id, exc)
         raise
+    return {
+        "run_id": run_id,
+        "info": info,
+        "version": version,
+        "inicio_b": inicio_b,
+        "fin_b": fin_b,
+        "periodo": periodo,
+        "equivalente_previa": equivalente_previa,
+        "campeon_antes": campeon_antes,
+        "decision": resumen["decision"],
+        "filas": len(filas),
+    }
 
-    numero = str(version.version)
+
+def _verificar_version_b(cliente, cfg, registro, X, pred_b, registro_p1):
+    nombre = cfg.modelo_registrado
+    numero = str(registro["version"].version)
+    run_id = registro["run_id"]
     try:
         cliente.update_model_version(
             nombre,
             numero,
             description=(
                 f"HistGradientBoosting (Poisson) con los hiperparámetros del campeón, "
-                f"reentrenado con objetivos del {inicio_b} al {fin_b} (embargo de "
-                f"{fe.LAG_MINIMO} días antes del mes evaluado). A/B contra v{campeon_antes} en "
-                f"{periodo}: {resumen['decision']}. {LECTURA_DECISION}"
+                f"reentrenado con objetivos del {registro['inicio_b']} al {registro['fin_b']} "
+                f"(embargo de {fe.LAG_MINIMO} días antes del mes evaluado). A/B contra "
+                f"v{registro['campeon_antes']} en {registro['periodo']}: "
+                f"{registro['decision']}. {LECTURA_DECISION}"
             ),
         )
         pred_registrada = np.asarray(
@@ -833,15 +823,17 @@ def registrar_version_b(
             logger.warning(f"No se pudo marcar {nombre} v{numero} como fallida: {otro}")
         marcar_run_fallido(cliente, run_id, exc)
         raise ValueError(f"{nombre} v{numero} queda sin alias: {exc}") from exc
+    return dif
 
-    # Cierre del registro. ``comprobacion=ok`` es la última escritura: una versión con esa
-    # etiqueta ya tiene su alias y su run cerrado. Si algo falla antes, todo se deshace.
+
+def _cerrar_version_b(cliente, cfg, registro, dif):
+    nombre = cfg.modelo_registrado
+    numero = str(registro["version"].version)
+    run_id = registro["run_id"]
     retador_anterior = None
     try:
         cliente.set_model_version_tag(nombre, numero, "comprobacion_max_abs_dif", repr(dif))
-        cliente.set_model_version_tag(nombre, numero, "comprobacion_filas", str(len(X)))
-        # el alias del retador sí se reasigna; se deja constancia en las dos versiones. Un
-        # error al leerlo no significa que no exista: se propaga y el alias no se mueve.
+        cliente.set_model_version_tag(nombre, numero, "comprobacion_filas", str(registro["filas"]))
         retador_anterior = version_del_alias(cliente, nombre, cfg.alias_retador)
         if retador_anterior is not None:
             cliente.set_model_version_tag(
@@ -853,10 +845,11 @@ def registrar_version_b(
         campeon_despues = int(
             cliente.get_model_version_by_alias(nombre, cfg.alias_campeon).version
         )
-        if campeon_despues != campeon_antes:
+        if campeon_despues != registro["campeon_antes"]:
             raise RuntimeError(
-                f"@{cfg.alias_campeon} cambió de v{campeon_antes} a v{campeon_despues} mientras "
-                "se registraba B. Este módulo no lo mueve: revisa el Registry antes de seguir."
+                f"@{cfg.alias_campeon} cambió de v{registro['campeon_antes']} a "
+                f"v{campeon_despues} mientras se registraba B. Este módulo no lo mueve: "
+                "revisa el Registry antes de seguir."
             )
         cliente.set_tag(run_id, "registro_version", numero)
         cliente.set_tag(run_id, "registro", "ok")
@@ -864,18 +857,82 @@ def registrar_version_b(
     except Exception as exc:
         estado = deshacer_cierre(cliente, cfg, numero, run_id, retador_anterior, exc)
         raise ValueError(f"{nombre} v{numero} queda {estado}: {exc}") from exc
+    return retador_anterior, campeon_despues
+
+
+def registrar_version_b(
+    modelo_b,
+    train_b: pd.DataFrame,
+    filas: pd.DataFrame,
+    pred_a: np.ndarray,
+    pred_b: np.ndarray,
+    resumen: dict,
+    archivos: list[Path],
+    tracking_uri: str,
+    cfg: P1Config = CONFIG_P1,
+    autor: str | None = None,
+    forzar: bool = False,
+) -> dict:
+    """Registra B como nueva versión del modelo de P1 y le asigna el alias del retador.
+
+    Orden: (1) lee la versión de ``@champion`` y exige que sus predicciones sean las de A en
+    las filas evaluadas, antes de escribir nada; (2) sin ``forzar``, se detiene si ya hay una
+    versión equivalente (:func:`version_equivalente`); (3) crea un run con etiquetas,
+    parámetros, métricas y archivos del A/B (``registro=pendiente``), y guarda B con
+    ``train_p1.registrar_modelo``; si algo falla ahí, el run queda con ``registro=fallido``;
+    (4) registra la versión con etiquetas de linaje y ``comprobacion=pendiente``; (5) carga esa
+    versión con pyfunc, predice todas las filas evaluadas y exige la misma predicción que B en
+    memoria y dominio válido. Si la descripción o la comprobación fallan, la versión queda con
+    ``comprobacion=fallida`` y sin alias. (6) Solo si pasa se asigna ``cfg.alias_retador``; si
+    apuntaba a otra versión, esa queda con ``reemplazada_por`` y la nueva con
+    ``retador_anterior``. Se confirma que ``@champion`` sigue en la misma versión y, como
+    última escritura, la versión pasa a ``comprobacion=ok``. Si este cierre falla en cualquier
+    punto, :func:`deshacer_cierre` deja la versión fallida, comprueba a qué versión apunta el
+    alias del retador y lo devuelve a donde estaba, y marca el run como fallido, así que el
+    reintento normal no queda bloqueado. Si ni siquiera puede leer el alias, el error lo dice
+    («con el alias sin verificar») en lugar de afirmar que quedó sin alias.
+    El alias del campeón nunca se mueve, borra ni reasigna aquí.
+    """
+    from mlflow import MlflowClient
+    from mibici import registro_p1, tracking
+
+    if cfg.alias_retador == cfg.alias_campeon:
+        raise ValueError("El alias del retador no puede ser el del campeón.")
+    nombre = cfg.modelo_registrado
+    mlflow.set_tracking_uri(tracking_uri)
+    mlflow.set_registry_uri(tracking_uri)
+    cliente = MlflowClient(tracking_uri=tracking_uri, registry_uri=tracking_uri)
+    X = filas[fe.FEATURES].astype("float64")
+    campeon_antes, dif_campeon = _validar_campeon(cliente, nombre, cfg, tracking_uri, X, pred_a)
+    registro = _crear_version_b(
+        cliente,
+        tracking,
+        modelo_b,
+        train_b,
+        filas,
+        resumen,
+        archivos,
+        tracking_uri,
+        cfg,
+        autor,
+        forzar,
+        campeon_antes,
+    )
+    numero = str(registro["version"].version)
+    dif = _verificar_version_b(cliente, cfg, registro, X, pred_b, registro_p1)
+    retador_anterior, campeon_despues = _cerrar_version_b(cliente, cfg, registro, dif)
     model_uri = f"models:/{nombre}/{numero}"
     return {
         "estado": "registrado",
         "tracking_uri": tracking_uri,
         "nombre": nombre,
         "version": int(numero),
-        "run_id": run_id,
+        "run_id": registro["run_id"],
         "model_uri": model_uri,
-        "logged_model_uri": info.model_uri,
+        "logged_model_uri": registro["info"].model_uri,
         "alias": cfg.alias_retador,
         "retador_version_anterior": retador_anterior,
-        "version_equivalente_previa": equivalente_previa,
+        "version_equivalente_previa": registro["equivalente_previa"],
         "campeon_alias": cfg.alias_campeon,
         "campeon_version_antes": campeon_antes,
         "campeon_version_despues": campeon_despues,

@@ -16,10 +16,10 @@ import sys
 sys.dont_write_bytecode = True
 os.environ["DISABLE_DEEPCHECKS_ANONYMOUS_TELEMETRY"] = "1"
 os.environ["DISABLE_LATEST_VERSION_CHECK"] = "1"
-from exportar_features_p1 import BASE_REVISION, CATEGORICAL, SOURCE_SHA256
-import numpy as np
-import pandas as pd
-from validar_panel_p1 import sha256
+from exportar_features_p1 import BASE_REVISION, CATEGORICAL, SOURCE_SHA256  # noqa: E402
+import numpy as np  # noqa: E402
+import pandas as pd  # noqa: E402
+from validar_panel_p1 import sha256  # noqa: E402
 
 EXPECTED_FEATURES = {
     "p1": [
@@ -38,8 +38,7 @@ EXPECTED_FEATURES = {
 }
 
 
-def load_exports(folder):
-    manifest = json.loads((folder / "manifest.json").read_text(encoding="utf-8"))
+def _validate_manifest(manifest):
     if (
         manifest.get("reviewed_base") != BASE_REVISION
         or manifest.get("source_files_sha256") != SOURCE_SHA256
@@ -48,9 +47,10 @@ def load_exports(folder):
         or (manifest.get("mode") not in ["native", "isolated-source"])
     ):
         raise ValueError("Commit/pipeline del manifiesto no corresponde a esta revisión")
-    pipeline = manifest["pipeline"]
-    key = ["estacion", "fecha"]
-    features = manifest["features"]
+    return manifest["pipeline"]
+
+
+def _validate_schema(manifest, pipeline, key, features):
     if (
         features != EXPECTED_FEATURES[pipeline]
         or manifest["key"] != key
@@ -59,36 +59,53 @@ def load_exports(folder):
         or (manifest["categorical"] != CATEGORICAL[pipeline])
     ):
         raise ValueError("Esquema del manifiesto inválido: llaves/labels no son features")
-    tables = {}
-    for name in ["train", "test"]:
-        meta = manifest["tables"][name]
-        if meta["file"] != f"{name}.parquet":
-            raise ValueError("Nombre de exportación no admitido")
-        path = folder / meta["file"]
-        if sha256(path) != meta["sha256"]:
-            raise ValueError(f"Hash distinto para {name}")
-        df = pd.read_parquet(path, columns=key + features)
-        if (
-            len(df) != meta["rows"]
-            or df.empty
-            or df[key].isna().any().any()
-            or df.duplicated(key).any()
-        ):
-            raise ValueError(f"Conteo o claves inválidas en {name}")
-        if not pd.api.types.is_datetime64_any_dtype(df[key[1]]):
-            raise ValueError("La llave temporal debe ser datetime")
-        for feature in features:
-            if not pd.api.types.is_numeric_dtype(df[feature]):
-                raise ValueError(f"Feature no numérica en el contrato actual: {feature}")
-            non_null = df[feature].dropna().to_numpy(dtype=float)
-            if not np.isfinite(non_null).all():
-                raise ValueError(f"Infinitos en {name}.{feature}; no son nulos legítimos")
-        tables[name] = df
+
+
+def _read_export_table(folder, manifest, name, key, features):
+    meta = manifest["tables"][name]
+    if meta["file"] != f"{name}.parquet":
+        raise ValueError("Nombre de exportación no admitido")
+    path = folder / meta["file"]
+    if sha256(path) != meta["sha256"]:
+        raise ValueError(f"Hash distinto para {name}")
+    df = pd.read_parquet(path, columns=key + features)
+    if (
+        len(df) != meta["rows"]
+        or df.empty
+        or df[key].isna().any().any()
+        or df.duplicated(key).any()
+    ):
+        raise ValueError(f"Conteo o claves inválidas en {name}")
+    if not pd.api.types.is_datetime64_any_dtype(df[key[1]]):
+        raise ValueError("La llave temporal debe ser datetime")
+    for feature in features:
+        if not pd.api.types.is_numeric_dtype(df[feature]):
+            raise ValueError(f"Feature no numérica en el contrato actual: {feature}")
+        non_null = df[feature].dropna().to_numpy(dtype=float)
+        if not np.isfinite(non_null).all():
+            raise ValueError(f"Infinitos en {name}.{feature}; no son nulos legítimos")
+    return df
+
+
+def _validate_train_test(tables, key):
     train, test = (tables["train"], tables["test"])
     if not train[key].merge(test[key], on=key).empty:
         raise ValueError("Claves temporales compartidas entre train/test")
     if train[key[1]].max() >= test[key[1]].min():
         raise ValueError("Separación temporal inválida")
+
+
+def load_exports(folder):
+    manifest = json.loads((folder / "manifest.json").read_text(encoding="utf-8"))
+    pipeline = _validate_manifest(manifest)
+    key = ["estacion", "fecha"]
+    features = manifest["features"]
+    _validate_schema(manifest, pipeline, key, features)
+    tables = {
+        name: _read_export_table(folder, manifest, name, key, features)
+        for name in ("train", "test")
+    }
+    _validate_train_test(tables, key)
     return (manifest, tables)
 
 
@@ -193,7 +210,10 @@ def measure(folder, output, repo, sample_size=100000, seed=29, populations="both
     }
     report["computation_complete"] = bool(complete)
     report["interpretation"] = (
-        "Scores describen diferencias de distribución; no hay umbral de aprobación. KS numérico ignora nulos; Cramér categórico los conserva como categoría. Tasas completas separadas. Filas temporales dependientes y mezcla de estaciones pueden explicar cambios; no causalidad."
+        "Scores describen diferencias de distribución; no hay umbral de aprobación. "
+        "KS numérico ignora nulos; Cramér categórico los conserva como categoría. "
+        "Tasas completas separadas. Filas temporales dependientes y mezcla de estaciones "
+        "pueden explicar cambios; no causalidad."
     )
     (output / "drift_resumen.json").write_text(
         json.dumps(report, ensure_ascii=False, indent=2, allow_nan=False) + "\n", encoding="utf-8"

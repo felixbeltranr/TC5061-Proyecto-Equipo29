@@ -384,12 +384,11 @@ Resultado del 1 de noviembre de 2026 en Windows, con el entorno del proyecto (Py
 
 ```bash
 python -m pytest
-ruff check . --select E9,F63,F7,F82
-ruff check . --select E,W,F,C901 --line-length 127 --exit-zero --statistics
+ruff check . --select E,W,F,C901 --line-length 127
 ruff format --check mibici
 ```
 
-Por decisión del equipo, Ruff reemplaza a Flake8 como herramienta de lint. El primer comando conserva como bloqueantes los errores que Flake8 seleccionaba para detener el CI; el segundo reporta diagnósticos adicionales, incluida complejidad ciclomática mayor a 10 y líneas de más de 127 caracteres, como avisos que no hacen fallar el comando. Ruff revisa los archivos Python del repositorio, incluidos `mibici/`, `tests/` y `scripts/`; el chequeo de formato se limita a `mibici/`.
+Por decisión del equipo, Ruff reemplaza a Flake8 como herramienta de lint. El chequeo bloquea si encuentra errores E/W/F o funciones con complejidad ciclomática mayor a 10; usa un límite de 127 caracteres e incluye los errores que Flake8 detenía en el CI. Ruff revisa los archivos Python del repositorio, incluidos `mibici/`, `tests/` y `scripts/`; el chequeo de formato se limita a `mibici/`.
 
 ### Validación de datos con DeepChecks
 

@@ -32,7 +32,7 @@ import pyarrow.parquet as pq
 
 RAIZ = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(RAIZ / "scripts/p1"))
-from validar_panel_p1 import SPEC, contract, deepchecks_integrity, sha256
+from validar_panel_p1 import SPEC, contract, deepchecks_integrity, sha256  # noqa: E402
 
 PANEL = RAIZ / "data" / "interim" / "p1_panel_diario.parquet"
 COLUMNAS = SPEC["p1"]["columns"]

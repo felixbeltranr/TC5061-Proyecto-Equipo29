@@ -45,6 +45,34 @@ def sample(pipeline):
     return pd.concat(rows, ignore_index=True)
 
 
+MUTACIONES_NEGATIVAS = {
+    "empty": lambda df: df.iloc[:0],
+    "missing": lambda df: df.drop(columns="salidas"),
+    "null": lambda df: df.assign(salidas=lambda data: data["salidas"].mask(data.index == 0)),
+    "infinity": lambda df: df.assign(
+        salidas=lambda data: data["salidas"].astype(float).mask(data.index == 0, np.inf)
+    ),
+    "negative": lambda df: df.assign(
+        salidas=lambda data: data["salidas"].mask(data.index == 0, -1)
+    ),
+    "fractional": lambda df: df.assign(
+        salidas=lambda data: data["salidas"].astype(float).mask(data.index == 0, 0.5)
+    ),
+    "duplicate": lambda df: pd.concat([df, df.iloc[[0]]], ignore_index=True),
+    "gap": lambda df: df.drop(index=10),
+    "first_day": lambda df: df.assign(
+        primer_dia=lambda data: data["primer_dia"].where(
+            data.index != 0, data["primer_dia"] + pd.Timedelta(days=1)
+        )
+    ),
+    "station": lambda df: df.assign(
+        estacion=lambda data: data["estacion"].astype(float).mask(data.index == 0, 1.5)
+    ),
+    "text_dates": lambda df: df.assign(fecha=lambda data: data["fecha"].astype(str)),
+    "tz_dates": lambda df: df.assign(fecha=lambda data: data["fecha"].dt.tz_localize("UTC")),
+}
+
+
 @pytest.mark.parametrize("pipeline", ["p1"])
 def test_valid_contract(pipeline):
     assert contract(sample(pipeline), pipeline)["failures"] == []
@@ -69,35 +97,7 @@ def test_valid_contract(pipeline):
     ],
 )
 def test_common_negative_controls(pipeline, mutation, expected):
-    df = sample(pipeline)
-    time = "fecha"
-    if mutation == "empty":
-        df = df.iloc[:0]
-    elif mutation == "missing":
-        df = df.drop(columns="salidas")
-    elif mutation == "null":
-        df.loc[0, "salidas"] = np.nan
-    elif mutation == "infinity":
-        df["salidas"] = df["salidas"].astype(float)
-        df.loc[0, "salidas"] = np.inf
-    elif mutation == "negative":
-        df.loc[0, "salidas"] = -1
-    elif mutation == "fractional":
-        df["salidas"] = df["salidas"].astype(float)
-        df.loc[0, "salidas"] = 0.5
-    elif mutation == "duplicate":
-        df = pd.concat([df, df.iloc[[0]]], ignore_index=True)
-    elif mutation == "gap":
-        df = df.drop(index=10)
-    elif mutation == "first_day":
-        df.loc[0, "primer_dia"] += pd.Timedelta(days=1)
-    elif mutation == "station":
-        df["estacion"] = df["estacion"].astype(float)
-        df.loc[0, "estacion"] = 1.5
-    elif mutation == "text_dates":
-        df[time] = df[time].astype(str)
-    elif mutation == "tz_dates":
-        df[time] = df[time].dt.tz_localize("UTC")
+    df = MUTACIONES_NEGATIVAS[mutation](sample(pipeline))
     assert expected in {f["rule"] for f in contract(df, pipeline)["failures"]}
 
 

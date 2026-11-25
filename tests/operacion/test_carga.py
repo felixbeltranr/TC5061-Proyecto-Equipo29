@@ -6,11 +6,16 @@ import pytest
 
 from mibici.operacion import carga
 
-STATS = """Type,Name,Request Count,Failure Count,Median Response Time,Average Response Time,Min Response Time,Max Response Time,Average Content Size,Requests/s,Failures/s,50%,66%,75%,80%,90%,95%,98%,99%,99.9%,99.99%,100%
-GET,GET /live,48,0,2,4.6,1.3,20.5,18.0,3.2,0.0,2,3,5,6,16,19,21,21,21,21,21
-POST,P1 POST /api/v1/predict,150,3,18,25.5,5.3,89.5,123.4,10.3,0.2,18,24,32,38,56,71,83,87,90,90,90
-,Aggregated,198,3,27,34.4,1.3,162.1,128.5,29.7,0.2,27,39,45,53,75,100,150,160,160,160,160
-"""
+STATS = (
+    "Type,Name,Request Count,Failure Count,Median Response Time,Average Response Time,"
+    "Min Response Time,Max Response Time,Average Content Size,Requests/s,Failures/s,"
+    "50%,66%,75%,80%,90%,95%,98%,99%,99.9%,99.99%,100%\n"
+    "GET,GET /live,48,0,2,4.6,1.3,20.5,18.0,3.2,0.0,2,3,5,6,16,19,21,21,21,21,21\n"
+    "POST,P1 POST /api/v1/predict,150,3,18,25.5,5.3,89.5,123.4,10.3,0.2,"
+    "18,24,32,38,56,71,83,87,90,90,90\n"
+    ",Aggregated,198,3,27,34.4,1.3,162.1,128.5,29.7,0.2,27,39,45,53,75,100,150,160,160,"
+    "160,160\n"
+)
 
 ENCABEZADO = (
     "Timestamp,User Count,Type,Name,Requests/s,Failures/s,50%,66%,75%,80%,90%,95%,98%,99%,"
@@ -27,7 +32,9 @@ def _historial(filas):
             f"{1000 + segundo},{usuarios},,Aggregated,{rps},0.0,20,25,30,32,40,50,60,70,80,80,80,"
             f"{segundo * 10},0,20,22.0,3,90,120"
         )
-    renglones.insert(1, "1000,0,,Aggregated,0.0,0.0,N/A,N/A,N/A,N/A,N/A,N/A,N/A,N/A,N/A,N/A,N/A,0,0,0,0.0,0,0,0")
+    renglones.insert(
+        1, "1000,0,,Aggregated,0.0,0.0,N/A,N/A,N/A,N/A,N/A,N/A,N/A,N/A,N/A,N/A,N/A,0,0,0,0.0,0,0,0"
+    )
     return "\n".join(renglones) + "\n"
 
 

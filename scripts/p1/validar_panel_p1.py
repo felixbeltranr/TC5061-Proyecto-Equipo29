@@ -31,62 +31,79 @@ SPEC = {
 }
 
 
-def contract(df: pd.DataFrame, pipeline: str) -> dict:
-    """Valida todas las filas; no corrige, imputa ni descarta datos silenciosamente."""
-    if pipeline not in SPEC:
-        raise ValueError("pipeline debe ser p1")
-    s = SPEC[pipeline]
-    failures = []
-    missing = sorted(set(s["columns"]) - set(df.columns))
-    result = {"pipeline": pipeline, "rows": len(df), "failures": failures}
+def _column_data(df: pd.DataFrame, spec: dict, failures: list) -> pd.DataFrame | None:
+    missing = sorted(set(spec["columns"]) - set(df.columns))
     if missing:
         failures.append({"rule": "required_columns", "missing": missing})
-        return result
+        return None
     if df.empty:
         failures.append({"rule": "nonempty"})
-        return result
-    data = df[s["columns"]]
+        return None
+    data = df[spec["columns"]]
     nulls = {str(c): int(n) for c, n in data.isna().sum().items() if n}
     if nulls:
         failures.append({"rule": "no_nulls_in_raw_panel", "counts": nulls})
-    badtypes = [c for c in s["numbers"] if not is_numeric_dtype(data[c])]
-    datecols = [s["time"], "primer_dia"]
+    badtypes = [c for c in spec["numbers"] if not is_numeric_dtype(data[c])]
+    datecols = [spec["time"], "primer_dia"]
     badtypes += [c for c in datecols if not is_datetime64_any_dtype(data[c])]
     if badtypes:
         failures.append({"rule": "column_types", "columns": badtypes})
     if nulls or badtypes:
-        return result
+        return None
+    return data
+
+
+def _validate_value_constraints(data: pd.DataFrame, spec: dict, failures: list) -> bool:
+    datecols = [spec["time"], "primer_dia"]
     if any(data[c].dt.tz is not None for c in datecols):
         failures.append({"rule": "local_naive_timestamps"})
-        return result
-    nums = data[s["numbers"]].to_numpy(dtype=float)
+        return False
+    nums = data[spec["numbers"]].to_numpy(dtype=float)
     if not np.isfinite(nums).all():
         failures.append({"rule": "finite_numbers"})
-        return result
+        return False
     if not np.equal(data["estacion"], np.floor(data["estacion"])).all():
         failures.append({"rule": "integer_station_id"})
-    for c in s["counts"]:
+    for c in spec["counts"]:
         if not ((data[c] >= 0) & (data[c] == np.floor(data[c]))).all():
             failures.append({"rule": "nonnegative_integer_count", "column": c})
-    key = ["estacion", s["time"]]
+    return True
+
+
+def _validate_time_series(data: pd.DataFrame, spec: dict, failures: list) -> int:
+    key = ["estacion", spec["time"]]
     duplicated = int(data.duplicated(key).sum())
     if duplicated:
         failures.append({"rule": "unique_station_timestamp", "extra_rows": duplicated})
     ordered = data.sort_values(key)
     groups = ordered.groupby("estacion", sort=False)
-    diffs = groups[s["time"]].diff().dropna()
-    if not diffs.eq(pd.Timedelta(s["step"])).all():
+    diffs = groups[spec["time"]].diff().dropna()
+    if not diffs.eq(pd.Timedelta(spec["step"])).all():
         failures.append({"rule": "consecutive_timestamps_per_station"})
-    first = groups[s["time"]].transform("min")
+    first = groups[spec["time"]].transform("min")
     if not ordered["primer_dia"].eq(first).all():
         failures.append({"rule": "primer_dia_matches_first_row"})
     if not data["fecha"].eq(data["fecha"].dt.normalize()).all():
         failures.append({"rule": "daily_midnight_timestamps"})
+    return duplicated
+
+
+def contract(df: pd.DataFrame, pipeline: str) -> dict:
+    """Valida todas las filas; no corrige, imputa ni descarta datos silenciosamente."""
+    if pipeline not in SPEC:
+        raise ValueError("pipeline debe ser p1")
+    spec = SPEC[pipeline]
+    failures = []
+    result = {"pipeline": pipeline, "rows": len(df), "failures": failures}
+    data = _column_data(df, spec, failures)
+    if data is None or not _validate_value_constraints(data, spec, failures):
+        return result
+    duplicated = _validate_time_series(data, spec, failures)
     result.update(
         {
             "stations": int(data["estacion"].nunique()),
-            "min_timestamp": str(data[s["time"]].min()),
-            "max_timestamp": str(data[s["time"]].max()),
+            "min_timestamp": str(data[spec["time"]].min()),
+            "max_timestamp": str(data[spec["time"]].max()),
             "duplicate_keys": duplicated,
         }
     )

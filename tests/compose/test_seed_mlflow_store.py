@@ -6,7 +6,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts" / "compose"))
-import seed_mlflow_store as seed
+import seed_mlflow_store as seed  # noqa: E402
 
 P1 = "mibici-equipo29-p1-demanda"
 P2 = "mibici-equipo29-p2-riesgo"
