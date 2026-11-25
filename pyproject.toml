@@ -21,10 +21,13 @@ requires-python = "~=3.14.0"
 [tool.ruff]
 line-length = 99
 src = ["mibici"]
-include = ["pyproject.toml", "mibici/**/*.py"]
+include = ["pyproject.toml", "**/*.py"]
 
 [tool.ruff.lint]
 extend-select = ["I"]  # Add import sorting
+
+[tool.ruff.lint.mccabe]
+max-complexity = 10
 
 [tool.ruff.lint.isort]
 known-first-party = ["mibici"]

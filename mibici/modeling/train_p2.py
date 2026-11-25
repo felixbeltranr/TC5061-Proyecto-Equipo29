@@ -106,7 +106,7 @@ def git_commit() -> tuple[str, bool]:
             ).strip()
         )
         return sha, sucio
-    except (subprocess.CalledProcessError, FileNotFoundError):
+    except subprocess.CalledProcessError, FileNotFoundError:
         return "desconocido", True
 
 

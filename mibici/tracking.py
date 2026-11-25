@@ -35,7 +35,7 @@ def git_commit() -> tuple[str, bool]:
             ).strip()
         )
         return sha, sucio
-    except (subprocess.CalledProcessError, FileNotFoundError):
+    except subprocess.CalledProcessError, FileNotFoundError:
         return "desconocido", True
 
 
@@ -43,7 +43,7 @@ def autor_git() -> str:
     """Nombre configurado en git, para la etiqueta author; 'desconocido' si no hay."""
     try:
         nombre = subprocess.check_output(["git", "config", "user.name"], text=True).strip()
-    except (subprocess.CalledProcessError, FileNotFoundError):
+    except subprocess.CalledProcessError, FileNotFoundError:
         return "desconocido"
     return nombre or "desconocido"
 
@@ -73,6 +73,7 @@ def configurar(
         )
     mlflow.set_experiment(EXPERIMENTO)
 
+
 def configurar_experimento(
     tracking_uri: str, experimento: str, artifact_location_local: str
 ) -> None:
@@ -88,9 +89,7 @@ def configurar_experimento(
         if tracking_uri.startswith(("http://", "https://")):
             mlflow.create_experiment(experimento)
         else:
-            mlflow.create_experiment(
-                experimento, artifact_location=artifact_location_local
-            )
+            mlflow.create_experiment(experimento, artifact_location=artifact_location_local)
     mlflow.set_experiment(experimento)
 
 
