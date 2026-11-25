@@ -848,7 +848,17 @@ Compose inicia `registry-init`, MLflow, Redis, la API y el worker de P2 (`p2-wor
 
 Antes del primer arranque, coloca en `.model-store\` una copia que contenga `mlflow.db` y `mlartifacts\`. Debe incluir los campeones `champion` de P1, P2 y P3, con versiones `READY` y artefactos accesibles mediante `mlflow-artifacts:/`. Además, los campeones de P1, P2 y P3 deben coincidir con `scripts/p1/campeon_api_p1.json`, `scripts/p2/campeon_api_p2.json` y `scripts/p3/campeon_api_p3.json`, incluido el SHA256 de cada modelo. El almacén se distribuye fuera del repositorio; no se incluye en Git ni en la imagen Docker.
 
-Obtén el archivo `almacen_mlflow_entrega2_r1.zip` del responsable de P1; no está versionado ni se descarga automáticamente. Extráelo de modo que `mlflow.db` y `mlartifacts\` queden directamente dentro de `.model-store\`. Si el almacén no incluye los tres campeones con las ubicaciones de artefactos indicadas, `registry-init` fallará explícitamente y MLflow/API no continuarán con un Registry incompleto.
+Descarga `almacen_mlflow_entrega2_r1.zip` (22.3 MB) del Release [`almacen-entrega2-r1`](https://github.com/felixbeltranr/TC5061-Proyecto-Equipo29/releases/tag/almacen-entrega2-r1). El archivo no está versionado en Git: se distribuye como asset del Release. Extráelo de modo que `mlflow.db` y `mlartifacts\` queden directamente dentro de `.model-store\`. Si el almacén no incluye los tres campeones con las ubicaciones de artefactos indicadas, `registry-init` fallará explícitamente y MLflow/API no continuarán con un Registry incompleto.
+
+Para descargarlo y comprobar su huella desde la raíz del repositorio:
+
+```powershell
+curl.exe -L -o almacen_mlflow_entrega2_r1.zip `
+  https://github.com/felixbeltranr/TC5061-Proyecto-Equipo29/releases/download/almacen-entrega2-r1/almacen_mlflow_entrega2_r1.zip
+Get-FileHash .\almacen_mlflow_entrega2_r1.zip -Algorithm SHA256
+```
+
+En Bash, usa `curl -L -o` y `sha256sum almacen_mlflow_entrega2_r1.zip`. El resultado debe ser `18130d22ca361c06039f6cd2580e79f722e7e766a34e62365447be1f1d84d869`; si no coincide, no uses esa copia.
 
 La ruta predeterminada es `./.model-store`. Para usar otra carpeta ya extraída, define `MODEL_STORE_PATH` en la misma terminal antes de ejecutar Compose:
 
