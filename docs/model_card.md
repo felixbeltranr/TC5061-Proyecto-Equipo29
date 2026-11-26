@@ -27,7 +27,7 @@ La versión de los datos es el resumen criptográfico del manifiesto que lista c
 
 ### Calidad y limpieza
 
-Cifras de la bitácora de limpieza de la corrida de cierre (`data/bitacora_limpieza.csv` en los artefactos del run `fd704e3c`):
+**Esta limpieza la aplican P2 y P3, no P1.** `features_p2.cargar_viajes` reutiliza `limpiar_viajes` de `features_p3`, de modo que la regla vive en un solo lugar. Cifras de la bitácora de la corrida de cierre (`data/bitacora_limpieza.csv`, artefactos del run `fd704e3c`):
 
 | Concepto | Viajes | Porcentaje |
 |---|---|---|
@@ -45,6 +45,8 @@ Dos decisiones de limpieza que conviene conocer antes de interpretar cualquier r
 - **Los viajes de ida y vuelta a la misma estación se conservan.** Son el 6.17 % y se reportan en la bitácora, pero entran al conteo. Eso importa para cualquier medida de flujo: un viaje de ida y vuelta suma una salida y una llegada en la misma estación, así que no altera el flujo neto pero sí el volumen de uso.
 
 Los 758 duplicados exactos están todos en septiembre de 2026.
+
+Para P1 la diferencia no es menor: su panel cuenta todos los registros publicados con fecha y estación interpretables, así que los 245,300 viajes de menos de un minuto y los 758 duplicados suman salidas. Un anclaje fallido cuenta como un viaje. La ficha 1 lo documenta en 1.4 y 1.8.
 
 ### Validación contra una fuente independiente
 
@@ -108,7 +110,7 @@ Los controles técnicos que respaldan esa decisión están implementados y se pu
 
 - **Promoción con verificación previa.** Antes de mover el alias `champion`, el código carga la versión nueva por su URI inmutable y exige una predicción válida. Si la carga o la predicción falla, el alias anterior se conserva y la versión nueva queda marcada con `comprobacion = fallida`.
 - **El monitoreo no promueve.** Los módulos de A/B registran el modelo reentrenado como `challenger` con `registro.registrar_retador`, que nunca mueve `champion`. Promover es un paso aparte y deliberado.
-- **La regla de decisión se fija antes de comparar.** En las tres preguntas, el criterio para reemplazar al campeón se escribió en un commit anterior a la corrida del A/B, de modo que no pueda ajustarse al resultado.
+- **La regla de decisión se fija antes de comparar.** En P2 y P3 el criterio para reemplazar al campeón se escribió en un commit anterior a la corrida del A/B, de modo que no pueda ajustarse al resultado. En P1 consta en los registros locales de las corridas y no en un commit previo, así que ahí el control es más débil.
 - **Alias en lugar de etapas.** Las etapas están en desuso en MLflow y un alias se mueve sin estados intermedios.
 - **Control de cambios.** Rama `main` protegida, GitHub Flow, Conventional Commits y dos aprobaciones por pull request.
 
@@ -122,7 +124,7 @@ Una métrica global puede ocultar que un modelo funciona peor para una parte del
 
 Entre mayo y agosto de 2026 el sistema abrió 99 estaciones (71 en Guadalajara y 28 en Zapopan), un crecimiento de alrededor del 21 % sobre las 470 que había. Son el subgrupo natural porque tienen poca historia, su demanda todavía no se estabiliza y se concentran en la periferia: justamente las condiciones en las que un modelo entrenado con el sistema consolidado puede fallar sin que el promedio lo muestre.
 
-Cada ficha reporta su desempeño separando ese subgrupo.
+Cada ficha reporta su desempeño separando ese subgrupo y precisa el criterio con el que lo delimita, porque los modelos no comparten unidad de análisis: P1 llama nueva a la estación sin ningún día elegible en su entrenamiento (101 en su prueba, las 99 más dos que no figuran en la nomenclatura), y P2 y P3 parten de las 99 de la expansión. Las tres comparan el mismo fenómeno; el conteo exacto depende de la ventana de cada una.
 
 ---
 
