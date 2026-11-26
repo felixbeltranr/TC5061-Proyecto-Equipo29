@@ -30,7 +30,7 @@ jobs:
         python -m pip install --upgrade pip
         if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
     - name: Lint with Ruff
-      run: ruff check . --select E,W,F,C901 --line-length 127
+      run: ruff check .
     - name: Check formatting with Ruff
       run: ruff format --check mibici
     - name: Test with pytest

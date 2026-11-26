@@ -24,7 +24,10 @@ src = ["mibici"]
 include = ["pyproject.toml", "**/*.py"]
 
 [tool.ruff.lint]
-extend-select = ["I"]  # Add import sorting
+select = ["E", "W", "F", "C901", "I"]
+
+[tool.ruff.lint.pycodestyle]
+max-line-length = 127
 
 [tool.ruff.lint.mccabe]
 max-complexity = 10

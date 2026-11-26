@@ -2,8 +2,8 @@ from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 import numpy as np
 import pandas as pd
-import pytest
 from pydantic import ValidationError
+import pytest
 from starlette.requests import Request
 
 from mibici.api.routes.health import liveness, readiness

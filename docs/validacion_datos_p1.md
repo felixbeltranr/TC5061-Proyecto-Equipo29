@@ -65,8 +65,12 @@ El panel original conservó su SHA256 antes y después de cada corrida.
 
 `exportar_features_p1.py` verifica hashes normalizados CRLF/LF de `mibici/features.py`,
 `mibici/modeling/train_p1.py` y, de `mibici/config.py`, del texto de la clase `P1Config`
-(con su decorador) y de la instancia `CONFIG_P1`, contra las de main `d2bec05`. El resto
-de `config.py` lo comparten P2 y P3: un cambio suyo no invalida el control de P1. El
+(con su decorador) y de la instancia `CONFIG_P1`, contra las de main `d2bec05`, excepto
+la huella completa de `train_p1.py`, que corresponde a la refactorización incluida en el PR
+de Ruff. La función `particionar` no cambió, así que las tablas exportadas conservan los
+mismos datos; sin embargo, exportaciones creadas antes de esa actualización tienen la huella
+anterior y deben regenerarse antes de ejecutar la medición de drift. El resto de `config.py`
+lo comparten P2 y P3: un cambio suyo no invalida el control de P1. El
 exportador usa los valores de la clase y exige que `CONFIG_P1 = P1Config()` se defina una
 sola vez y sin argumentos. Registra el HEAD con `git rev-parse HEAD`, sin
 fetch/show/checkout: requiere git y que `--repo` sea la raíz de un checkout con su propio

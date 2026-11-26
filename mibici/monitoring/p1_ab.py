@@ -894,6 +894,7 @@ def registrar_version_b(
     El alias del campeón nunca se mueve, borra ni reasigna aquí.
     """
     from mlflow import MlflowClient
+
     from mibici import registro_p1, tracking
 
     if cfg.alias_retador == cfg.alias_campeon:
