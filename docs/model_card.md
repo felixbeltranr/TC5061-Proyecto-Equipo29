@@ -313,34 +313,177 @@ Salidas del monitoreo: `reports/monitoring/2026_10/p1/` (fuera de control de ver
 
 # Ficha 2 · P2 · Riesgo horario de ocupación
 
-`<POR RELLENAR>`
-
 ## 2.1 Identificación
-`<POR RELLENAR>`
+
+| Campo | Valor |
+|---|---|
+| Modelo registrado | `mibici-equipo29-p2-riesgo` |
+| Alias | `champion` |
+| Versión | 1 |
+| Tipo | Clasificación multiclase: `HistGradientBoostingClassifier` de scikit-learn con pesos de clase balanceados y sin paro temprano |
+| Hiperparámetros | `learning_rate = 0.1`, `max_leaf_nodes = 63`, `max_iter = 300`, `l2_regularization = 1.0`, `class_weight = "balanced"`, semilla 29 |
+| Run de origen | `48bb03f4818147b2a5cc9b893b3b823f`, nombre `p2_hgb_balanceado_ini50` |
+| Commit | `42918951d913fd2a27949a7237a381536242b11e` (árbol limpio) |
+| URI del modelo | `models:/m-979cb0f7ef5a4cdaba35c5e32d892530` |
+| Huella del modelo serializado | SHA256 `8dc3a262b88e23cb6c88a2edd3a38fd0aada6b33679d28e8556f52840d5d0c75` (`model.skops`, 9.17 MiB) |
+| Fecha | 25 de octubre de 2026 (corrida de cierre de la Entrega 2) |
+| Código | `mibici/features_p2.py`, `mibici/modeling/train_p2.py` y `mibici/registro.py` |
+| Entrada | 18 variables por estación-hora (sección 2.5) |
+| Salida | Clase de riesgo de la estación al cierre de la hora siguiente: `segura`, `sin_bicicletas` o `sin_anclajes`. La API la devuelve en el campo `risk_class` |
+
+Fuente: `scripts/p2/campeon_api_p2.json` y las etiquetas, parámetros y descripción de la versión en el almacén publicado.
+
+**Sobre la numeración de versiones.** Esta ficha documenta la versión 1, que es la que trae el almacén publicado en el Release `almacen-entrega2-r1` y la que `registry-init` siembra al levantar el sistema. La versión 2 (`challenger`) es el mismo HGB, con los mismos hiperparámetros, reentrenado con fechas objetivo hasta el 30 de septiembre de 2026, y quedó registrada como `challenger`.
 
 ## 2.2 Uso previsto
-`<POR RELLENAR>`
+
+Al cierre de cada hora t, clasificar cada estación según el riesgo que tendrá al cierre de t+1: sin bicicletas (ocupación estimada menor al 10 % de la capacidad), sin anclajes (mayor al 90 %) o segura.
+
+El uso previsto es **operativo de corto plazo**: el equipo de rebalanceo recibe la lista de estaciones en riesgo y decide a cuáles llevar bicicletas y de cuáles retirarlas en la hora siguiente. Agregada por meses, la frecuencia de riesgo de una estación orienta ampliaciones de anclajes o de flota. El modelo se sirve en línea, una estación a la vez o en lotes horarios de hasta 1000 estaciones, y el lote también se puede encolar en Redis para que lo atienda el worker de RQ.
+
+Usuarios previstos: el equipo de rebalanceo y quien opera el tablero de la operación. El modelo prioriza visitas; la decisión de mover bicicletas la toma una persona.
 
 ## 2.3 Fuera de alcance
-`<POR RELLENAR>`
+
+- **No mide el inventario.** La clase se calcula sobre una ocupación estimada a partir de los viajes (sección 2.4), no sobre bicicletas contadas en la estación. No sirve para afirmar que una estación estuvo vacía o llena ni para auditar el servicio.
+- **No pronostica a más de una hora.** El modelo publicado es de horizonte h = 1. El análisis de 2 a 4 horas de `horizontes_p2` no registra modelos.
+- **No cubre la madrugada.** Las horas objetivo van de 6 a 23, y la API rechaza cualquier otra con 422.
+- **No dice cuántas bicicletas mover**, solo la clase. Cuántos viajes saldrán de una estación es la pregunta de P1.
+- **No se traslada a otro sistema ni a otra ciudad** sin reentrenar y volver a evaluar.
+- **No dice nada sobre personas.** La unidad es la estación-hora. No hay atributos de usuario en el modelo.
 
 ## 2.4 Datos de entrenamiento y evaluación
-`<POR RELLENAR>`
+
+| Conjunto | Fechas objetivo | Filas estación-hora | Uso |
+|---|---|---|---|
+| Ajuste para la selección | 1 ene 2025 a 28 feb 2026 | sin registro en el run | Entrenar las candidatas que se comparan en validación |
+| Validación | 1 mar 2026 a 30 abr 2026 | sin registro en el run | Elegir hiperparámetros y candidata |
+| Entrenamiento final | 1 ene 2025 a 30 abr 2026 | 3,224,772 | Ajustar el modelo que se registra |
+| Prueba | 1 may 2026 a 30 sep 2026 | 1,185,156 | Diagnóstico del modelo ya elegido |
+
+La partición es temporal, por fecha objetivo. La prueba empieza en mayo de 2026, el mes en que empiezan las aperturas de la expansión, así que es el primer periodo con estaciones nuevas. Los hiperparámetros y la candidata se eligen solo con validación (sección 2.6).
+
+**La prueba no está intacta.** Los resultados de prueba de P2 se publicaron en el repositorio el 17 de octubre de 2026 y la regla que elige al campeón se escribió el 24 de octubre, así que las cifras de prueba se reportan como referencia y no como una medición sobre datos nunca vistos. Octubre de 2026 sí quedó fuera del entrenamiento de las dos versiones que se comparan en la sección 2.9.
+
+**La etiqueta es una aproximación.** Los datos abiertos no traen inventario por estación. La ocupación se estima con el flujo neto (llegadas menos salidas) acumulado hora por hora desde un nivel supuesto del 50 % de la capacidad a las 5:00, recortado a entre cero y la capacidad. Se reinicia cada día de servicio porque el rebalanceo nocturno no aparece en los datos. La capacidad es `dpcapacity` de `nomenclatura_2026_09.csv`, una por estación para todo el periodo. Con esa ocupación, en la prueba el 89.6 % de las filas son `segura`, el 5.3 % `sin_bicicletas` y el 5.1 % `sin_anclajes`.
+
+**El panel.** 5,881,296 filas estación-hora de 470 estaciones. P2 aplica la limpieza de `features_p3.limpiar_viajes` descrita en la parte común: parte de los 7,894,097 registros y usa 7,648,039 viajes válidos. Quedan fuera dos estaciones que no están en la nomenclatura, y con ellas 3,869 viajes que las tocan.
+
+**Elegibilidad:** una estación entra al panel desde su primer día con viajes. Solo cuentan orígenes desde las 5:00, porque antes la ocupación todavía es la del día anterior, y horas objetivo de 6 a 23.
+
+Versión de los datos: `66dd3d190bba`, registrada como `data_version` en cada run de P2 y en la versión del Registry.
 
 ## 2.5 Variables
-`<POR RELLENAR>`
+
+**Entrada del modelo (18 variables)**, derivadas de los flujos horarios de la propia estación, de su capacidad y del calendario:
+
+| Variable | Qué es |
+|---|---|
+| `hora`, `dia_semana`, `fin_semana` | Calendario del instante objetivo t+1 |
+| `capacidad` | Anclajes de la estación según la nomenclatura |
+| `ocupacion_actual` | Ocupación estimada al cierre de t, como proporción de la capacidad |
+| `neto_lag1`, `salidas_lag1`, `llegadas_lag1` | Flujo neto, salidas y llegadas de la hora t |
+| `neto_lag24`, `neto_lag168` | Flujo neto en la hora del objetivo, un día y una semana antes |
+| `neto_media3`, `neto_media24` | Media móvil del flujo neto en las últimas 3 y 24 horas hasta t |
+| `neto_media168_misma_hora` | Media del flujo neto en la hora del objetivo, de una a cuatro semanas antes |
+| `ocupacion_lag24`, `ocupacion_lag168` | Ocupación estimada en la hora del objetivo, un día y una semana antes |
+| `est_tasa_sin_bicis`, `est_tasa_sin_anclajes` | Proporción de horas de la estación en cada clase de riesgo durante el entrenamiento |
+| `est_neto_medio_hora` | Flujo neto medio de la estación en esa hora durante el entrenamiento |
+
+**Regla contra la fuga de información.** Todas las variables usan datos hasta el cierre de t; solo el calendario es del instante objetivo, que se conoce de antemano. Las tres `est_*` se calculan con el periodo de ajuste para validar y con el entrenamiento final para la prueba, y se guardan en `data/stats_estacion.csv` y `data/stats_estacion_hora.csv` del run. Una estación sin historia en el entrenamiento queda con esas tres vacías, y el modelo las trata como valores faltantes.
+
+El modelo no recibe el identificador de la estación ni su ubicación. Tampoco clima ni eventos.
 
 ## 2.6 Métricas y regla de decisión
-`<POR RELLENAR>`
+
+En una estación vacía o llena el usuario pierde el viaje, así que las métricas se centran en las dos clases de riesgo: recall (cuántas horas de riesgo detecta), precisión (cuántas alertas son correctas) y PR AUC. El macro F1 resume las tres clases.
+
+| Modelo | Recall medio de riesgo val. | PR AUC medio de riesgo val. | Macro F1 val. | Recall `sin_bicicletas` prueba | Recall `sin_anclajes` prueba | Macro F1 prueba |
+|---|---|---|---|---|---|---|
+| Referencia: clase mayoritaria | 0.0000 | n/d | 0.3089 | 0.0000 | 0.0000 | 0.3150 |
+| Referencia: misma hora, semana previa | 0.4153 | n/d | 0.5846 | 0.3363 | 0.4477 | 0.5712 |
+| Referencia: persistencia | 0.7107 | n/d | 0.8137 | 0.6977 | 0.6932 | 0.8041 |
+| Regresión logística balanceada | 0.9502 | 0.7868 | 0.7401 | 0.9386 | 0.9498 | 0.7272 |
+| **HGB balanceado (champion)** | **0.9518** | **0.8475** | **0.7562** | **0.9418** | **0.9555** | **0.7405** |
+| RandomForest balanceado | 0.9419 | 0.8235 | 0.7557 | 0.9259 | 0.9438 | 0.7431 |
+| HGB sin pesos (no candidata) | 0.7391 | 0.8485 | 0.8319 | 0.7041 | 0.7410 | 0.8227 |
+
+Las referencias no dan probabilidades, por eso no tienen PR AUC. La persistencia repite la clase de la hora t.
+
+**El campeón detecta casi todas las horas de riesgo, pero cerca de la mitad de sus alertas son falsas.** En prueba su precisión es 0.4738 en `sin_bicicletas` y 0.4993 en `sin_anclajes`, contra 0.7557 y 0.7444 de la persistencia. Por eso la persistencia tiene mejor macro F1 de prueba (0.8041 contra 0.7405), aunque deja pasar alrededor del 30 % de las horas de riesgo.
+
+### La regla de selección
+
+- **Hiperparámetros.** Búsqueda en una rejilla de tres configuraciones del HGB, con el macro F1 de validación (0.7501, 0.7562 y 0.7541). Gana la segunda.
+- **Selección.** Entre las tres candidatas balanceadas gana la de mayor recall medio de `sin_bicicletas` y `sin_anclajes` en validación. Si otra queda a menos de 0.005, se consideran empatadas y decide el PR AUC medio de las mismas clases. La prueba y el macro F1 no intervienen. El HGB sin pesos y las referencias se reportan, pero no son elegibles.
+- **Promoción.** El alias `champion` solo se mueve después de cargar la versión por su URI inmutable y obtener una clase válida por fila. La versión 1 tiene la etiqueta `comprobacion = ok`.
+
+En esta corrida la regresión logística quedó a 0.0016 del HGB en recall medio, dentro del margen, y el PR AUC medio decidió: 0.8475 contra 0.7868. El RandomForest quedó a 0.0099, fuera del empate.
+
+La regla parte de un **supuesto operativo**: quedarse sin aviso cuando una estación se vacía o se llena cuesta más que una visita de más. Si ese supuesto cambia, la regla y el campeón pueden cambiar.
+
+**Sensibilidad al nivel inicial.** Con nivel inicial de 30 % y de 70 % el campeón sigue siendo el HGB balanceado, con macro F1 de prueba de 0.7606 y 0.7384. En los tres niveles la persistencia tiene mayor macro F1 de prueba (0.8084, 0.8041 y 0.8048). Sin el margen de 0.005, con nivel 30 % la regresión logística superaría al HGB por 0.002 de recall medio de validación.
+
+Fuente: métricas de los runs de la corrida de cierre en el almacén publicado; `reports/figures/p2_resultados.json` para los niveles 30 % y 70 %.
 
 ## 2.7 Desempeño desagregado (estaciones nuevas contra existentes)
-`<POR RELLENAR>`
+
+En P2 una estación es nueva si su primer viaje es del 1 de mayo de 2026 en adelante. En la prueba son 99 (parámetro `estaciones_nuevas_test` del run), y no tienen estadísticas de entrenamiento: sus tres `est_*` llegan vacías. En la muestra de DeepChecks sobre la prueba, el 13.8 % de las filas tiene vacía `est_tasa_sin_bicis` por esa razón.
+
+Periodo de prueba, mayo a septiembre de 2026, campeón:
+
+| Grupo | Macro F1 | Recall `sin_bicicletas` | Recall `sin_anclajes` | Precisión `sin_bicicletas` | Precisión `sin_anclajes` | PR AUC `sin_bicicletas` | PR AUC `sin_anclajes` |
+|---|---|---|---|---|---|---|---|
+| Todas | 0.7405 | 0.9418 | 0.9555 | 0.4738 | 0.4993 | 0.8181 | 0.8343 |
+| Nuevas | 0.7415 | **0.9053** | 0.9516 | 0.4705 | 0.4618 | 0.8271 | 0.8113 |
+
+Con la persistencia, en las nuevas el macro F1 es 0.8238 y el recall es 0.7222 en `sin_bicicletas` y 0.6962 en `sin_anclajes`.
+
+**En las nuevas el modelo deja pasar más horas sin bicicletas:** el recall baja de 0.942 a 0.905, mientras el de `sin_anclajes` casi no cambia. El macro F1 es prácticamente igual.
+
+En el A/B de octubre de 2026 (sección 2.9), reentrenar con datos hasta septiembre, que ya incluyen a estas estaciones, **bajó su recall medio de riesgo en 0.0401**.
+
+Lo que no está medido: las métricas de las existentes por separado (el run registra todas y nuevas, y el grupo "todas" incluye a las nuevas), el número de filas de las nuevas en la prueba y el error según las semanas desde la apertura. La consecuencia operativa: en una estación con menos de un mes de operación, una predicción `segura` merece menos confianza que en una consolidada.
+
+Fuente: métricas `test_*` y `test_nuevas_*` de los runs del campeón (`48bb03f4`) y de la persistencia (`6dd63d632f464d65af8ff4e03a0e04a6`); sección "Hallazgos de P2 con los datos reales" del README.
 
 ## 2.8 Limitaciones y riesgos
-`<POR RELLENAR>`
+
+- **Todo se mide contra una etiqueta estimada.** El error de la ocupación estimada no se puede medir porque no hay inventario contra el cual compararla. Un recall de 0.94 quiere decir que el modelo coincide con la aproximación, no que acierte el estado real de la estación.
+- **El modelo depende casi por completo de `ocupacion_actual`.** En la importancia por permutación (caída en macro F1 sobre 150,000 filas de prueba) esa variable vale 0.364; ninguna otra pasa de 0.005 y 11 dan valores negativos. Cualquier error en la estimación de la ocupación pasa directo a la predicción.
+- **Muchas falsas alarmas.** Cerca de la mitad de las alertas son falsas (sección 2.6). Si el equipo de rebalanceo alcanza pocas visitas por turno, la lista puede ser más larga de lo que puede atender. El HGB sin pesos da otro balance (precisión cercana a 0.78 y recall cercano a 0.72), pero no es candidato con la regla actual.
+- **La persistencia gana en macro F1** en los tres niveles iniciales (sección 2.6). El modelo solo es preferible si se acepta el supuesto de que una alerta perdida cuesta más que una falsa.
+- **La prueba no está intacta**, como se explica en 2.4.
+- **Capacidad fija.** Se usa la capacidad de septiembre de 2026 para todo el periodo. Un cambio de anclajes en una estación antes de esa fecha no queda reflejado.
+- **Error mayor en estaciones nuevas** para `sin_bicicletas`, documentado en 2.7.
+- **Sin clima ni eventos.** Lluvias, eventos masivos o cierres viales quedan fuera de lo que el modelo puede anticipar.
+- **Equidad territorial sin evaluar.** El error no se midió por zona ni por municipio. No se sabe si el modelo falla más en unas partes de la ciudad que en otras.
+- **Quién arma las variables.** La API no calcula el panel: quien la consume debe armar las 18 variables con `mibici.features_p2` y unir las estadísticas del run con `features_p2.unir_stats`.
+- **La API no da probabilidades.** El cargador compartido es pyfunc y devuelve solo la clase, así que el punto de corte no se puede ajustar al servir.
+- **Evaluación fuera de línea.** No hay tráfico real. El Registry del que la API carga `champion` es la copia local que siembra `registry-init` a partir del almacén publicado.
 
 ## 2.9 Monitoreo
-`<POR RELLENAR>`
+
+**Deriva de datos.** Con Evidently, comparando las 18 variables de octubre de 2026 (262,404 filas estación-hora de 471 estaciones, 100 nuevas) contra las filas de entrenamiento del campeón. Además del umbral de 0.1 de Evidently, cada variable lleva un umbral calibrado, definido como la mayor distancia de un mes del entrenamiento contra los demás. Las distancias se separan por estaciones existentes y nuevas y se comparan contra octubre de 2025 como control estacional.
+
+Resultado de octubre de 2026: **con el umbral calibrado hay deriva en cuatro variables**: `salidas_lag1` (0.187 contra 0.085), `llegadas_lag1` (0.177 contra 0.080), `neto_media24` (0.128 contra 0.083) y `capacidad` (0.107 contra 0.002, por las estaciones nuevas). El calendario no cambia.
+
+**A/B testing.** `p2_ab` compara el campeón (A) contra el mismo HGB balanceado reentrenado con fechas objetivo de enero de 2025 a septiembre de 2026 (B), sobre las mismas filas de octubre: recall, precisión, F1 y PR AUC por clase de riesgo, macro F1 y Brier multiclase. Las diferencias llevan un intervalo del 95 % por bootstrap pareado por estación (1,000 réplicas, semilla 29).
+
+La regla se fijó en el commit `34fe4f8` del 13 de noviembre de 2026, antes del commit que agregó la comparación: B se puede promover si el recall medio de riesgo sube al menos 0.005 con intervalo sobre cero; si la diferencia queda por debajo de 0.005, decide el PR AUC medio, también con intervalo sobre cero. Es el mismo margen de la selección del campeón. Cumplir la regla permite proponer B; no lo promueve.
+
+| Métrica (B − A) | Diferencia | IC del 95 % |
+|---|---|---|
+| Recall medio de riesgo | +0.0029 | [+0.0003, +0.0058] |
+| PR AUC medio de riesgo | +0.0022 | [+0.0007, +0.0037] |
+
+Resultado de octubre de 2026: la diferencia de recall queda dentro del margen, así que decide el PR AUC, y su intervalo queda sobre cero. **B cumple la regla.** El A/B no mueve alias: B quedó registrada como versión 2 `challenger` y `champion` sigue en la versión 1, que es la que sirve la API. Hay dos señales que la regla no mide y que conviene vigilar antes de promover: el Brier empeora +0.0026 (B está un poco peor calibrada) y en las 99 estaciones nuevas para A el recall medio de riesgo baja 0.0401.
+
+**Qué vigilar cada mes.** El ML Canvas de P2 fija macro F1 y recall de las clases de riesgo, proporción de clases predichas y desempeño en estaciones nuevas. No hay un umbral numérico fijado para reentrenar: hoy la señal para proponer una versión nueva es la regla del A/B.
+
+**Operación y costo.** P2 es la pregunta que más inferencias genera: con 468 estaciones y 18 horas al día son unas 256 mil de las 271 mil inferencias al mes del sistema. En la prueba de carga, a la capacidad sostenida, `/api/v1/p2/predict` respondió en 76 ms en promedio y 270 ms en p95, y un lote de 468 estaciones tardó 52 ms. En lotes, P2 baja de unas 256 mil a 547 peticiones al mes. El costo por inferencia se calcula para la API completa en la sección de FinOps del README.
+
+Salidas del monitoreo: `reports/monitoring/2026_10/p2/` (fuera de control de versiones).
 
 ---
 
@@ -530,6 +673,11 @@ Salidas del monitoreo: `reports/monitoring/2026_10/p3/` (fuera de control de ver
 | Métricas de P1 y desagregado | Métricas de los runs `a8fea49c` (campeón) y `3e78d72b` (semana previa) en `.model-store/mlflow.db` |
 | Panel y variables de P1 | `mibici/features.py`; sección "P1 · demanda diaria por estación" del README en `main` |
 | Monitoreo de P1 | Secciones "Resultados históricos de P1 (octubre de 2026)", "P1: A/B testing de versiones del Registry (octubre de 2026)" y "P1: calidad de datos y drift calibrado (octubre de 2026)" del README en `main` |
+| Identificación de P2 | `scripts/p2/campeon_api_p2.json`; etiquetas, parámetros y descripción de la versión en `.model-store/mlflow.db` |
+| Conjuntos, panel y etiqueta de P2 | Parámetros `n_train`, `n_test` y `estaciones_nuevas_test` del run `48bb03f4`; `data/p2_panel_horario.json` y `config/config_p2.json` en sus artefactos; `mibici/features_p2.py` y `CONFIG_P2` en `mibici/config.py` |
+| Métricas de P2 y desagregado | Métricas de los runs de la corrida de cierre en `.model-store/mlflow.db`; `reports/figures/p2_resultados.json` para los niveles 30 % y 70 % |
+| Importancia de variables de P2 | `data/p2_importancia_permutacion_ini50.csv` del run `48bb03f4` |
+| Monitoreo y operación de P2 | Secciones "P2: drift y A/B testing (octubre de 2026)", "Hallazgos de P2 con los datos reales" y "Prueba de carga y análisis FinOps" del README en `main`; `reports/carga/2026-11-20_2224/finops.json` |
 | Identificación de P3 | `scripts/p3/campeon_api_p3.json`; etiquetas y parámetros del run en `.model-store/mlflow.db` |
 | Métricas de P3 | Métricas del run en `.model-store/mlflow.db` |
 | Candidatas y criterios | `data/criterios_interpretabilidad.csv` y `data/grupos_interpretabilidad.csv` |
