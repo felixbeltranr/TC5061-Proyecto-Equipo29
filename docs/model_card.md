@@ -128,34 +128,186 @@ Cada ficha reporta su desempeño separando ese subgrupo.
 
 # Ficha 1 · P1 · Demanda diaria por estación
 
-`<POR RELLENAR>`
-
 ## 1.1 Identificación
-`<POR RELLENAR>`
+
+| Campo | Valor |
+|---|---|
+| Modelo registrado | `mibici-equipo29-p1-demanda` |
+| Alias | `champion` |
+| Versión | 1 |
+| Tipo | Regresión de conteos: `HistGradientBoostingRegressor` de scikit-learn con pérdida de Poisson, `dia_semana` como variable categórica y sin paro temprano |
+| Hiperparámetros | `learning_rate = 0.05`, `max_leaf_nodes = 63`, `max_iter = 400`, `l2_regularization = 1.0`, semilla 29 |
+| Run de origen | `a8fea49c708d4e849bd92ec54536809f`, nombre `p1_hgb_poisson` |
+| Commit | `42918951d913fd2a27949a7237a381536242b11e` (árbol limpio) |
+| URI del modelo | `models:/m-27be68580c664b51ad959511e90832f5` |
+| Huella del modelo serializado | SHA256 `d0a9f7e17cba6001d5f60e04d2b355c07f7ad270433abf300953cf38188f8127` (`model.skops`, 4.39 MiB) |
+| Fecha | 25 de octubre de 2026 (corrida de cierre de la Entrega 2) |
+| Código | `mibici/features.py`, `mibici/modeling/train_p1.py` y `mibici/registro_p1.py` |
+| Entrada | 11 variables por estación-día (sección 1.5) |
+| Salida | `demanda_salidas`: salidas esperadas de la estación en el día D, un número real mayor o igual a cero. La API la devuelve en el campo `prediction` |
+
+Fuente: `scripts/p1/campeon_api_p1.json` y las etiquetas y parámetros del run en el almacén publicado.
+
+**Sobre la numeración de versiones.** Esta ficha documenta la versión 1, que es la que trae el almacén publicado en el Release `almacen-entrega2-r1` y la que `registry-init` siembra al levantar el sistema. La versión 2 (`challenger`) es el mismo modelo, con los mismos hiperparámetros, reentrenado con objetivos hasta el 29 de septiembre de 2026. Existe solo en el Registry local donde se corrió el A/B de octubre, que parte de ese mismo almacén, y no en el que siembra el Compose.
 
 ## 1.2 Uso previsto
-`<POR RELLENAR>`
+
+Cada noche, a las 23:00 del día D−1, pronosticar cuántos viajes saldrán de cada estación activa durante el día D.
+
+El uso previsto es **de planeación operativa**: el pronóstico apoya el rebalanceo del día siguiente, es decir, cuántas bicicletas y turnos preparar y qué estaciones requieren más atención. Agregado por semanas o meses orienta decisiones de flota, anclajes y mantenimiento. La salida del modelo es un número de salidas por estación y día.
+
+Usuarios previstos: el equipo de operación y rebalanceo del sistema y quienes hacen planeación. El modelo informa una decisión que toma una persona; no la sustituye.
 
 ## 1.3 Fuera de alcance
-`<POR RELLENAR>`
+
+- **No pronostica por hora ni dentro del mismo día**, ni a más de un día de anticipación. El riesgo horario de que una estación se quede sin bicicletas o sin anclajes es la pregunta de P2.
+- **No pronostica estaciones recién abiertas.** Antes de cumplir la regla de elegibilidad (sección 1.4) una estación no recibe pronóstico.
+- **No estima la demanda no atendida.** El modelo aprende de viajes realizados, no de intentos fallidos (sección 1.8).
+- **No se traslada a otro sistema ni a otra ciudad** sin reentrenar y volver a evaluar.
+- **No sirve para decisiones automáticas sin revisión**, como retirar estaciones o recortar servicio.
+- **No dice nada sobre personas.** La unidad es la estación-día. No hay atributos de usuario en el modelo.
 
 ## 1.4 Datos de entrenamiento y evaluación
-`<POR RELLENAR>`
+
+| Conjunto | Fechas objetivo | Filas estación-día | Uso |
+|---|---|---|---|
+| Ajuste para la selección | hasta el 27 feb 2026 | 144,676 | Entrenar las candidatas que se comparan en validación |
+| Validación | 1 mar 2026 – 29 abr 2026 | 22,133 | Elegir hiperparámetros y candidata |
+| Entrenamiento final | 30 ene 2025 – 29 abr 2026 | 167,177 | Ajustar el modelo que se registra |
+| Prueba | 1 may 2026 – 30 sep 2026 | 62,426 (6,225 de estaciones nuevas) | Diagnóstico del modelo ya elegido |
+| Mes posterior | octubre de 2026 | 14,508, de 468 estaciones (369 existentes y 99 nuevas) | Monitoreo y A/B fuera de línea |
+
+La partición es temporal, por fecha objetivo, y la evaluación es con origen de pronóstico móvil: los rezagos de cada día se van conociendo conforme pasan los días. La prueba empieza en mayo de 2026, el mismo mes en que empiezan las aperturas de la expansión, así que es el primer periodo con estaciones nuevas. **Todo lo que se elige —hiperparámetros y campeón— usa solo la validación.**
+
+**La prueba no está intacta.** La política de dominio de la sección 1.6 se agregó después de haber visto resultados de prueba, así que el MAE de prueba se reporta como referencia histórica y no como una medición sobre datos nunca vistos. Octubre de 2026 sí quedó fuera del entrenamiento de las dos versiones que se comparan en la sección 1.9.
+
+**El panel.** La unidad es la estación-día: 245,185 filas de 472 estaciones. P1 lee del dataset combinado solo `Inicio_del_viaje` y `Origen_Id` (`COLUMNAS_VIAJES` en `mibici/features.py`). Dos supuestos condicionan la lectura de los resultados:
+
+- Los días sin viajes cuentan como cero desde la primera salida de cada estación, bajo el supuesto de que operó todos los días. No hay inventario ni historial de cierres.
+- Se cuentan todos los registros publicados con fecha y estación interpretables (7,894,097), incluidos los 245,300 viajes de menos de un minuto y los 758 duplicados exactos de septiembre de 2026 que la limpieza descrita en la parte común descarta.
+
+**Elegibilidad:** una fila entra si la estación tiene al menos 29 días de historia y alguna salida en los últimos 28 días disponibles.
+
+Versión de los datos: `66dd3d190bba`, registrada como `data_version` en cada run de P1 y en la versión del Registry. Cubre de enero de 2025 a septiembre de 2026; octubre de 2026 se descargó aparte para el monitoreo y no forma parte de esa versión.
 
 ## 1.5 Variables
-`<POR RELLENAR>`
+
+**Entrada del modelo (11 variables)**, todas derivadas del conteo diario de salidas de la propia estación y del calendario:
+
+| Variable | Qué es |
+|---|---|
+| `dia_semana` | Día de la semana de D (0 = lunes, 6 = domingo) |
+| `festivo`, `festivo_lag7` | 1 si D es festivo; 1 si D−7 lo fue |
+| `lag_2` | Salidas en D−2, el último día completo al emitir el pronóstico |
+| `lag_7`, `lag_14`, `lag_21`, `lag_28` | Salidas el mismo día de la semana, de una a cuatro semanas atrás |
+| `media_7d`, `media_28d` | Media diaria de D−8 a D−2 y de D−29 a D−2 |
+| `media_misma_dsem_4` | Media de los cuatro rezagos semanales |
+
+**Regla contra la fuga de información.** A las 23:00 de D−1 ese día todavía no cierra, así que ninguna variable usa datos de D−1 ni de D; solo el calendario del día objetivo, que se conoce de antemano.
+
+El modelo no recibe el identificador de la estación, su ubicación ni su capacidad. Tampoco clima ni eventos.
 
 ## 1.6 Métricas y regla de decisión
-`<POR RELLENAR>`
+
+La métrica principal es el MAE, en viajes por estación-día, y es el criterio de selección entre las candidatas elegibles. Se acompañan RMSE (penaliza los errores grandes de las estaciones de alto volumen), WAPE (suma de errores absolutos entre suma de salidas reales) y sesgo (pronóstico menos valor real; positivo significa que sobrestima).
+
+| Modelo | MAE val. | RMSE val. | WAPE val. | MAE prueba | RMSE prueba | WAPE prueba |
+|---|---|---|---|---|---|---|
+| Referencia: semana previa (D−7) | 8.4393 | 16.0660 | 26.14 % | 7.9550 | 15.3896 | 25.92 % |
+| Referencia: persistencia (D−2) | 11.7063 | 19.9769 | 36.26 % | 11.2166 | 19.0482 | 36.54 % |
+| Poisson regularizada | 5.8805 | 11.0907 | 18.22 % | 6.3535 | 12.1162 | 20.70 % |
+| **HGB Poisson (champion)** | **5.6099** | **10.5407** | **17.38 %** | **6.2847** | **12.4086** | **20.48 %** |
+| HGB absoluto (inelegible) | 5.6326 | 10.6633 | 17.45 % | 6.2989 | 12.3999 | 20.52 % |
+
+Frente a la referencia de semana previa, el campeón baja el MAE 33.5 % en validación y 21.0 % en prueba. Su sesgo de prueba es −0.78 viajes por estación-día: en promedio subestima.
+
+Prueba por mes:
+
+| Mes de 2026 | Mayo | Junio | Julio | Agosto | Septiembre |
+|---|---|---|---|---|---|
+| MAE del campeón | 5.2258 | 7.6944 | 6.0421 | 5.1558 | 7.3546 |
+
+Junio y septiembre son los meses con más error. La tabla describe la variación y no identifica su causa.
+
+### La regla de selección
+
+La selección tiene dos pasos: antes de comparar el MAE hay una condición de elegibilidad.
+
+- **Política de dominio.** Una candidata solo es elegible si todas sus predicciones de validación son numéricas, finitas y mayores o iguales a cero. La que no cumple conserva su run y sus métricas, pero no puede ser campeona, y su salida no se recorta para hacerla pasar.
+- **Selección.** Gana el menor MAE de validación entre la referencia de semana previa y las candidatas elegibles. La prueba no interviene.
+- **Promoción.** El alias `champion` solo se mueve después de cargar la versión por su URI inmutable y obtener una predicción válida.
+
+En esta corrida la política de dominio no cambió al ganador, porque HGB Poisson ya tenía el menor MAE de validación (5.6099 contra 5.6326 de HGB absoluto). Sí dejó fuera a HGB absoluto, que dio 22 predicciones negativas en validación: un conteo de salidas no puede ser negativo.
+
+Fuente: métricas de los runs de la corrida de cierre en el almacén publicado.
 
 ## 1.7 Desempeño desagregado (estaciones nuevas contra existentes)
-`<POR RELLENAR>`
+
+En P1 una estación es nueva si no tiene ningún día elegible en el entrenamiento, que termina el 29 de abril de 2026. En la prueba son 101 estaciones (parámetro `estaciones_nuevas_test` del run), todas con su primera salida entre mayo y agosto de 2026: las 99 de la expansión que describe la parte común y dos más que no figuran en la nomenclatura. Aparecen en la prueba conforme juntan sus 29 días de historia y son el 10.0 % de las filas (6,225 de 62,426). En octubre el grupo son exactamente las 99.
+
+Periodo de prueba, mayo a septiembre de 2026:
+
+| Grupo | Filas | MAE del campeón | WAPE del campeón | MAE de semana previa | Cambio en MAE |
+|---|---|---|---|---|---|
+| Existentes | 56,201 | 6.6119 | 20.17 % | 8.3809 | −21.1 % |
+| Nuevas | 6,225 | 3.3310 | **28.01 %** | 4.1099 | −19.0 % |
+
+Las existentes, separadas por tercil de volumen (los terciles se calculan solo con el entrenamiento):
+
+| Segmento | Filas | MAE del campeón | WAPE del campeón | MAE de semana previa | Cambio en MAE |
+|---|---|---|---|---|---|
+| Volumen bajo | 18,684 | 2.8611 | 28.16 % | 3.6812 | −22.3 % |
+| Volumen medio | 18,749 | 5.2900 | 20.90 % | 6.8620 | −22.9 % |
+| Volumen alto | 18,768 | 11.6665 | 18.59 % | 14.5768 | −20.0 % |
+
+**El MAE de las nuevas es la mitad del de las existentes, pero su error relativo es mayor:** 28.0 % contra 20.2 %. El MAE bajo refleja su menor volumen, no un mejor pronóstico: de las métricas se deduce que una estación nueva mueve alrededor de 12 salidas al día y una existente alrededor de 33. Como las nuevas son el 10 % de las filas y cerca del 4 % de las salidas, el WAPE global (20.48 %) casi no se separa del de las existentes (20.17 %) y no deja ver su 28 %.
+
+Tres cosas que sí dicen los datos:
+
+1. **El error relativo de las nuevas es el de las existentes de volumen bajo:** 28.0 % contra 28.2 % del tercil bajo, que tiene un volumen parecido (unas 10 salidas al día). La diferencia frente al conjunto de las existentes es coherente con el volumen; los datos disponibles no permiten separar cuánto se debe a la poca historia.
+2. **El modelo sigue ganándole a la referencia en las nuevas**, aunque por menos: −19.0 % contra −21.1 % en las existentes.
+3. **En el A/B de octubre de 2026 (sección 1.9), reentrenar no mostró mejora en las nuevas.** La versión reentrenada con datos hasta septiembre mejora el MAE en las 369 existentes (−0.168, IC del 95 % [−0.362, −0.038]); en las 99 nuevas la diferencia no es concluyente (+0.012, IC [−0.016, +0.040]).
+
+Lo que no está medido: el error según las semanas transcurridas desde la apertura. Las estaciones con menos de 29 días de historia no reciben pronóstico, así que no tienen error que medir. La consecuencia operativa está declarada en la sección 1.3: durante su primer mes una estación nueva no tiene pronóstico, y después conviene leer el suyo con el margen de una estación de volumen bajo.
+
+Fuente: métricas por segmento (`test_n_*`, `test_mae_*` y `test_wape_*`) del run del campeón y del run de la referencia de semana previa (`3e78d72b8ed94f59b8e4d6dc3b0edfbd`). Las filas de existentes son el agregado de los tres terciles, calculado a partir de esas métricas.
 
 ## 1.8 Limitaciones y riesgos
-`<POR RELLENAR>`
+
+- **Demanda censurada.** Las salidas observadas son demanda atendida. Una estación vacía no registra viajes, así que el historial subestima la demanda justo donde el servicio falla. Si el pronóstico se usara como único criterio para repartir bicicletas, mandaría menos a las estaciones que más se vacían y reforzaría el problema. Por eso se propone leerlo junto con el riesgo de P2 y no usarlo para recortar servicio.
+- **Subestimación.** El sesgo es negativo (−0.78 en prueba) y la dispersión del error crece con el nivel del pronóstico: en estaciones grandes un error de decenas de viajes es normal.
+- **Sin clima ni eventos.** Días de lluvia fuerte, eventos masivos o cierres viales quedan fuera de lo que el modelo puede anticipar. La prueba cubre meses de lluvias y los partidos del Mundial 2026 en Guadalajara, que el modelo no conoce.
+- **Error relativo mayor en estaciones nuevas y de volumen bajo**, documentado en 1.7.
+- **Equidad territorial sin evaluar.** El error no se midió por zona ni por municipio, ni por día de la semana o en festivos. No se sabe si el modelo se equivoca más en unas partes de la ciudad que en otras; es el análisis pendiente con más peso antes de un uso real.
+- **La prueba no está intacta**, como se explica en 1.4.
+- **Horizonte único.** El modelo está validado para un día de anticipación con datos hasta D−2. Si el conteo del día llega con más retraso, las variables ya no corresponden.
+- **Quién arma las variables.** La API no calcula las variables ni comprueba la elegibilidad: quien la consume debe armarlas con las reglas de `mibici.features.construir_features`, respetar la regla D−2 y descartar las filas que esa función marca como no elegibles.
+- **Evaluación fuera de línea.** No hay tráfico real. El Registry del que la API carga `champion` es la copia local que siembra `registry-init` a partir del almacén publicado, no un Registry compartido.
+- **Los viajes cortos y los duplicados se cuentan.** El panel de P1 no aplica la limpieza que describe la parte común (descarte de viajes de menos de un minuto y de duplicados exactos), así que un anclaje fallido o un registro repetido suman una salida.
 
 ## 1.9 Monitoreo
-`<POR RELLENAR>`
+
+**Deriva de datos.** Con Evidently, comparando las 11 variables de octubre de 2026 contra las del entrenamiento. Con el umbral por omisión de Evidently (0.1), 9 de las 11 variables marcan deriva. Con el umbral calibrado por variable, definido como la mayor distancia de un mes de la referencia contra el resto, **quedan cinco** en el total de estaciones: `lag_2` (0.310 contra 0.117), `media_7d` (0.303 contra 0.139), `lag_7` (0.271 contra 0.165), `lag_14` (0.229 contra 0.208) y `media_28d` (0.218 contra 0.197); con las existentes o con las nuevas por separado pasan su umbral las 8 numéricas. Frente a octubre de 2025, la distancia de `lag_2` en las estaciones existentes es 0.382: la diferencia persiste al comparar el mismo mes de dos años seguidos.
+
+**Calidad de datos.** 84 pruebas aprobadas, 0 fallidas y 15 advertencias, todas explicadas en el resumen de la corrida. No hay faltantes.
+
+**A/B testing.** `p1_ab` compara el campeón (A) contra el mismo modelo reentrenado con objetivos hasta el 29 de septiembre de 2026 (B), sobre las mismas 14,508 filas de octubre, que ninguna de las dos versiones vio al entrenar. La diferencia de MAE lleva un intervalo del 95 % por bootstrap pareado por estación (1,000 réplicas, semilla 29).
+
+La regla es la misma que se aplicó al ensayo de septiembre antes de descargar octubre (consta en los registros locales de las corridas, no en un commit previo): B cumple si el intervalo de todas las estaciones queda completo bajo cero, en ningún grupo queda completo arriba de cero y sus predicciones son finitas y no negativas. Cumplir la regla permite proponer B; no la promueve.
+
+| Grupo | Estaciones | B − A (MAE) | IC del 95 % |
+|---|---|---|---|
+| Todas | 468 | −0.130 | [−0.275, −0.024] |
+| Existentes | 369 | −0.168 | [−0.362, −0.038] |
+| Nuevas | 99 | +0.012 | [−0.016, +0.040] |
+
+Resultado de octubre de 2026: el MAE es 7.886 con A y 7.756 con B. **B cumple la regla, pero la mejora es pequeña** (1.6 %) y cinco estaciones explican el 83 %. Con bootstrap por día, el intervalo toca el cero con 1,000 réplicas ([−0.226, +0.0002]) y queda bajo cero con 10,000. Se mantiene el campeón: B quedó registrada como `challenger` y el alias `champion` no se movió. La versión 2 se promueve solo si en noviembre de 2026, sin reentrenar, vuelve a cumplir la regla contra A.
+
+El MAE del campeón sube de 6.28 en la prueba (mayo a septiembre) a 7.89 en octubre.
+
+**Qué dispararía una revisión.** Cada mes conviene revisar la deriva calibrada, la calidad de datos y el MAE contra la referencia de semana previa; esta última comparación todavía no forma parte de los módulos de monitoreo. Conviene reentrenar o promover al retador cuando el MAE mensual del campeón deja de ser menor que el de esa referencia o cuando una versión nueva cumple la regla del A/B dos meses seguidos.
+
+Salidas del monitoreo: `reports/monitoring/2026_10/p1/` (fuera de control de versiones).
 
 ---
 
@@ -516,6 +668,11 @@ Salidas del monitoreo: `reports/monitoring/2026_10/p3/` (fuera de control de ver
 | Validación independiente | Fichas del IIEG, https://iieg.gob.mx/ns/?page_id=25284 |
 | Procedencia | https://mibici.net/es/datos-abiertos/ y la página de términos del mismo sitio, consultadas el 24/11/2026 |
 | Minimización de datos | `mibici/features_p3.py`, constantes `COLUMNAS` y `COLUMNAS_PERSONALES` |
+| Identificación de P1 | `scripts/p1/campeon_api_p1.json`; etiquetas y parámetros del run en `.model-store/mlflow.db` |
+| Conjuntos de P1 | Parámetros `n_fit`, `n_val`, `n_train` y `n_test` del run `a8fea49c` en `.model-store/mlflow.db` |
+| Métricas de P1 y desagregado | Métricas de los runs `a8fea49c` (campeón) y `3e78d72b` (semana previa) en `.model-store/mlflow.db` |
+| Panel y variables de P1 | `mibici/features.py`; sección "P1 · demanda diaria por estación" del README en `main` |
+| Monitoreo de P1 | Secciones "Resultados históricos de P1 (octubre de 2026)", "P1: A/B testing de versiones del Registry (octubre de 2026)" y "P1: calidad de datos y drift calibrado (octubre de 2026)" del README en `main` |
 | Identificación de P2 | `scripts/p2/campeon_api_p2.json`; etiquetas, parámetros y descripción de la versión en `.model-store/mlflow.db` |
 | Conjuntos, panel y etiqueta de P2 | Parámetros `n_train`, `n_test` y `estaciones_nuevas_test` del run `48bb03f4`; `data/p2_panel_horario.json` y `config/config_p2.json` en sus artefactos; `mibici/features_p2.py` y `CONFIG_P2` en `mibici/config.py` |
 | Métricas de P2 y desagregado | Métricas de los runs de la corrida de cierre en `.model-store/mlflow.db`; `reports/figures/p2_resultados.json` para los niveles 30 % y 70 % |

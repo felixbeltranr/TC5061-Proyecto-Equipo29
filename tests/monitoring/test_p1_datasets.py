@@ -1,7 +1,7 @@
+from types import SimpleNamespace
+
 import pandas as pd
 import pytest
-
-from types import SimpleNamespace
 
 from mibici.monitoring import p1_datasets
 from mibici.monitoring.p1_datasets import build_p1_populations
