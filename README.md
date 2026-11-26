@@ -1307,9 +1307,9 @@ Seguimos GitHub Flow:
     ├── features_p2.py <- P2: panel horario y etiqueta de riesgo
     ├── features_p3.py <- P3: perfiles de uso por estación
     ├── manifiesto_p2.py <- Manifiesto con SHA256 y registros de cada archivo
-    ├── tracking.py    <- Convención de MLflow de P1
+    ├── tracking.py    <- Convención de MLflow, compartida por P1, P2 y P3
     ├── plots.py
-    ├── monitoring     <- Contratos comunes, drift de P1 y P3, A/B testing de P1 y P3
+    ├── monitoring     <- Contratos comunes, drift y A/B testing de P1, P2 y P3
     │   ├── contracts.py
     │   ├── evidently_report.py
     │   ├── p1_datasets.py
@@ -1317,6 +1317,9 @@ Seguimos GitHub Flow:
     │   ├── p1_ab.py
     │   ├── p1_calidad.py
     │   ├── p1_drift_calibrado.py
+    │   ├── p2_datasets.py
+    │   ├── p2_drift.py
+    │   ├── p2_ab.py
     │   ├── p3_datasets.py
     │   ├── p3_drift.py
     │   ├── p3_ab.py
